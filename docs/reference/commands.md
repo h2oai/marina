@@ -6783,6 +6783,20 @@ Effect: write.
 - `field-1` (`event-id`): text, required.
 - `field-2` (`witnessed|replicated|disputed|unavailable`): choice, required, choices `witnessed`, `replicated`, `disputed`, `unavailable`.
 
+## methods
+
+Every selector in the world — where Marina chooses a method, route, model or verdict on evidence — with its mode, its evidence and what it has earned. Read-only; no model call.
+Usage:
+  methods
+
+Category: System. Minimum rank: 0.
+Aliases: none.
+
+### `methods`
+
+Effect: read.
+
+
 ## monitor
 
 monitor <goal> — launch an observable monitor project with tasks, shared memory, a fitting orchestration pattern, and an agent.
