@@ -200,6 +200,11 @@ export const KNOB_POSTURE: Readonly<Record<string, Posture>> = {
   // ── Memory and the obligations ledger ───────────────────────────────────
   MARINA_MEMORY_RANKING: measure(bench("longmemeval-v2-small"), MEMORY_BOARD, DEC_1),
   MARINA_MEMORY_RELEVANCE_GATE: measure(bench("longmemeval-v2-small"), MEMORY_BOARD, DEC_1),
+  MARINA_DREAMING: measure(
+    outcomes(undefined, "task"),
+    "task success per cost does not fall in the K runs after a dream vs the K before (paired, time-split), and the probe set holds",
+    JAN_15,
+  ),
   MARINA_MEMORY_USEFULNESS_RANKING: measure(
     outcomes(undefined, "task"),
     "task success per cost on shared-memory readers does not fall when the term reorders (paired, time-split)",

@@ -10,6 +10,7 @@ import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
 import { proposeUpstreamModelSeeds } from "../learned/upstream-model-seeds";
 import { flushWorkLessons } from "../learning/work";
+import { runDreamSchedule } from "../memory/dream";
 import { settleUnusedServes } from "../memory/usefulness";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model/model-api";
@@ -326,6 +327,29 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     },
   });
 
+  // Hourly (own phase): the dream pass (src/memory/dream). Per candidate
+  // entity, the schedule gates — material, quiet, cooldown, budget — then one
+  // dream: gather, probe, propose on the cheap tier, check, record. In
+  // `observe` (default) nothing is applied; the record and one chronicle
+  // event are the output. Async model calls never block the tick.
+  s.register({
+    name: "memory-dream",
+    every: NOTE_IMPORTANCE_INTERVAL,
+    phase: MEMORY_DREAM_PHASE,
+    failureMessage: "Memory dream pass failed",
+    run: async () => {
+      if (!host.db) return;
+      const dreams = await runDreamSchedule(host.db);
+      const ran = dreams.filter((d) => d.state !== "skipped");
+      if (ran.length)
+        host.engine.logger.info("memory", "dream pass", {
+          dreamed: ran.map((d) => d.entityName),
+          ops: ran.reduce((n, d) => n + (d.checks?.accepted ?? 0), 0),
+          rejected: ran.reduce((n, d) => n + (d.checks?.rejected ?? 0), 0),
+        });
+    },
+  });
+
   // ~2 s: memory observability poller. Reads `memory_service_events` past
   // the last seen seq (indexed, O(new rows), capped per call) and emits
   // `memory_job` / `memory_service_event` for dashboard clients. Sync SQL —
@@ -623,6 +647,8 @@ export const OUTCOME_JUDGE_PHASE = 3150;
 export const OUTCOME_AUTORESOLVE_PHASE = 3450;
 /** Hourly phase of `memory-usefulness-settle` (distinct from every other hourly job). */
 export const USEFULNESS_SETTLE_PHASE = 3550;
+/** Hourly phase of `memory-dream`. */
+export const MEMORY_DREAM_PHASE = 3400;
 
 /** Ticks between arena filing-watch passes (src/arena/filing-watch.ts). */
 export const ARENA_FILING_WATCH_INTERVAL = 600;

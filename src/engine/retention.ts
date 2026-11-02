@@ -325,6 +325,11 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "usefulness evidence per memory item, written only through applyUsefulness",
   },
   {
+    table: "memory_dreams",
+    kind: "append-only",
+    note: "dream records: what each consolidation pass proposed, rejected and probed (ids and hashes only)",
+  },
+  {
     table: "benchmark_runs",
     kind: "append-only",
     note: "benchmark ledger: every run ever measured is ranked and compared",

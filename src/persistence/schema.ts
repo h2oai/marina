@@ -259,6 +259,33 @@ CREATE TABLE memory_ratings (
 );
 CREATE INDEX idx_memory_ratings_item ON memory_ratings(item_id, created_at);`,
   },
+  // Dream records (src/memory/dream): one append-only row per consolidation
+  // pass — region hash and counts, accepted ops (ids and hashes, never text),
+  // rejected ops with the failing check, probe set, checks, spend, model.
+  {
+    version: 189,
+    sql: `CREATE TABLE memory_dreams (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_name TEXT NOT NULL,
+  trigger TEXT NOT NULL CHECK(trigger IN ('schedule','command','dry-run')),
+  mode TEXT NOT NULL CHECK(mode IN ('off','observe','on')),
+  state TEXT NOT NULL CHECK(state IN ('observed','applied','rolled_back')),
+  region_hash TEXT NOT NULL,
+  region_count INTEGER NOT NULL,
+  region_new INTEGER NOT NULL,
+  region_bytes INTEGER NOT NULL,
+  ops_json TEXT NOT NULL,
+  rejected_json TEXT NOT NULL,
+  probes_json TEXT NOT NULL,
+  checks_json TEXT NOT NULL,
+  model TEXT,
+  spend_usd REAL NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  applied_at INTEGER,
+  rolled_back_at INTEGER
+);
+CREATE INDEX idx_memory_dreams_entity ON memory_dreams(entity_name, created_at);`,
+  },
 ];
 
 /** Migration 172 body — self-contained so later edits elsewhere never change it. */

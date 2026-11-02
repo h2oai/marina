@@ -16,6 +16,7 @@ import {
   status,
 } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
+import { parseDreamJson } from "../../persistence/db-memory-dreams";
 import { residentLabeler } from "../../routing/residents";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { refuseCommand } from "../command-response";
@@ -167,6 +168,18 @@ export function orientCommand(deps: {
           ? `${parsed.notes} notes about "${parsed.topic}" handed to reflector job ${parsed.jobId}`
           : receipt.content.slice(ACCUMULATION_NOTE_PREFIX.length).trim();
         lines.push(`    Accumulation: ${summary} ${dim(relativeTime(receipt.created_at, now))}`);
+      }
+      // Latest dream (src/memory/dream): what the consolidation pass would
+      // have done, observed. Counts only.
+      const dream = db.listDreams(entity.name, 1)[0];
+      if (dream) {
+        const checks = parseDreamJson<{ accepted: number; rejected: number; leaving: number }>(
+          dream.checks_json,
+          { accepted: 0, rejected: 0, leaving: 0 },
+        );
+        lines.push(
+          `    Dream: #${dream.id} ${checks.accepted} op(s), ${checks.rejected} rejected, ${checks.leaving} would leave — ${dream.state} ${dim(relativeTime(dream.created_at, now))} (memory dream show ${dream.id})`,
+        );
       }
       lines.push("");
 

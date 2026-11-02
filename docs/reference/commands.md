@@ -5916,6 +5916,7 @@ Family: memory note <text> · memory recall <query> [evidence|all] · memory ref
 (bare note, recall, reflect, recap, debrief, context are aliases; `help memory full` lists every form)
 memory usefulness [window]  what memory was served to you (per surface, arm, tier; most-served items and the evidence on them)
 memory useful <id> · memory useless <id>  rate an item you were served (half-weight evidence, once per item per day)
+memory dream [now|dry-run|log|show <id>]  the consolidation pass over your own records: what it would merge, restate, link or decay, with every rejection's reason — observed, applied nowhere until it has earned it
 
 Key-value beliefs (core memory — mutable, per-entity, NOT the durable record store):
   memory kv list                        your keys (bare `memory list` = same)
@@ -6345,6 +6346,38 @@ Effect: write.
 
 Effect: read.
 
+
+### `memory dream`
+
+Effect: read.
+
+
+### `memory dream now`
+
+Effect: execute.
+
+
+### `memory dream dry-run`
+
+Effect: execute.
+
+
+### `memory dream log`
+
+Effect: read.
+
+
+### `memory dream show <id>`
+
+Effect: read.
+
+- `field-0` (`id`): text, required.
+
+### `memory dream rollback <id>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
 
 ### `memory usefulness [window]`
 

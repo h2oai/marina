@@ -205,6 +205,7 @@ export const EXPORT_TABLES = [
   "memory_resolution_members",
   "memory_hygiene_snapshots",
   "memory_ratings",
+  "memory_dreams",
   "canvas_edges",
   "benchmark_runs",
   "benchmark_items",
