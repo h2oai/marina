@@ -305,7 +305,10 @@ for example with `MARINA_ARENA_SHADOW_CHALLENGERS=ny_fed_sce=lead`.
 ### Spread calibration and move weight
 
 Every filing passes through the same steps, in order: forecaster → move weight → error floor →
-spread calibration.
+spread calibration (`finishForecast`, `src/arena/submit.ts`). The calibration may narrow a floored sd
+on resolved evidence, deliberately: measured on the 18 resolved October 2026 filings that carried a
+floor, applying the floor last would have cost 0.08 mean skill (7 filings worse, 4 better); the one
+series it helps (angry-share) is the exception.
 
 **Spread calibration per (series, method)** (`src/arena/calibration.ts`). Every filed sd — a
 scalar topline and each profile cell — is multiplied by a scale learned from resolved rounds. The
@@ -392,11 +395,18 @@ as the crew, started from the nowcast:
 | `tournament` | proposals meet in pairwise knockout matches judged by the last model; the champion is settled at the default trust × the field's agreement; the bracket is recorded |
 | `verification` | each proposal is checked for a plausible mean, a plausible sd and cited values present in the data (and, with `MARINA_ARENA_RESEARCH_JUDGE`, whether the rationale follows from the data); median of the passers, the start forecast when none pass |
 
-Aggregation is deterministic: proposals beyond 4 start-sds are dropped, the median move is scaled
-by a trust (0.5 × the proposals' agreement, or the judge's/skeptic's), the final move is capped at
-2 start-sds, and the sd blends by the same trust with floors at half the start sd, the narrowest
+Aggregation is deterministic: proposals beyond 4 move scales are dropped, the median move is
+scaled by a trust (0.5 × the proposals' agreement, or the judge's/skeptic's), the final move is
+capped at 2 move scales, and the sd blends by the same trust with floors at half the start sd, the narrowest
 member proposal, and the linear pool of every recorded member reply (debate advocates and dropped
-replies excluded). Each round's calls, statuses, trust and cost are kept in the record, with the
+replies excluded). The move scale is the series' own change scale — the larger of the typical
+large one-step change in its published history and the latest change, never below the start sd
+(`seriesMoveScale`); it rides on the start the filing service hands the formation
+(`RoundForecast.moveScale`, `src/arena/move-scale.ts`) and is recorded as `formationStart.moveScale`.
+A formation called without one judges moves against the start sd, as before. Until 2026-11 the
+bound was always the start sd: after a Google Trends spike every member called the reversion and
+every call was dropped as a blowup (trends-basket-2026-10-31). Each round's calls, statuses, trust
+and cost are kept in the record, with the
 pattern's own audit under `protocol`.
 
 **Proposal judge (delphi, symbiosis).** When the formation carries a verified research dossier

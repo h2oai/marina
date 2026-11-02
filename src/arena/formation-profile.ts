@@ -73,6 +73,7 @@ import {
   MAX_FINAL_SD_MOVE,
   MAX_PROPOSAL_SD_MOVE,
   median,
+  moveScaleOf,
   PROFILE_ANCHOR,
   RESEARCH_CHECKS,
   runCheck,
@@ -513,7 +514,7 @@ const mapreduce: PProtocol = async (ctx, members) => {
     const move = on.reduce((s, r) => s + r.weight * (r.proposal.profile[c]!.mean - b.mean), 0);
     const w = on.reduce((s, r) => s + r.weight, 0) / on.length;
     const blended = settle(b, 0, median(on.map((r) => r.proposal.profile[c]!.sd)), w);
-    const cap = MAX_FINAL_SD_MOVE * b.sd;
+    const cap = MAX_FINAL_SD_MOVE * moveScaleOf(b);
     profile[c] = { mean: round3(b.mean + clamp(move, -cap, cap)), sd: blended.sd };
     cells[c] = { n: on.length, trust: round3(w) };
   }
@@ -563,14 +564,14 @@ const EXCHANGE_REPLY =
   'Use your partner\'s contribution and CREDIT it: say what you took from it (or why it changes nothing). Reply with ONE JSON object: {"credit": "<what you used from your partner>", "contribution": "<anything new for your partner, or none>", "profile": {"<cell>": {"mean": number, "sd": number > 0}, …every cell…}}.';
 const SYMBIOSIS_MAX_EXCHANGES = 2;
 
-/** The largest per-cell gap between two profiles, in start sds (cells both answered). */
+/** The largest per-cell gap between two profiles, in move scales (cells both answered). */
 function profileGap(ctx: PCtx, a?: ProfileProposal, b?: ProfileProposal): number {
   if (!a || !b) return 0;
   let g = 0;
   for (const c of ctx.cells) {
     const x = a.profile[c];
     const y = b.profile[c];
-    if (x && y) g = Math.max(g, Math.abs(x.mean - y.mean) / ctx.base[c]!.sd);
+    if (x && y) g = Math.max(g, Math.abs(x.mean - y.mean) / moveScaleOf(ctx.base[c]!));
   }
   return g;
 }
@@ -785,11 +786,11 @@ const delphi: PProtocol = async (ctx, members) => {
   );
 };
 
-/** A profile's total move from the start, in start sds (a cell it lacks counts as no move). */
+/** A profile's total move from the start, in move scales (a cell it lacks counts as no move). */
 function totalMove(ctx: PCtx, p: ProfileProposal): number {
   return ctx.cells.reduce((s, c) => {
     const d = p.profile[c];
-    return s + (d ? Math.abs(d.mean - ctx.base[c]!.mean) / ctx.base[c]!.sd : 0);
+    return s + (d ? Math.abs(d.mean - ctx.base[c]!.mean) / moveScaleOf(ctx.base[c]!) : 0);
   }, 0);
 }
 
@@ -1191,7 +1192,15 @@ export async function profileFormationForecastRound(
   proposalJudge?: ProposalJudgeConfig & { verified?: string },
 ): Promise<FormationForecast> {
   const cells = round.cells ?? [];
-  const base = baseline.profile!;
+  // Each cell's start, carrying its own move scale when the filing supplied one
+  // (`RoundForecast.moveScale.cells`); without one the start is passed through
+  // untouched, so the pinned legacy run is byte-identical.
+  const base: Record<string, Distribution> = Object.fromEntries(
+    Object.entries(baseline.profile!).map(([c, d]) => {
+      const ms = baseline.moveScale?.cells?.[c];
+      return [c, ms !== undefined && Number.isFinite(ms) && ms > 0 ? { ...d, moveScale: ms } : d];
+    }),
+  );
   const histories = cellHistories(round, lock);
   const share = shareBasketTotal(round, lock, baseline);
   const ctx: PCtx = {
@@ -1238,7 +1247,14 @@ export async function profileFormationForecastRound(
     profile: closed?.profile ?? floored.profile,
     profileProposals: out.proposals,
     formationStartProfile: Object.fromEntries(
-      cells.map((c) => [c, { mean: base[c]!.mean, sd: base[c]!.sd }]),
+      cells.map((c) => [
+        c,
+        {
+          mean: base[c]!.mean,
+          sd: base[c]!.sd,
+          ...(base[c]!.moveScale !== undefined ? { moveScale: base[c]!.moveScale } : {}),
+        },
+      ]),
     ),
     trust: out.trust,
     ...(judged ? { judge: judged.record } : {}),
