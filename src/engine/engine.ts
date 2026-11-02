@@ -108,6 +108,7 @@ import { MediaManager, mediaGenerationAvailable } from "./media/manager";
 import { audioAvailable } from "./media/providers/audio-registry";
 import { engineSharedWriteHook } from "./memory-dispatch";
 import { envelopeFields, messageEnvelope, mintMessageRef } from "./message-envelope";
+import { notifyOperator } from "./ops-notify";
 import { getRank, rankName } from "./permissions";
 import { PresenceTracker } from "./presence";
 import { computeReadiness } from "./readiness";
@@ -235,6 +236,7 @@ export class Engine {
   /** Unsubscribes this engine from default-resolution traces (on shutdown). */
   private readonly releaseDefaultTrace: () => void;
   private releaseStandingNotices?: () => void;
+  private releaseAlertNotices?: () => void;
   /** Periodic (`tick % every === phase`) maintenance jobs; see `registerTickJobs()`. */
   private readonly tickScheduler: TickScheduler;
   /** @internal */ readonly _connections: ConnectionManager;
@@ -335,6 +337,21 @@ export class Engine {
         "standing",
         { kind: credit.kind, ref: credit.ref, amount: credit.amount },
       );
+    });
+    // An operational alert that OPENS (a filing in trouble, a schedule failing,
+    // a provider down) leaves the world the same way a held action does: an
+    // `ops inbox` item nobody reads is no alert. Repeats of an open alert and
+    // `info` rows stay in the inbox only.
+    this.releaseAlertNotices = this.db?.onOperationalAlert((row, opened) => {
+      if (!opened || row.severity === "info") return;
+      void notifyOperator({
+        event: "alert.opened",
+        title: `Marina: ${row.title}`,
+        detail: `${row.remedy} · ops inbox: ${row.alert_key}`,
+        action: row.action_ref ?? "ops inbox",
+        class: row.category,
+        ...(row.deadline_at ? { deadlineAt: row.deadline_at } : {}),
+      });
     });
     this.rateLimiter = this.config.rateLimiter;
     this.loginRateLimiter = this.config.loginRateLimiter;
@@ -2263,6 +2280,7 @@ export class Engine {
       releaseChallengeHost(this);
       this.releaseDefaultTrace();
       this.releaseStandingNotices?.();
+      this.releaseAlertNotices?.();
       return Promise.allSettled([
         this.benchmarkRunner?.stopAll(),
         this.connectorRuntime?.close(),
