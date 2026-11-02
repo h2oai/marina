@@ -304,6 +304,35 @@ export function atLeastLinearPool(topline: Distribution, steps: FormationStep[])
   return pooled !== undefined && topline.sd < pooled ? { ...topline, sd: round3(pooled) } : topline;
 }
 
+/**
+ * The `~meanonly` formation variant, applied in place after the formation
+ * ran: the members' MEAN stands, but every sd is the start's — the nowcast's
+ * calibrated sd, which the spread calibrator then scales under this variant's
+ * own method key (`formation:<pattern>~meanonly`). The question it tests on
+ * resolved rounds: do the members' sds carry information beyond the
+ * calibrated start, or only the means? Records what it replaced; a forecast
+ * with no start sd to take (a ranking) is left alone.
+ */
+export function meanOnlyForecast(f: RoundForecast, start: RoundForecast): RoundForecast {
+  const replaced: Record<string, { from: number; to: number }> = {};
+  if (f.topline && start.topline && f.topline.sd !== start.topline.sd) {
+    replaced.topline = { from: f.topline.sd, to: start.topline.sd };
+    f.topline = { mean: f.topline.mean, sd: start.topline.sd };
+  }
+  if (f.profile && start.profile) {
+    for (const [cell, d] of Object.entries(f.profile)) {
+      const s = start.profile[cell];
+      if (!s || s.sd === d.sd) continue;
+      replaced[cell] = { from: d.sd, to: s.sd };
+      f.profile[cell] = { mean: d.mean, sd: s.sd };
+    }
+  }
+  if (!Object.keys(replaced).length) return f;
+  f.meanOnly = { sdFrom: "start", replaced };
+  f.note = `${f.note}; sd from the start (mean-only variant)`;
+  return f;
+}
+
 /** The sentence that anchors every member to the start forecast (removed by `unanchored`). */
 export const ANCHOR =
   "The start forecast is the default: move from it only for a concrete pattern in the data; extrapolating a short trend or betting on mean reversion usually loses at a horizon of a few days.";

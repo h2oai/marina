@@ -623,13 +623,18 @@ async function formationForecasterFor(
   ]);
   const stageOf = (text: string) => {
     const [, name = "", variant, list = ""] =
-      text.match(/^(?:formation|then):([a-z]+)(~unanchored)?:(.+)$/i) ?? [];
+      text.match(/^(?:formation|then):([a-z]+)(~unanchored|~meanonly)?:(.+)$/i) ?? [];
     const pattern = formations.formationPattern(name);
     if (!pattern) throw new Error(`unknown formation ${name}`);
     const models = list.split(",");
     // Fail fast on a missing provider key, before any round runs.
     for (const m of models) modelComplete(m, env, ARENA_CALL);
-    return { pattern, models, unanchored: Boolean(variant) };
+    return {
+      pattern,
+      models,
+      unanchored: variant?.toLowerCase() === "~unanchored",
+      meanOnly: variant?.toLowerCase() === "~meanonly",
+    };
   };
   const stages = [stageOf(head)];
   const then = parts.find((p) => p.startsWith("then:"));
@@ -791,6 +796,9 @@ async function formationForecasterFor(
               lessonBrief,
               proposalJudge,
             );
+      // `~meanonly`: the members set the mean, the start (and then the
+      // calibrator, under this variant's own method key) sets the sd.
+      if (stages.some((st) => st.meanOnly)) formations.meanOnlyForecast(f, given);
       f.lessons = lessons;
       let cost = (f as { dossier?: { costUsd?: number } }).dossier?.costUsd ?? 0;
       // The judge's calls and dollars, from each formation's audit record.

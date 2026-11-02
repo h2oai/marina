@@ -196,6 +196,8 @@ export interface RoundForecast {
   ranking?: string[];
   /** Per series (or cell): which spread rule was used. */
   rules: Record<string, SpreadRule>;
+  /** `~meanonly` formation variant: the sd is the start's, not the members' (`meanOnlyForecast`). */
+  meanOnly?: { sdFrom: "start"; replaced: Record<string, { from: number; to: number }> };
   /** The level window chosen for a sampling-noise profile, and the evidence behind it. */
   level?: LevelEvidence;
   /** The poll-level start for a noisy scalar poll topline (`poll-level.ts`). */

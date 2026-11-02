@@ -439,6 +439,11 @@ so they have no formation.
   instruction that the start forecast is the default, and asks every member to list its evidence as
   typed signals (recorded under `signals`, with a `stale` flag for anything observed before the
   start reading). It has its own method key and runs only as a shadow challenger.
+- `formation:<pattern>~meanonly:<models>` runs the same members and protocol but files the
+  members' mean with the START's sd (the nowcast's calibrated sd, then scaled by the spread
+  calibrator under this variant's own method key, `formation:<pattern>~meanonly`). It tests, on
+  resolved rounds, whether the members' sds carry information beyond the calibrated start. The
+  replaced sds are recorded under `meanOnly` in the filing's detail.
 
 Formation lessons use the canonical judged forecast/arena pool, and a filing takes only lessons
 from resolved arena rounds of its own answer shape (`arena:number`, `arena:profile`,
