@@ -5,6 +5,7 @@ import { Database } from "bun:sqlite";
 import type { AgentSupports, AgentThinkingLevel } from "../agent/agent-types";
 import type { Session } from "../auth/session-manager";
 import { DURABLE_KEY_CACHE_MAX, type NoteTier } from "../engine/constants";
+import { Logger } from "../engine/logger";
 import type { MemoryStorageAmounts } from "../sdk/memory-types";
 import type {
   RoutingChannelPage,
@@ -395,6 +396,8 @@ export class MarinaDB implements MarinaStores {
   private db: Database;
   private reader: Database;
   private readonly closeHooks = new DisposableStack();
+  /** `onOperationalAlert` listeners, called after every alert upsert. */
+  private readonly alertListeners = new Set<(row: OperationalAlertRow, opened: boolean) => void>();
 
   readonly durability: "normal" | "full";
 
@@ -2024,7 +2027,39 @@ export class MarinaDB implements MarinaStores {
     metadata?: Record<string, unknown>;
     deadlineAt?: number;
   }): OperationalAlertRow {
-    return alertsDb.upsertOperationalAlert(this.db, alert);
+    const before = this.db
+      .query("SELECT status FROM operational_alerts WHERE alert_key=?")
+      .get(alert.key) as { status: string } | null;
+    const row = alertsDb.upsertOperationalAlert(this.db, alert);
+    // Opened: no row before, or a resolved one reopened. A repeat (another
+    // occurrence of an open or acknowledged alert) is not an opening.
+    const opened = !before || before.status === "resolved";
+    for (const listener of this.alertListeners) listener(row, opened);
+    return row;
+  }
+  /**
+   * Called after every `upsertOperationalAlert` with the row and whether it
+   * OPENED (first seen, or reopened after a resolve) — the engine pushes an
+   * opening out of the world through `MARINA_OPS_NOTIFY`. A listener's error
+   * never fails the write.
+   */
+  onOperationalAlert(listener: (row: OperationalAlertRow, opened: boolean) => void): () => void {
+    const safe = (row: OperationalAlertRow, opened: boolean) => {
+      try {
+        listener(row, opened);
+      } catch (err) {
+        new Logger().warn("db", "operational alert listener failed", {
+          key: row.alert_key,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    };
+    this.alertListeners.add(safe);
+    const release = () => {
+      this.alertListeners.delete(safe);
+    };
+    this.onClose(release);
+    return release;
   }
   listOperationalAlerts(
     status?: "open" | "acknowledged" | "resolved",

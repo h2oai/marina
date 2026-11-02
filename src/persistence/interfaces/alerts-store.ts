@@ -29,6 +29,8 @@ export interface AlertsStore {
   setOperationalAlertStatus(id: number, status: "acknowledged" | "resolved"): boolean;
   snoozeOperationalAlert(id: number, until: number): boolean;
   resolveOperationalAlertsExcept(category: string, activeKeys: string[]): number;
+  /** After every upsert: the row and whether it opened (first seen or reopened). */
+  onOperationalAlert(listener: (row: OperationalAlertRow, opened: boolean) => void): () => void;
 }
 
 /** Runtime mirror of `AlertsStore`'s method names — the drift test compares it to the facade. */
@@ -38,6 +40,7 @@ export const ALERTS_STORE_METHODS = [
   "setOperationalAlertStatus",
   "snoozeOperationalAlert",
   "resolveOperationalAlertsExcept",
+  "onOperationalAlert",
 ] as const satisfies readonly (keyof AlertsStore)[];
 
 export const ALERTS_STORE_COMPLETE: ExactKeys<AlertsStore, typeof ALERTS_STORE_METHODS> = true;
