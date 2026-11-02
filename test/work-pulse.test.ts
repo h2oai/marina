@@ -53,14 +53,20 @@ const env = (over: Record<string, string> = {}): NodeJS.ProcessEnv => ({ ...over
 describe("work pulse", () => {
   it("opens one task from the first finding, created by the reviewer, marked once", () => {
     const db = world({ notes: ["Run `frobnicate now` to begin.", "Then `look` around."] });
+    const announced: string[] = [];
     const first = openWorkPulseTask({
       db,
+      announce: (t) => announced.push(t),
       vocabulary,
       runningAgents: () => ["Builder"],
       env: env(),
     });
     expect(first.opened).toBeDefined();
     expect(first.opened!.kind).toBe("stale-command");
+    expect(announced).toHaveLength(1);
+    expect(announced[0]).toContain(`@Builder Work pulse task #${first.opened!.id} is open`);
+    expect(announced[0]).toContain(`task claim ${first.opened!.id}`);
+    expect(announced[0]).toContain("Critic reviews");
     expect(first.opened!.title.startsWith(WORK_PULSE_TITLE_PREFIX)).toBe(true);
     const task = db.getTask(first.opened!.id)!;
     expect(task.creator_name).toBe("Critic");

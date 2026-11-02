@@ -54,6 +54,15 @@ export interface WorkPulseDeps {
   vocabulary?: CommandVocabulary;
   /** Names of the agents running now; no agent ⇒ no task (nothing would do it). */
   runningAgents: () => readonly string[];
+  /**
+   * Announce an opened task where the agents read (the engine posts it to
+   * `general` from the reviewer, addressed to `MARINA_WORK_PULSE_WORKER`): a
+   * name-addressed message is what attention treats as owed, so the worker
+   * wakes and claims it. Measured 2026-11-02: the first pulse task sat unclaimed
+   * for 17 minutes while every agent looped on its own standby note; a tell
+   * naming Builder was claimed in 80 s.
+   */
+  announce?: (text: string) => void;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
 }
@@ -167,5 +176,9 @@ export function openWorkPulseTask(deps: WorkPulseDeps): WorkPulseResult {
     validationMode: "single",
     standing: 1,
   });
+  const worker = env.MARINA_WORK_PULSE_WORKER?.trim() || "Builder";
+  deps.announce?.(
+    `@${worker} Work pulse task #${task.id} is open: ${what.title} (${noteList}). Claim it with \`task claim ${task.id}\`, submit the corrected note as evidence; ${reviewerName} reviews.`,
+  );
   return { opened: { id: task.id, title: task.title, kind: finding.kind } };
 }
