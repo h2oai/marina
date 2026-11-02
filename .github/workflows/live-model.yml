@@ -68,7 +68,7 @@ jobs:
           if [ -f "$RUNNER_TEMP/live-coding.log" ]; then mv "$RUNNER_TEMP/live-coding.log" "$RUNNER_TEMP/live-coding/runner.log"; fi
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/live-evidence.tar.gz" live-coding
           gpg --homedir "$RUNNER_TEMP/evidence-keys" --batch --yes --trust-model always --recipient "$(cat "$RUNNER_TEMP/evidence-recipient")" --output "$RUNNER_TEMP/live-evidence.tar.gz.gpg" --encrypt "$RUNNER_TEMP/live-evidence.tar.gz"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.config.outcome == 'success'
         with:
           name: encrypted-live-evidence-${{ github.sha }}-${{ github.run_attempt }}

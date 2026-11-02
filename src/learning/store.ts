@@ -82,6 +82,7 @@ export function lessonFromRecord(r: RecordLike): Lesson | undefined {
     kind: m.lesson_kind === "success" ? "success" : "failure",
     ...(typeof m.category === "string" ? { category: m.category } : {}),
     ...(typeof m.rule === "string" ? { rule: m.rule } : {}),
+    ...(typeof m.evidence === "string" && m.evidence ? { evidence: m.evidence } : {}),
     ...(typeof m.score === "number" ? { score: m.score } : {}),
     trust,
     ...(m.judgement && typeof m.judgement === "object"
@@ -158,6 +159,7 @@ export function lessonMetadata(lesson: Lesson): Record<string, unknown> {
     source: lesson.source,
     ...(lesson.category ? { category: lesson.category } : {}),
     ...(lesson.rule ? { rule: lesson.rule } : {}),
+    ...(lesson.evidence ? { evidence: lesson.evidence } : {}),
     ...(lesson.score !== undefined ? { score: lesson.score } : {}),
     ...(lesson.judgement ? { judgement: lesson.judgement } : {}),
     ...(lesson.judge ? { judge: lesson.judge } : {}),

@@ -305,7 +305,10 @@ for example with `MARINA_ARENA_SHADOW_CHALLENGERS=ny_fed_sce=lead`.
 ### Spread calibration and move weight
 
 Every filing passes through the same steps, in order: forecaster → move weight → error floor →
-spread calibration.
+spread calibration (`finishForecast`, `src/arena/submit.ts`). The calibration may narrow a floored sd
+on resolved evidence, deliberately: measured on the 18 resolved October 2026 filings that carried a
+floor, applying the floor last would have cost 0.08 mean skill (7 filings worse, 4 better); the one
+series it helps (angry-share) is the exception.
 
 **Spread calibration per (series, method)** (`src/arena/calibration.ts`). Every filed sd — a
 scalar topline and each profile cell — is multiplied by a scale learned from resolved rounds. The
@@ -392,11 +395,18 @@ as the crew, started from the nowcast:
 | `tournament` | proposals meet in pairwise knockout matches judged by the last model; the champion is settled at the default trust × the field's agreement; the bracket is recorded |
 | `verification` | each proposal is checked for a plausible mean, a plausible sd and cited values present in the data (and, with `MARINA_ARENA_RESEARCH_JUDGE`, whether the rationale follows from the data); median of the passers, the start forecast when none pass |
 
-Aggregation is deterministic: proposals beyond 4 start-sds are dropped, the median move is scaled
-by a trust (0.5 × the proposals' agreement, or the judge's/skeptic's), the final move is capped at
-2 start-sds, and the sd blends by the same trust with floors at half the start sd, the narrowest
+Aggregation is deterministic: proposals beyond 4 move scales are dropped, the median move is
+scaled by a trust (0.5 × the proposals' agreement, or the judge's/skeptic's), the final move is
+capped at 2 move scales, and the sd blends by the same trust with floors at half the start sd, the narrowest
 member proposal, and the linear pool of every recorded member reply (debate advocates and dropped
-replies excluded). Each round's calls, statuses, trust and cost are kept in the record, with the
+replies excluded). The move scale is the series' own change scale — the larger of the typical
+large one-step change in its published history and the latest change, never below the start sd
+(`seriesMoveScale`); it rides on the start the filing service hands the formation
+(`RoundForecast.moveScale`, `src/arena/move-scale.ts`) and is recorded as `formationStart.moveScale`.
+A formation called without one judges moves against the start sd, as before. Until 2026-11 the
+bound was always the start sd: after a Google Trends spike every member called the reversion and
+every call was dropped as a blowup (trends-basket-2026-10-31). Each round's calls, statuses, trust
+and cost are kept in the record, with the
 pattern's own audit under `protocol`.
 
 **Proposal judge (delphi, symbiosis).** When the formation carries a verified research dossier
@@ -439,6 +449,11 @@ so they have no formation.
   instruction that the start forecast is the default, and asks every member to list its evidence as
   typed signals (recorded under `signals`, with a `stale` flag for anything observed before the
   start reading). It has its own method key and runs only as a shadow challenger.
+- `formation:<pattern>~meanonly:<models>` runs the same members and protocol but files the
+  members' mean with the START's sd (the nowcast's calibrated sd, then scaled by the spread
+  calibrator under this variant's own method key, `formation:<pattern>~meanonly`). It tests, on
+  resolved rounds, whether the members' sds carry information beyond the calibrated start. The
+  replaced sds are recorded under `meanOnly` in the filing's detail.
 
 Formation lessons use the canonical judged forecast/arena pool, and a filing takes only lessons
 from resolved arena rounds of its own answer shape (`arena:number`, `arena:profile`,
@@ -752,12 +767,6 @@ Omit `history-previous.json` on the first run. The tool writes a new file, refus
 rejects invalid chronology and conflicting forecasts/outcomes, admits only outcomes available
 before the cutoff, and deduplicates repeated exports. Do not pass stochastic repetitions as
 additional calibration rounds.
-
-**Settlement replays.** `replayDelphiSettlement` in `src/arena/settlement-shadow.ts` re-aggregates
-a complete two-round Delphi trace with `{ meanWeight, spreadWeight, sdScale? }` (defaults 0.5, 0.5,
-1) without new model calls. It first reconstructs the recorded forecast exactly and refuses
-partial or incompatible traces. Record each setting before lock and compare on matched resolved
-rounds; repeats are correlated evidence, not independent questions.
 
 ### Frozen research comparisons (`arena:research`)
 

@@ -186,7 +186,7 @@
 # How long an unanswered challenge stays open, in milliseconds.
 # MARINA_CHALLENGE_TTL_MS=3600000
 
-# Push operator notices out of the world: when a held action (challenge) opens, and when holds expire with nobody answering. An http(s) URL receives a JSON POST; `cmd:<program> [args]` runs a program without a shell, with the title and detail appended as its last two arguments (for example `cmd:notify-send -a Marina`). Notices carry the class, requester, reason, token and deadline, never the held input. Unset or `off` sends nothing; `challenge summary` and the `ops inbox` item `challenge:unanswered` work either way.
+# Push operator notices out of the world: when a held action (challenge) opens, when holds expire with nobody answering, and when an operational alert opens (`alert.opened`: a warning or critical `ops inbox` row first seen or reopened — a filing in trouble, a failing schedule, a provider down; repeats and `info` rows stay in the inbox). An http(s) URL receives a JSON POST; `cmd:<program> [args]` runs a program without a shell, with the title and detail appended as its last two arguments (for example `cmd:notify-send -a Marina`). Notices carry the class, requester, reason, token and deadline, never the held input. Unset or `off` sends nothing; `challenge summary` and the `ops inbox` item `challenge:unanswered` work either way.
 # @protected
 # MARINA_OPS_NOTIFY=off
 
@@ -1463,8 +1463,8 @@
 # While a first-party key (Anthropic, OpenAI, Google, xAI, Mistral, DeepSeek) reports a usage/quota limit, serve the SAME model via OpenRouter when OPENROUTER_API_KEY is set and OpenRouter's catalog lists it (labelled openrouter-served; back to the direct key when the limit lifts). Never a different model. `off` keeps the caller paused/refused until the reset instead. Default on.
 # MARINA_PROVIDER_FALLBACK=on
 
-# In-process library model calls (src/model: forecast, arena, research, lessons, outcome extraction, the web swarm, benchmark checkers) also use the same-model OpenRouter route while a first-party key is usage-limited, and a usage limit they hit marks the route for every caller. Needs OPENROUTER_API_KEY; MARINA_PROVIDER_FALLBACK=off still wins. Never a different model. Default off (the call fails as before).
-# MARINA_MODEL_ROUTE_FALLBACK=off
+# In-process library model calls (src/model: forecast, arena, research, lessons, outcome extraction, the web swarm, benchmark checkers) also use the same-model OpenRouter route while a first-party key is usage-limited, and a usage limit they hit marks the route for every caller. Needs OPENROUTER_API_KEY; MARINA_PROVIDER_FALLBACK=off still wins. Never a different model. Default on; `off` lets the call fail on the limited route instead.
+# MARINA_MODEL_ROUTE_FALLBACK=on
 
 # Extra attempts for an in-process library model call (src/model) after a transient failure: HTTP 429 throttling, a 5xx or a network error. Never a usage/quota limit, an auth refusal, another 4xx, the daily spend cap, a timeout or an abort. Each attempt is priced and checked against the daily cap. Default 1; 0 or off = no retry; at most 5.
 # MARINA_MODEL_RETRIES=1

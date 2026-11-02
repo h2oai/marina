@@ -196,6 +196,15 @@ export interface RoundForecast {
   ranking?: string[];
   /** Per series (or cell): which spread rule was used. */
   rules: Record<string, SpreadRule>;
+  /**
+   * On a START handed to a formation: the series' (or each cell's) own change
+   * scale its members' moves are judged against — the blowup bound, the final
+   * cap and agreement read it instead of the start sd (`withSeriesMoveScale`,
+   * move-scale.ts; set by the filing service). Absent ⇒ the sd, as before.
+   */
+  moveScale?: { topline?: number; cells?: Record<string, number> };
+  /** `~meanonly` formation variant: the sd is the start's, not the members' (`meanOnlyForecast`). */
+  meanOnly?: { sdFrom: "start"; replaced: Record<string, { from: number; to: number }> };
   /** The level window chosen for a sampling-noise profile, and the evidence behind it. */
   level?: LevelEvidence;
   /** The poll-level start for a noisy scalar poll topline (`poll-level.ts`). */
