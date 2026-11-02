@@ -51,14 +51,14 @@ jobs:
         run: bun run qualify:investigations "$RUNNER_TEMP/investigation-qualification"
       - name: Preserve investigation qualification report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: investigation-qualification-report
           path: ${{ runner.temp }}/investigation-qualification/run-*/report.json
           if-no-files-found: ignore
       - name: Preserve participation qualification report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: participation-load-report
           path: ${{ runner.temp }}/participation-load/report.json
@@ -107,7 +107,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up dashboard test runtime
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: dashboard/.node-version
           package-manager-cache: false
@@ -159,7 +159,7 @@ jobs:
         run: cd marina-desktop && xvfb-run -a -s '-screen 0 1440x1000x24' bun scripts/native-smoke.ts
       - name: Preserve native smoke evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-native-smoke
           path: |
@@ -205,7 +205,7 @@ jobs:
         run: bun run test:explorer
       - name: Preserve browser failure evidence
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: participation-browser-failures
           path: |
@@ -251,7 +251,7 @@ jobs:
         run: bun run test:a11y
       - name: Preserve accessibility evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dashboard-accessibility
           path: /tmp/marina-accessibility-results
@@ -265,7 +265,7 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '21'
@@ -276,7 +276,7 @@ jobs:
         run: bun run test:mutation
       - name: Preserve model traces and mutation evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: participation-invariants
           path: |
@@ -311,7 +311,7 @@ jobs:
         run: bun run check:context-performance --baseline "$RUNNER_TEMP/marina-context-base"
       - name: Preserve latency samples and comparison
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: context-performance
           path: /tmp/marina-context-regression/
