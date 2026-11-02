@@ -218,6 +218,13 @@ export interface Lesson {
   kind: "success" | "failure";
   category?: string;
   rule?: string;
+  /**
+   * The numbers behind the rule (aggregate scores, sample sizes, costs,
+   * comparisons), kept apart from it: the judge reads them as the rule's
+   * strength, the rule itself stays a condition and a method. Stored, never
+   * served as part of the rule.
+   */
+  evidence?: string;
   score?: number;
   trust: LessonTrust;
   /** The judge's numbers, when one answered. */
@@ -311,6 +318,7 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…`
 const WRITER_REPLY = [
   'Reply with ONE JSON object: {"category": "<2-5 words: domain + kind of work>",',
   '"rule": "<one sentence under 35 words that applies to SIMILAR future work>",',
+  '"evidence": "<optional: the numbers behind it — scores, sample sizes, costs — or empty>",',
   `"scope": "<what the rule is about: one of ${LESSON_SCOPES.join("|")}>"}.`,
 ].join(" ");
 
@@ -334,7 +342,8 @@ const WRITER_SYSTEM_AGGREGATE = [
   "The rule is about METHOD, CONFIGURATION or MODEL CHOICE: what worked or failed, and under",
   "what conditions (the kind of work), e.g. 'On multi-hop retrieval questions, a strong lead model",
   "reading whole documents beats a single cheap agent.' Name models, formations and settings;",
-  "you may cite aggregate scores, sample sizes or costs as evidence strength.",
+  "you may cite aggregate scores, sample sizes or costs as evidence strength (in `evidence`, or in",
+  "the rule).",
   "Never include item ids, question text, answers or details of any single item.",
   "Measurement notes say how the run was recorded; they are not the finding, so never make them the rule.",
   "When the outcome has no comparable baseline, say what the result does and does not show.",
@@ -376,6 +385,8 @@ async function askWriter(
 ): Promise<{
   category?: string;
   rule?: string;
+  /** The numbers behind the rule (aggregate scores, n, costs), kept apart from it. */
+  evidence?: string;
   scope?: LessonScope;
   missing?: string;
   unavailable?: Unavailable;
@@ -400,14 +411,21 @@ async function askWriter(
     );
     const m = raw.match(/\{[\s\S]*\}/);
     if (!m) return { missing: "writer returned no JSON" };
-    const parsed = JSON.parse(m[0]) as { category?: unknown; rule?: unknown; scope?: unknown };
+    const parsed = JSON.parse(m[0]) as {
+      category?: unknown;
+      rule?: unknown;
+      evidence?: unknown;
+      scope?: unknown;
+    };
     const named = typeof parsed.scope === "string" ? parsed.scope.trim().toLowerCase() : "";
     const rule = typeof parsed.rule === "string" ? clip(parsed.rule.trim(), 220) : "";
+    const evidence = typeof parsed.evidence === "string" ? clip(parsed.evidence.trim(), 220) : "";
     return {
       ...(typeof parsed.category === "string"
         ? { category: clip(parsed.category.trim(), 48) }
         : {}),
       ...(rule ? { rule } : { missing: "writer returned no rule" }),
+      ...(evidence ? { evidence } : {}),
       ...(LESSON_SCOPES.includes(named as LessonScope) ? { scope: named as LessonScope } : {}),
     };
   } catch (err) {
@@ -441,6 +459,7 @@ async function writeCandidate(
   let unavailable: Unavailable | undefined;
   let category: string | undefined;
   let rule: string | undefined;
+  let evidence: string | undefined;
   let scope: LessonScope = o.scope ?? defaultScope(o.domain);
   let writerNote: string | undefined;
   let missing: string | undefined = writer ? undefined : "no writer";
@@ -454,17 +473,21 @@ async function writeCandidate(
       if (answer.category) category = answer.category;
       if (!answer.rule) continue;
       rule = answer.rule;
+      evidence = answer.evidence;
       break;
     }
-    // A writer's rule or category that carries item content is discarded (and
-    // never stored): the producer's own rule stands in for it.
+    // A writer's rule, category or evidence that carries item content is
+    // discarded (and never stored): the producer's own rule stands in for it.
     const leak =
-      rule || category ? mechanicalLeak(`${category ?? ""} ${rule ?? ""}`, o) : undefined;
+      rule || category || evidence
+        ? mechanicalLeak(`${category ?? ""} ${rule ?? ""} ${evidence ?? ""}`, o)
+        : undefined;
     if (leak) {
       writerNote = `writer rule discarded: ${leak}`;
       missing = writerNote;
       rule = undefined;
       category = undefined;
+      evidence = undefined;
     }
   }
   rule ??= o.rule ? clip(o.rule, 260) : undefined;
@@ -480,6 +503,7 @@ async function writeCandidate(
     kind: o.succeeded ? "success" : "failure",
     ...(category ? { category } : {}),
     ...(rule ? { rule } : {}),
+    ...(rule && evidence ? { evidence } : {}),
     ...(o.score !== undefined ? { score: o.score } : {}),
     trust: "unverified",
     resolvedAt: o.resolvedAt,
@@ -521,7 +545,7 @@ export const LESSON_JUDGE_QUESTIONS: DecisionQuestions = {
   grounded: {
     type: "noul",
     instructions:
-      "Is the lesson supported by the outcome and its private context? Any numbers must match. Approval or completion only establishes that someone accepted the work: it does not establish objective correctness, causality, or permission to ignore quality checks. Reject general rules inferred from those claims without supporting evidence.",
+      "Is the lesson supported by the outcome and its private context? Any numbers (in the rule or in its `evidence`) must match the outcome. Approval or completion only establishes that someone accepted the work: it does not establish objective correctness, causality, or permission to ignore quality checks. Reject general rules inferred from those claims without supporting evidence.",
     criteria: {
       true: "The lesson follows from the stated outcome and evidence.",
       false: "The lesson claims something the outcome does not show.",
@@ -642,6 +666,7 @@ export async function judgeLesson(
               : {}),
           },
           lesson: candidate.rule ? `rule: ${candidate.rule}` : candidate.text,
+          ...(candidate.evidence ? { evidence: candidate.evidence } : {}),
           ...(candidate.scope ? { scope: candidate.scope } : {}),
           ...(candidate.families?.length ? { families: candidate.families } : {}),
           applies_to: {
