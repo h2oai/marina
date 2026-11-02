@@ -61,6 +61,16 @@ const CONSEQUENTIAL_COMMAND =
   /^(admin|rank|grant|ban|kick|destroy|connect\s+(add|auth|remove)|gateway\s+(add|remove|bridge)|build\s+(destroy|unlink)|code\s+(approve|deny|revert)|agent\s+(stop|key|reconfigure|config)|role\s+(edit|delete|reload)|trait\s+delete|lessons\s+(retire|supersede))\b/i;
 const COMMUNICATION_COMMAND = /^(say|tell|shout|emote|channel\s+send|board\s+(post|reply))\b/i;
 /**
+ * A verdict on a submission (`task approve|reject <id> <claimant>`) is a reply
+ * to the claimant's ask, and the command checks the answerer's authority
+ * itself (the task's creator, else refused — `reviewRefusal` in commands/task.ts): like an
+ * answer to a held action, it is `communicate`, never scored by the decision
+ * gate. Measured 2026-11-02: the gate held a reviewer's published PASS for 12 h
+ * as "outside scope", and the reviewer taught the shared pool that a reviewer
+ * cannot close a task.
+ */
+const TASK_VERDICT_COMMAND = /^task\s+(approve|reject)\s+\d+\b/i;
+/**
  * An answer to a held action (`challenge|decision approve|deny <token>`) is
  * `communicate`: a reply to an ask, never scored by the decision gate. The
  * command checks the answerer's authority itself (people only — an agent is
@@ -162,6 +172,12 @@ const SELF_LOOP_KEYS: ReadonlySet<string> = new Set([
   "channel_sends",
   "focus_persistent",
   "autonomy",
+  "review",
+  // The agent's own objective (`memory set focus <text>`, the system prompt's
+  // "Direct yourself"): a loop instrument, not another principal's object.
+  // Measured 2026-11-02: the decision gate held a reviewer's `memory set focus`
+  // for 12 h as "outside scope".
+  "focus",
 ]);
 
 /** `web` subcommands that only read from outside (all go through the URL guard). */
@@ -339,6 +355,7 @@ export function classifyCommandRisk(raw: string): ToolRisk {
     return parts.length ? worstRisk(parts.map(classifyCommandRisk)) : "mutate";
   }
   if (CONSEQUENTIAL_COMMAND.test(command)) return "consequential";
+  if (TASK_VERDICT_COMMAND.test(command)) return "communicate";
   const words = command.split(/\s+/);
   const verb = words[0]!.toLowerCase();
   const tail = words.slice(1);
