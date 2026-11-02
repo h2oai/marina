@@ -392,6 +392,16 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
               (a) => a.state === "connected" || a.state === "autonomous" || a.state === "idle",
             )
             .map((a) => a.name),
+        announce: (text) => {
+          const channel = host.channelManager?.getChannelByName("general");
+          if (!channel) return;
+          const reviewer = process.env.MARINA_WORK_PULSE_REVIEWER?.trim() || "Critic";
+          const sender =
+            host.engine.entities.findAgentByName(reviewer)?.id ??
+            db.getUserByName(reviewer)?.id ??
+            "system";
+          host.channelManager?.post(channel.id, sender, reviewer, text);
+        },
       });
       if (result.opened) {
         host.logger.info("agents", `work pulse opened task #${result.opened.id}`, {
