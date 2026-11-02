@@ -27,6 +27,7 @@ import {
 import { forecastRound } from "./forecast";
 import { forecastSettings } from "./forecast-config";
 import { forecastCutoff, requireFreshForecast } from "./freshness";
+import { withSeriesMoveScale } from "./move-scale";
 import { publicKeyBase64 } from "./protocol";
 import { researchFallbackModeFromEnv } from "./research-fallback";
 import {
@@ -729,8 +730,14 @@ async function formationForecasterFor(
       );
       if (inputs && inputs.roundId !== round.round_id)
         throw new Error("frozen inputs belong to another round");
-      const given = inputs ? structuredClone(inputs.start) : await start(round, lock);
       const shown = inputs ? structuredClone(inputs.lock) : await lockForModels(data, round, lock);
+      // The start carries the series' own move scale: the formation judges its
+      // members' moves against how far the series actually moves, not the start sd.
+      const given = withSeriesMoveScale(
+        round,
+        shown,
+        inputs ? structuredClone(inputs.start) : await start(round, lock),
+      );
       if (strictFreshness) requireFreshForecast(round, shown, given);
       const evidence = inputs
         ? inputs.dossier
