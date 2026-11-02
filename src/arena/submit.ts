@@ -54,7 +54,7 @@ import {
   type SignedMeta,
   signRequest,
 } from "./protocol";
-import type { ArenaForecastBody, ArenaRound } from "./types";
+import type { ArenaForecastBody, ArenaRound, Distribution } from "./types";
 
 /** A signed request older than this is refused as a fresh write; re-sign instead. */
 const RESEND_WITHIN_MS = 240_000;
@@ -139,8 +139,11 @@ export async function buildForecastBody(
 /**
  * Whatever produced the forecast (nowcast, formation, crew, research, routed),
  * no sd leaves this step narrower than the series' measured nowcast error
- * (`ForecastOrigin.errorFloor`). Only ever widens; the mean is untouched. The
- * spread calibration runs after it and may narrow it on resolved evidence.
+ * (`ForecastOrigin.errorFloor`). Only ever widens; the mean is untouched. It
+ * runs LAST (`finishForecast`): the spread calibration may narrow the
+ * forecaster's sd on resolved evidence, never below the error the nowcast has
+ * actually made — until 2026-11 the floor ran first and the calibration's
+ * family-pooled ×0.5 then filed angry-share at half its measured error.
  */
 export function applyErrorFloor(round: ArenaRound, f: RoundForecast): RoundForecast {
   const floorOf = (id: string | undefined) => (id ? f.origins?.[id]?.errorFloor : undefined);
@@ -173,6 +176,23 @@ export function applyErrorFloor(round: ArenaRound, f: RoundForecast): RoundForec
 }
 
 type Calibrate = (round: ArenaRound, f: RoundForecast) => RoundForecast;
+
+/**
+ * What a forecaster's answer goes through before it is filed, in order: the
+ * (family, method) move weight, the spread calibration — resolved rounds have
+ * the last word on how wide the forecaster's sd should be — and then the
+ * measured-error floor, which has the last word of all: a calibration may
+ * narrow a forecaster, never below the nowcast's own measured miss. Pure.
+ */
+export function finishForecast(
+  round: ArenaRound,
+  raw: RoundForecast,
+  calibrate?: { move?: Calibrate; spread?: Calibrate },
+): RoundForecast {
+  const weighted = calibrate?.move ? calibrate.move(round, raw) : raw;
+  const calibrated = calibrate?.spread ? calibrate.spread(round, weighted) : weighted;
+  return applyErrorFloor(round, calibrated);
+}
 
 /**
  * The (family, method) post-processing of a filing, from our own resolved
@@ -260,12 +280,7 @@ async function prepareForecast(
   calibrate?: { move?: Calibrate; spread?: Calibrate },
 ) {
   const lock = await data.lock(round.round_id);
-  const raw = await forecaster(round, lock);
-  // The forecaster, then the (family, method) move weight, then the
-  // measured-error floor, then the spread calibration: resolved rounds have
-  // the last word on how wide a filing is.
-  const floored = applyErrorFloor(round, calibrate?.move ? calibrate.move(round, raw) : raw);
-  const f = calibrate?.spread ? calibrate.spread(round, floored) : floored;
+  const f = finishForecast(round, await forecaster(round, lock), calibrate);
   return {
     body: bodyFor(round, entrant, f),
     detail: {
@@ -288,11 +303,15 @@ async function prepareForecast(
 type Prepared = Awaited<ReturnType<typeof prepareForecast>>;
 
 function bodyFor(round: ArenaRound, entrant: string, f: RoundForecast): ArenaForecastBody {
+  // Mean and sd alone: a start's `moveScale` (or any other working field) never files.
+  const dist = (d: Distribution): Distribution => ({ mean: d.mean, sd: d.sd });
   const body: ArenaForecastBody = {
     round_id: round.round_id,
     entrant,
-    ...(f.topline ? { topline: f.topline } : {}),
-    ...(f.profile ? { profile: f.profile } : {}),
+    ...(f.topline ? { topline: dist(f.topline) } : {}),
+    ...(f.profile
+      ? { profile: Object.fromEntries(Object.entries(f.profile).map(([c, d]) => [c, dist(d)])) }
+      : {}),
     ...(f.ranking ? { ranking: f.ranking } : {}),
     notes: f.note.slice(0, 500),
   };

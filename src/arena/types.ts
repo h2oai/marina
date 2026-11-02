@@ -60,6 +60,13 @@ export interface ArenaResolution {
 export interface Distribution {
   mean: number;
   sd: number;
+  /**
+   * On a formation's START only: the series' own change scale a proposal's
+   * move is judged against instead of the sd (`seriesMoveScale`,
+   * `src/orchestration/formations/combine-numeric.ts`). Never filed: the body
+   * carries mean and sd alone (`bodyFor`, submit.ts).
+   */
+  moveScale?: number;
 }
 
 /** The forecast record the arena accepts (`schema/forecast.schema.json`). */

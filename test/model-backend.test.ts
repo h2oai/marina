@@ -443,24 +443,26 @@ describe("traces", () => {
   });
 });
 
-describe("same-model route fallback (opt-in)", () => {
+describe("same-model route fallback (on by default)", () => {
   const LIMIT = "You have reached your specified workspace API usage limits.";
 
-  it("is off by default: a usage limit fails the call and marks nothing", async () => {
+  it("off: a usage limit fails the call and marks nothing", async () => {
     const mocked = provider([failed(LIMIT), reply()]);
     await expect(
-      modelComplete(SPEC, env({ OPENROUTER_API_KEY: "or" }), { maxTokens: 10 }).complete("s", "u"),
+      modelComplete(SPEC, env({ OPENROUTER_API_KEY: "or", MARINA_MODEL_ROUTE_FALLBACK: "off" }), {
+        maxTokens: 10,
+      }).complete("s", "u"),
     ).rejects.toThrow("usage limits");
     expect(mocked.seen).toHaveLength(1);
     expect(routeLimitOf("anthropic")).toBeUndefined();
   });
 
-  it("on: a usage limit marks the route and the SAME model is served via OpenRouter", async () => {
+  it("by default a usage limit marks the route and the SAME model is served via OpenRouter", async () => {
     primeOpenRouterCatalogForTests(["anthropic/claude-opus-5.5"]);
     const mocked = provider([failed(LIMIT), reply(), reply()]);
     const events: ModelLifecycleEvent[] = [];
     const release = attachModelTraceSink((e) => events.push(e));
-    const e = env({ OPENROUTER_API_KEY: "or-key", MARINA_MODEL_ROUTE_FALLBACK: "on" });
+    const e = env({ OPENROUTER_API_KEY: "or-key" });
     try {
       const made = modelComplete(SPEC, e, { maxTokens: 10 });
       expect(await made.complete("s", "u")).toBe("ok");
