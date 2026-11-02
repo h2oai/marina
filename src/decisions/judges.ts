@@ -20,6 +20,9 @@
  *                       resolutions, judged quality, the verifier's opinion on
  *                       the outcome path) against the mechanical outcome for
  *                       the same subject.
+ *  - `dream`            the memory dreamer's ops (per op kind) against the
+ *                       owner's later act: adopted / kept = pass, dismissed /
+ *                       rolled back = fail (`src/memory/dream/judge.ts`).
  *  - `arbiter`          the Arbiter's overrules against the resolved truth
  *                       (right = beat the majority). Recorded for the
  *                       readout; the Arbiter keeps its own bar (precision ≥
@@ -47,7 +50,7 @@ const logger = new Logger();
 export type JudgeMode = "off" | "observe" | "on";
 
 /** The surfaces a mode switch governs (attention covers every attention judge). */
-export type JudgeModeSurface = "challenge" | "verify" | "attention" | "outcome";
+export type JudgeModeSurface = "challenge" | "verify" | "attention" | "outcome" | "dream";
 
 interface SurfaceSwitch {
   legacy: string;
@@ -62,6 +65,7 @@ export const JUDGE_SURFACE_SWITCHES: Readonly<Record<JudgeModeSurface, SurfaceSw
   challenge: { legacy: "MARINA_CHALLENGE_JUDGE", fallback: "observe", parse: onOffElseObserve },
   verify: { legacy: "MARINA_DECISION_VERIFY", fallback: "observe", parse: onOffElseObserve },
   attention: { legacy: "MARINA_ATTENTION_JUDGE", fallback: "observe", parse: onOffElseObserve },
+  dream: { legacy: "MARINA_DREAM_JUDGE", fallback: "observe", parse: onOffElseObserve },
   // Unset: on when this installation has a model provider to judge with,
   // else off (the same rule as MARINA_LESSONS_FROM_WORK).
   outcome: {
@@ -277,7 +281,7 @@ function standingOf(t: JudgeLedgerTally, env: NodeJS.ProcessEnv): JudgeStanding 
 type TallyDb = Pick<MarinaDB, "judgeLedgerTallies">;
 
 /** Surfaces whose agreement is counted per question. */
-const BY_QUESTION = new Set(["challenge"]);
+const BY_QUESTION = new Set(["challenge", "dream"]);
 
 /**
  * Every judge's standing, per surface and judge (and question where the

@@ -529,6 +529,24 @@ describe("the dream pass (observe)", () => {
     }
   });
 
+  it("a link already present is rejected with its reason, never an error", async () => {
+    using _state = scopeProcessState({ env: { MARINA_DREAMING: "on" } });
+    db.createNoteLink(note(6), note(0), "related_to");
+    const model = stubModel(
+      JSON.stringify({
+        ops: [{ op: "link", from: note(6), to: note(0), relation: "related_to", reason: "dup" }],
+      }),
+    );
+    const summary = await runDream(db, "Ada", "command", {
+      complete: model.complete,
+      now: Date.now() + 1000,
+    });
+    expect(summary.state).toBe("observed");
+    expect(summary.checks?.accepted).toBe(0);
+    expect(summary.rejected?.[0]?.reason).toContain("already there");
+    expect(db.getNoteLinks(note(6))).toHaveLength(1);
+  });
+
   it("on: a proposal goes stale when its sources change, and dismiss drops it", async () => {
     using _state = scopeProcessState({ env: { MARINA_DREAMING: "on" } });
     const text = "Cobalt tests reset the fixture database before each run";

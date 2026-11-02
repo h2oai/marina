@@ -124,6 +124,7 @@ export const KNOB_POSTURE: Readonly<Record<string, Posture>> = {
   MARINA_CHALLENGE_JUDGE: measure(judge("challenge"), EARNED_JUDGE, DEC_1),
   MARINA_ATTENTION_JUDGE: measure(judge("attention:"), EARNED_JUDGE, DEC_1),
   MARINA_DECISION_VERIFY: measure(judge("verify"), EARNED_JUDGE, NOV_15),
+  MARINA_DREAM_JUDGE: measure(judge("dream"), EARNED_JUDGE, JAN_15),
   MARINA_MEDIA_VERIFY: measure(
     operator,
     "the verifier's labels agree with a person's review of generated images",

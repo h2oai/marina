@@ -110,7 +110,8 @@ export type StoredDreamOp = (
       textLength: number;
       refs: number[];
       reason: string;
-      proposal?: "pending" | "adopted" | "dismissed" | "stale";
+      /** `earned`: applied at once by a dreamer that earned the op kind (`judge.ts`). */
+      proposal?: "pending" | "adopted" | "dismissed" | "stale" | "earned";
     }
   | { op: "link"; from: number; to: number; relation: DreamLinkRelation; reason: string }
   | { op: "decay"; id: number; reason: string }

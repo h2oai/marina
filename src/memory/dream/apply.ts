@@ -22,9 +22,17 @@ import type { MarinaDB } from "../../persistence/database";
 import type { DreamRow } from "../../persistence/db-memory-dreams";
 import { parseDreamJson } from "../../persistence/db-memory-dreams";
 import { faithfulTo, leavingIds, SUPERSEDE_MAX_CHARS } from "./check";
+import { settleDreamOp, settleRolledBack } from "./judge";
 import type { ProbePlan } from "./probe";
 import { probeHit } from "./probe";
-import type { AppliedFootprint, DreamChecks, DreamOp, DreamProbe, StoredDreamOp } from "./types";
+import type {
+  AppliedFootprint,
+  DreamChecks,
+  DreamOp,
+  DreamProbe,
+  RejectedOp,
+  StoredDreamOp,
+} from "./types";
 
 /** How far one decay lowers a note's importance (1–10 scale). */
 export const DECAY_STEP = 2;
@@ -73,6 +81,8 @@ export interface ApplyResult {
   proposals: Array<{ n: number; op: Extract<DreamOp, { op: "supersede" }> }>;
   /** Probe ids that passed before and fail on the applied view. */
   lost: number[];
+  /** Accepted ops the store refused on contact (a link already present): rejected, by index. */
+  skipped: Array<{ n: number; rejected: RejectedOp }>;
 }
 
 /**
@@ -88,11 +98,12 @@ export function applyOps(
   accepted: readonly DreamOp[],
   stored: readonly StoredDreamOp[],
   plan: ProbePlan,
-  opts: { commit: boolean },
+  opts: { commit: boolean; applySupersedes?: boolean },
 ): ApplyResult {
   const run = (): ApplyResult => {
     const ops: StoredDreamOp[] = [];
     const proposals: ApplyResult["proposals"] = [];
+    const skipped: ApplyResult["skipped"] = [];
     accepted.forEach((op, n) => {
       const base = stored[n]!;
       let applied: AppliedFootprint | undefined;
@@ -105,6 +116,23 @@ export function applyOps(
           break;
         }
         case "link": {
+          const present = db
+            .getNoteLinks(op.from)
+            .some(
+              (l) =>
+                l.source_id === op.from && l.target_id === op.to && l.relationship === op.relation,
+            );
+          if (present) {
+            skipped.push({
+              n,
+              rejected: {
+                op: "link",
+                ids: [op.from, op.to],
+                reason: `link: #${op.from} ${op.relation} #${op.to} is already there`,
+              },
+            });
+            break;
+          }
           const linkId = db.createNoteLink(op.from, op.to, op.relation);
           applied = { kind: "link", linkId };
           break;
@@ -115,13 +143,29 @@ export function applyOps(
           applied = { kind: "decay", priorImportance };
           break;
         }
-        case "supersede":
-          proposals.push({ n, op });
+        case "supersede": {
+          if (!opts.applySupersedes) {
+            proposals.push({ n, op });
+            break;
+          }
+          // An earned dreamer applies the restatement at once — same path as
+          // an adoption, same footprint, same rollback.
+          const prior = priorStatus(db, op.id);
+          const newId = db.reviseNote(entityName, op.id, op.text);
+          if (newId) {
+            applied = { kind: "supersede", newId, prior };
+            // The restatement carries the old note's span for its probe.
+            const q = plan.queries.get(op.id);
+            if (q) q.successor = newId;
+          } else proposals.push({ n, op });
           break;
+        }
       }
       ops.push(
         applied
-          ? { ...base, applied }
+          ? base.op === "supersede"
+            ? { ...base, applied, proposal: "earned" }
+            : { ...base, applied }
           : base.op === "supersede"
             ? { ...base, proposal: "pending" }
             : base,
@@ -133,6 +177,7 @@ export function applyOps(
       .map((p) => p.itemId);
     const result: ApplyResult = {
       ops,
+      skipped,
       probes,
       probesAfter: plan.probes.length
         ? {
@@ -299,6 +344,7 @@ export function adoptProposal(
     return id;
   });
   if (!newId) return { ok: false, reason: "the note could not be revised" };
+  settleDreamOp(db, dreamId, n, true);
   return { ok: true, newId, oldId: proposal.id };
 }
 
@@ -313,6 +359,8 @@ export function dismissProposal(
   if (!proposal) return false;
   db.deleteCoreMemory(PROPOSAL_OWNER, proposalKey(entityName, dreamId, n));
   markProposal(db, proposal, mark);
+  // A dismissal is the owner's verdict; a stale proposal says nothing about the op.
+  if (mark === "dismissed") settleDreamOp(db, dreamId, n, false);
   return true;
 }
 
@@ -379,6 +427,7 @@ export function rollbackDream(db: MarinaDB, row: DreamRow, now = Date.now()): Ro
     }
     db.updateDream(row.id, { state: "rolled_back", ops, rolledBackAt: now });
   });
+  settleRolledBack(db, row.id, parseDreamJson<StoredDreamOp[]>(row.ops_json, []), now);
   db.appendChronicle({
     kind: "event",
     source: "memory",

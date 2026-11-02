@@ -604,3 +604,19 @@ lexical `search` for each fact.
 
 - `contradiction.ts` — harness and CLI (`runContradictionBenchmark`, `generateScenario`, `summarizeArm`, `validateContradictionResult`, `stripVolatile`).
 - `../../test/contradiction-benchmark.test.ts` — offline pipeline + policy-property tests (~3 s).
+
+## dream — replay recorded dreams (offline)
+
+`benchmarks/memory/dream.ts` replays every recorded dream (`memory_dreams`) against the store as
+it is now, with no model calls. A dream record keeps ids, hashes and counts, never text, so the
+replay rebuilds each probe's query from its record's current text and says whether it is `intact`
+(same hash), `drifted` (the record changed since) or `gone`, runs it today, and prints that beside
+the pass rates the dream recorded before and after its dry-applied view. Every stored merge, link
+and decay is re-checked against a region re-gathered over the dream's window (supersedes carry no
+text and are skipped), and the region hash is compared with the recorded one. The last block is
+the held-out measurement (`memory dream measure`) over every owner.
+
+```bash
+bun run bench:dream -- --db ~/.marina/marina.db            # a table per dream, then the effect
+bun run bench:dream -- --db ~/.marina/marina.db --json     # the same as JSON
+```
