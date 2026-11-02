@@ -137,7 +137,11 @@ describe("judged resolution of answers no market settles", () => {
     const settled = db.getOutcomeBySubject(`forecast:${sure}`)!;
     expect(settled).toMatchObject({ basis: "judged", judge: "test:jev", succeeded: 0 });
     // A settled judged outcome is delivered (lessons, history), labelled judged.
-    expect(db.outcomeDeliveries(settled.id).map((d) => d.consumer)).toEqual(["history", "lessons"]);
+    expect(db.outcomeDeliveries(settled.id).map((d) => d.consumer)).toEqual([
+      "history",
+      "lessons",
+      "usefulness",
+    ]);
   });
 
   it("an outage records nothing", async () => {

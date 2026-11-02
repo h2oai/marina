@@ -636,6 +636,20 @@ export class MarinaDB implements MarinaStores {
     return usefulnessDb.usefulnessRatingsFor(this.reader, itemId, limit);
   }
 
+  usefulnessPosterior(
+    itemIds: readonly string[],
+    opts?: { excludeSelf?: boolean },
+  ): Map<string, usefulnessDb.UsefulnessPosterior> {
+    return usefulnessDb.usefulnessPosterior(this.reader, itemIds, opts);
+  }
+
+  citationRateByArm(
+    entityName: string,
+    sinceMs: number,
+  ): Record<string, { serves: number; cited: number }> {
+    return usefulnessDb.citationRateByArm(this.reader, entityName, sinceMs);
+  }
+
   verifyEvidenceChain(): evidenceDb.EvidenceVerification {
     return evidenceDb.verifyEvidenceChain(this.reader);
   }

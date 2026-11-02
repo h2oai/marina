@@ -132,6 +132,6 @@ describe("benchmark runs on the outcome path", () => {
 
   it("gives benchmark outcomes no delivery consumers", () => {
     expect(consumersFor("benchmark")).toEqual([]);
-    expect(consumersFor("forecast")).toEqual(["lessons", "history"]);
+    expect(consumersFor("forecast")).toEqual(["lessons", "history", "usefulness"]);
   });
 });

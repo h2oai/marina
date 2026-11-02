@@ -29,7 +29,7 @@ import {
   sourceNumericNote,
   verifyNumericNote,
 } from "./db-memory-numeric";
-import { applyUsefulness } from "./db-memory-usefulness";
+import { applyUsefulness, USEFULNESS_WEIGHT, usefulnessRankingMode } from "./db-memory-usefulness";
 import { createStoredNote, deleteStoredNote } from "./db-note-storage";
 import { buildFtsQuery, MATCHED_FROM, MATCHED_FROM_SCOPE, MATCHED_NOTES_CTE } from "./fts";
 
@@ -1103,6 +1103,23 @@ const SHARED_SCORE_EXPR = SCORE_EXPR.replace(
         ${REPUTATION_TERM}
         AS score`,
 );
+/**
+ * The usefulness term for a shared pool note (`MARINA_MEMORY_USEFULNESS_RANKING=on`
+ * only): `USEFULNESS_WEIGHT × (2·mean − 1)`, mean = the Beta posterior of the
+ * note's ratings from OTHER entities (the writer's own evidence never moves
+ * how others rank its note), 0.5 with none. Same bound as the standing term.
+ */
+const USEFULNESS_TERM = `(${USEFULNESS_WEIGHT} * (2.0 * COALESCE(
+          (SELECT (1.0 + SUM(r.alpha)) / (2.0 + SUM(r.alpha) + SUM(r.beta)) FROM memory_ratings r
+            WHERE r.item_id = CAST(n.id AS TEXT)
+              AND (r.rater_entity IS NULL OR lower(r.rater_entity) IS NOT lower(n.entity_name))),
+          0.5) - 1.0))`;
+const SHARED_SCORE_EXPR_USEFUL = SHARED_SCORE_EXPR.replace(
+  /\s*AS score$/,
+  ` +
+        ${USEFULNESS_TERM}
+        AS score`,
+);
 
 export function recallNotes(
   db: Database,
@@ -1608,13 +1625,14 @@ export function recallPoolNotes(
   const gamma = opts?.weightRelevance ?? DEFAULT_WEIGHT_RELEVANCE;
   const now = Date.now();
   // Shared retrieval: the bounded writer-reputation term applies here and
-  // nowhere else (see REPUTATION_WEIGHT). Bind order is unchanged — the term
-  // carries no placeholders.
+  // nowhere else (see REPUTATION_WEIGHT), and the usefulness term when it is
+  // `on`. Bind order is unchanged — neither term carries placeholders.
+  const scoreExpr = usefulnessRankingMode() === "on" ? SHARED_SCORE_EXPR_USEFUL : SHARED_SCORE_EXPR;
   return db
     .query(
       `${MATCHED_NOTES_CTE}
       SELECT n.*,
-        ${SHARED_SCORE_EXPR}
+        ${scoreExpr}
       ${lexicalFrom(db, ftsQuery, { pool: poolId })}
       WHERE n.pool_id = ? AND n.verification_status != 'superseded' ${opts?.includeProcess ? "" : `AND ${factLikeClause("n")}`}
       ORDER BY score DESC

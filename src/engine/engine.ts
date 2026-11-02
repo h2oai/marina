@@ -49,6 +49,7 @@ import {
 } from "../learning/work";
 import { memoryAccess } from "../memory/access";
 import { residentMemoryAPI } from "../memory/resident-service";
+import { observeUsefulnessEvent } from "../memory/usefulness";
 import { attachModelTraceSink } from "../model/trace";
 import type { AdapterManager } from "../net/adapters/adapter-manager";
 import { connects, stripAnsi } from "../net/ansi";
@@ -558,6 +559,10 @@ export class Engine {
     // The outcome path (src/outcomes/): a creator's verdict on a task
     // submission is a resolved result — recorded once, learned from.
     this.addEventListener((event) => observeOutcomeEvent(this.db, event));
+    // Usefulness evidence (src/memory/usefulness.ts): a saved note or a task
+    // submission that names a note the writer was recently served is a
+    // citation of that note — mechanical, no model.
+    this.addEventListener((event) => observeUsefulnessEvent(this.db, event));
     // How a task is being worked, taken while its crew is live (a one-off
     // crew is gone by the time the creator's verdict arrives). A task bound to
     // a crew (`crew dispatch`) is that crew's work; otherwise the claimant's

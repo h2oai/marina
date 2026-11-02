@@ -29,7 +29,7 @@ const residentForecast = (source: string | undefined) =>
   !!source && RESIDENT_FORECAST_SOURCES.some((s) => source === s || source.startsWith(`${s}:`));
 
 /** Every consumer `consumersFor` can name (the delivery backfill's scope). */
-export const OUTCOME_CONSUMERS: readonly string[] = ["lessons", "history"];
+export const OUTCOME_CONSUMERS: readonly string[] = ["lessons", "history", "usefulness"];
 
 /**
  * The consumers that learn from an outcome. A judged outcome has none: it is
@@ -46,8 +46,10 @@ export function consumersFor(
   // A benchmark run's lesson goes through the benchmark learner
   // (`noteBenchmarkRun`), which owns its leak guard: its row is evidence only.
   if (kind === "request" || kind === "benchmark") return [];
-  if (kind === "forecast" && residentForecast(opts.source)) return ["lessons"];
-  return kind === "forecast" ? ["lessons", "history"] : ["lessons"];
+  // `usefulness`: the memory served to the owner during the work is rated by
+  // the result (src/memory/usefulness.ts) — a mechanical consumer, no model.
+  if (kind === "forecast" && residentForecast(opts.source)) return ["lessons", "usefulness"];
+  return kind === "forecast" ? ["lessons", "history", "usefulness"] : ["lessons", "usefulness"];
 }
 
 const scheduled = new WeakMap<object, { again: boolean; running: Promise<void> }>();

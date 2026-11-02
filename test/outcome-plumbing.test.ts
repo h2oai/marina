@@ -317,17 +317,22 @@ describe("outcome delivery plumbing", () => {
       db.setOutcomeDelivery(partial, "lessons", "done", "already learned");
 
       const first = backfillOutcomeDeliveries(db, { now: 5_000 });
-      expect(first.added).toBe(4);
+      expect(first.added).toBe(7);
       expect(consumers(live)).toEqual([
         ["history", "pending", 0, null],
         ["lessons", "pending", 0, null],
+        ["usefulness", "pending", 0, null],
       ]);
-      expect(consumers(resident)).toEqual([["lessons", "pending", 0, null]]);
+      expect(consumers(resident)).toEqual([
+        ["lessons", "pending", 0, null],
+        ["usefulness", "pending", 0, null],
+      ]);
       expect(consumers(bench)).toEqual([]);
       expect(consumers(judged)).toEqual([]);
       expect(consumers(partial)).toEqual([
         ["history", "pending", 0, null],
         ["lessons", "done", 1, "already learned"],
+        ["usefulness", "pending", 0, null],
       ]);
 
       const snapshot = [live, resident, bench, judged, partial].map(consumers);
@@ -339,11 +344,11 @@ describe("outcome delivery plumbing", () => {
 
     it("scans a bounded window per call and resumes after it", () => {
       const ids = Array.from({ length: 5 }, () => old({ subject: `forecast:${file()}` }));
-      expect(backfillOutcomeDeliveries(db, { scan: 2 })).toMatchObject({ scanned: 2, added: 4 });
+      expect(backfillOutcomeDeliveries(db, { scan: 2 })).toMatchObject({ scanned: 2, added: 6 });
       expect(consumers(ids[2]!)).toEqual([]);
-      expect(backfillOutcomeDeliveries(db, { scan: 2 })).toMatchObject({ scanned: 2, added: 4 });
-      expect(backfillOutcomeDeliveries(db, { scan: 2 })).toMatchObject({ scanned: 1, added: 2 });
-      for (const id of ids) expect(consumers(id)).toHaveLength(2);
+      expect(backfillOutcomeDeliveries(db, { scan: 2 })).toMatchObject({ scanned: 2, added: 6 });
+      expect(backfillOutcomeDeliveries(db, { scan: 2 })).toMatchObject({ scanned: 1, added: 3 });
+      for (const id of ids) expect(consumers(id)).toHaveLength(3);
     });
 
     it("backfilled measurements follow the board rule: unnamed is skipped; neither writes history", async () => {

@@ -10,6 +10,7 @@ import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
 import { proposeUpstreamModelSeeds } from "../learned/upstream-model-seeds";
 import { flushWorkLessons } from "../learning/work";
+import { settleUnusedServes } from "../memory/usefulness";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model/model-api";
 import { autoresolveLinked } from "../outcomes/autoresolve";
@@ -300,6 +301,28 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     run: async () => {
       if (!host.db) return;
       await runEngineAccumulationDispatch(host.engine);
+    },
+  });
+
+  // Hourly (own phase): usefulness settle. A memory served more than the
+  // grace period ago with no citation from the entity it was served to is
+  // `unused` evidence on that item (src/memory/usefulness.ts), capped per
+  // item per day; the cursor is durable, so a restart never re-rates.
+  s.register({
+    name: "memory-usefulness-settle",
+    every: NOTE_IMPORTANCE_INTERVAL,
+    phase: USEFULNESS_SETTLE_PHASE,
+    failureMessage: "Memory usefulness settle failed",
+    run: () => {
+      if (!host.db) return;
+      const result = settleUnusedServes(host.db);
+      if (result.unused)
+        host.engine.logger.info("memory", "settled unused memory serves", {
+          scanned: result.scanned,
+          unused: result.unused,
+          cited: result.cited,
+          capped: result.capped,
+        });
     },
   });
 
@@ -598,6 +621,8 @@ export const OUTCOME_JUDGE_PHASE = 3150;
 
 /** The hourly phase of automatic resolution of market-linked answers (src/outcomes/autoresolve.ts). */
 export const OUTCOME_AUTORESOLVE_PHASE = 3450;
+/** Hourly phase of `memory-usefulness-settle` (distinct from every other hourly job). */
+export const USEFULNESS_SETTLE_PHASE = 3550;
 
 /** Ticks between arena filing-watch passes (src/arena/filing-watch.ts). */
 export const ARENA_FILING_WATCH_INTERVAL = 600;

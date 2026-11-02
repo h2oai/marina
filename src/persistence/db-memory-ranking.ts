@@ -11,6 +11,13 @@ import {
   memoryFilters,
   memoryValidityFilter,
 } from "./db-memory-service";
+import {
+  USEFULNESS_WEIGHT,
+  type UsefulnessRankingMode,
+  usefulnessPosterior,
+  usefulnessRankingMode,
+  usefulnessTerm,
+} from "./db-memory-usefulness";
 import { REPUTATION_STANDING_CEILING, REPUTATION_WEIGHT } from "./db-notes";
 import type { MemoryActor } from "./db-principals";
 
@@ -99,6 +106,17 @@ export interface ReputationRanking {
   considered: number;
   /** Per-record detail — inspectable, deterministic. */
   authors: Record<string, { author: string | null; standing: number; term: number }>;
+  /**
+   * The usefulness factor (`MARINA_MEMORY_USEFULNESS_RANKING`): each record's
+   * α/β posterior from others' evidence (self-ratings excluded) and the
+   * bounded term; `applied` is true only in `on`, when the term moved scores.
+   */
+  usefulness?: {
+    mode: Exclude<UsefulnessRankingMode, "off">;
+    weight: number;
+    applied: boolean;
+    items: Record<string, { alpha: number; beta: number; n: number; mean: number; term: number }>;
+  };
 }
 
 /** Civic standing of a durable principal from the rollup cache; unknown → 0. */
@@ -161,11 +179,10 @@ export function applyReputationRerank<T extends { id: string; score: number }>(
   db: Database,
   actor: MemoryActor,
   results: readonly T[],
+  opts: { usefulness?: UsefulnessRankingMode } = {},
 ): { results: T[]; ranking: ReputationRanking } {
-  const authors = recordAuthors(
-    db,
-    results.map((r) => r.id),
-  );
+  const ids = results.map((r) => r.id);
+  const authors = recordAuthors(db, ids);
   const ranking: ReputationRanking = {
     weight: REPUTATION_WEIGHT,
     standing_ceiling: REPUTATION_STANDING_CEILING,
@@ -173,6 +190,15 @@ export function applyReputationRerank<T extends { id: string; score: number }>(
     considered: results.length,
     authors: {},
   };
+  // Usefulness (others' evidence only): bounded like standing, in the same
+  // unit; `observe` reports what it would add and adds nothing.
+  const mode = opts.usefulness ?? usefulnessRankingMode();
+  const posterior =
+    mode === "off" || ids.length === 0
+      ? undefined
+      : usefulnessPosterior(db, ids, { excludeSelf: true });
+  if (posterior && mode !== "off")
+    ranking.usefulness = { mode, weight: USEFULNESS_WEIGHT, applied: mode === "on", items: {} };
   const standingCache = new Map<string, number>();
   const adjusted = results.map((result, index) => {
     const author = authors.get(result.id) ?? null;
@@ -184,7 +210,19 @@ export function applyReputationRerank<T extends { id: string; score: number }>(
     const term = author && author !== actor.principalId ? reputationTerm(standing) * RRF_UNIT : 0;
     if (term > 0) ranking.applied++;
     ranking.authors[result.id] = { author, standing, term };
-    return { result, index, score: result.score + term };
+    let useful = 0;
+    const p = posterior?.get(result.id);
+    if (p && ranking.usefulness) {
+      useful = usefulnessTerm(p.mean) * RRF_UNIT;
+      ranking.usefulness.items[result.id] = {
+        alpha: p.alpha,
+        beta: p.beta,
+        n: p.n,
+        mean: p.mean,
+        term: useful,
+      };
+    }
+    return { result, index, score: result.score + term + (mode === "on" ? useful : 0) };
   });
   adjusted.sort(
     (a, b) => b.score - a.score || a.index - b.index || a.result.id.localeCompare(b.result.id),

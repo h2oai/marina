@@ -280,6 +280,7 @@ contradictions or stale sources to the operations inbox.
 > memory history goal                Version history of a key
 > memory kv delete goal              Delete a key
 > memory usefulness 7d               What memory was served to you: per surface, arm, tier; most-served items and the evidence on them
+> memory useful 12                   Rate a note you were served (half-weight evidence; `memory useless 12` the other way)
 
 > reflect performance                Synthesize notes into a higher-level insight
 > dig cache regressions              Investigate a topic: internal notes + web evidence + synthesis

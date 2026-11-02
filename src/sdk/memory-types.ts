@@ -322,6 +322,13 @@ export interface MemoryReputationRanking {
   applied: number;
   considered: number;
   authors: Record<string, { author: string | null; standing: number; term: number }>;
+  /** Usefulness factor from others' evidence (`MARINA_MEMORY_USEFULNESS_RANKING`); absent when off. */
+  usefulness?: {
+    mode: "observe" | "on";
+    weight: number;
+    applied: boolean;
+    items: Record<string, { alpha: number; beta: number; n: number; mean: number; term: number }>;
+  };
 }
 
 export interface MemorySearchResult {
