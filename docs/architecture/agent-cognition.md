@@ -101,6 +101,7 @@
   - `debrief` — session close view: recent notes, open claims, standing snapshot, reflect-when-3+ nudge (`src/engine/commands/debrief.ts`)
   - `share <pool> <content>` — deposit into a named pool, refuses unknown pools (`src/engine/commands/share.ts`)
   - `dig <topic>` — internal notes + web evidence + optional synthesis; degrades gracefully without connector runtime (`src/engine/commands/dig.ts`)
+- **Work pulse** (`src/engine/work-pulse.ts`, tick job `work-pulse`, daily): a standing source of real work so the task → review → outcome → lesson → standing loop runs without a person feeding it. When an agent is running and the pulse project (`MARINA_WORK_PULSE_PROJECT`, default "Demo Pulse") has no open pulse task, it audits the shared knowledge pool (`MARINA_WORK_PULSE_POOL`, default `guide`) with the `guide audit` auditor and opens ONE bounded, reviewable task from one finding, created by the reviewer account (`MARINA_WORK_PULSE_REVIEWER`, default Critic) so the verdict is an independent party's. A finding is worked once (`workPulseMarker`). `MARINA_WORK_PULSE=off` disables it. Measured 2026-11-02: with no standing work, 173 agent turns produced no task, verdict or outcome.
 - All cognitive features are platform commands accessible to any agent (internal, MCP, WebSocket, telnet)
 
 See also: `docs/guides/agent-prompt-architecture.md`, `docs/guides/agent-development.md`, `docs/guides/behavior-surfaces.md`.

@@ -443,6 +443,18 @@
 # Comma-separated agent names that seeders, autorespawn and room-agent spawning must not bring back. `agent disable <name>` does the same in-world and persists.
 # MARINA_DISABLED_AGENTS=
 
+# The work pulse (tick job `work-pulse`, daily): when at least one agent is running and the pulse project has no open pulse task, audit the shared knowledge pool with the same auditor as `guide audit` and open ONE bounded, reviewable task from one finding (a stale command reference, a duplicate, an unsupported claim, an overlong note), created by the reviewer account so its verdict is an independent party's. A finding is worked once (the task carries a marker). No model call; the agents' own cycles do the work. `off` disables it.
+# MARINA_WORK_PULSE=on
+
+# The project the work pulse files its task under (must exist, with a group). Default the Workbench's "Demo Pulse".
+# MARINA_WORK_PULSE_PROJECT=Demo Pulse
+
+# The account that creates (and so reviews) a pulse task; it must exist and should be an independent party of whoever does the work. Default the Workbench's Critic.
+# MARINA_WORK_PULSE_REVIEWER=Critic
+
+# The knowledge pool the work pulse audits for findings. Default the platform `guide` pool.
+# MARINA_WORK_PULSE_POOL=guide
+
 # Default `on`: every agent a local routing supervisor (`marina supervise`, `marina code` native agents) launches becomes its own world account, owned by the launching person: an agent config with runtime `supervised`, an owned agent principal, a 24-hour workload credential renewed while the run lives and revoked when it stops, and a world presence in the launcher's room. The native process holds no world credential: it gets MARINA_RELAY_SOCKET, a private Unix socket over which `marina connect -c` runs commands on the resident's own connection. Set it on the server (enables `POST /api/routing/residents`) and in the supervisor's environment. Supervised residents are never respawned by the server. A supervisor whose server offers no supervision endpoint (residents off, or an older server) falls back to the earlier routing and says so. `off`: routing behaves as before (the supervisor passes its own credential through).
 # @restart
 # MARINA_SUPERVISED_RESIDENTS=on
