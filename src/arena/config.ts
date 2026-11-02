@@ -60,7 +60,8 @@ const FORECASTER_SPEC = new RegExp(
   `^(baseline|nowcast|spike-decay|lead|discovered|tabh2o(:regression|:forecast)?(@nowcast)?|model:${MODEL_ID}|crew:${MODEL_ID}(,${MODEL_ID}){0,2}` +
     // A formation, optionally judged by a second one (`+then:`) and fed a
     // verified dossier by a research crew (`+research@<retrievers>`).
-    `|formation:${FORMATION}(~unanchored)?:${MODELS}(\\+then:${FORMATION}(~unanchored)?:${MODELS})?(\\+research@${RETRIEVER}(,${RETRIEVER}){0,3})?` +
+    // `~unanchored` drops the anchor; `~meanonly` files the members' mean with the start's sd.
+    `|formation:${FORMATION}(~unanchored|~meanonly)?:${MODELS}(\\+then:${FORMATION}(~unanchored|~meanonly)?:${MODELS})?(\\+research@${RETRIEVER}(,${RETRIEVER}){0,3})?` +
     // Wikipedia rankings with mechanically verified scheduled events (one extraction model).
     `|research:wiki-events:${MODEL_ID}(@${RETRIEVER}(,${RETRIEVER}){0,3})?` +
     // Wikipedia top-10 specialist: projected weekly views; optional event models (up to four).
@@ -101,7 +102,7 @@ export function parseForecasterSpec(raw: string | undefined): string {
     return spec;
   }
   throw new Error(
-    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, spike-decay, lead, tabh2o[:forecast][@nowcast], model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>[~unanchored]:<model>[,…][+then:<pattern>[~unanchored]:<model>[,…]][+research@<retriever>[,…]] (up to twelve models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), research:wiki-events:<model>[@<retriever>[,…]], wiki-specialist[:<model>[,…][@<retriever>[,…]]][+extract:<extractor>[,…]], route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
+    `MARINA_ARENA_FORECASTER "${spec}" must be nowcast, baseline, discovered, spike-decay, lead, tabh2o[:forecast][@nowcast], model:<provider/model>, crew:<model>[,…] (three roles), formation:<pattern>[~unanchored|~meanonly]:<model>[,…][+then:<pattern>[~unanchored|~meanonly]:<model>[,…]][+research@<retriever>[,…]] (up to twelve models; patterns ensemble, deliberation, debate, chorus, pipeline, mapreduce, blackboard, symbiosis, research, delphi, tournament, verification) research:<model>[,…][@<retriever>[,…]] (up to eight analysts), research:wiki-events:<model>[@<retriever>[,…]], wiki-specialist[:<model>[,…][@<retriever>[,…]]][+extract:<extractor>[,…]], route:<family>=<forecaster|skip>;…;*=<forecaster> or routed`,
   );
 }
 

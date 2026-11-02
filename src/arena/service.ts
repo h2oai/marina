@@ -27,6 +27,7 @@ import {
 import { forecastRound } from "./forecast";
 import { forecastSettings } from "./forecast-config";
 import { forecastCutoff, requireFreshForecast } from "./freshness";
+import { withSeriesMoveScale } from "./move-scale";
 import { publicKeyBase64 } from "./protocol";
 import { researchFallbackModeFromEnv } from "./research-fallback";
 import {
@@ -623,13 +624,18 @@ async function formationForecasterFor(
   ]);
   const stageOf = (text: string) => {
     const [, name = "", variant, list = ""] =
-      text.match(/^(?:formation|then):([a-z]+)(~unanchored)?:(.+)$/i) ?? [];
+      text.match(/^(?:formation|then):([a-z]+)(~unanchored|~meanonly)?:(.+)$/i) ?? [];
     const pattern = formations.formationPattern(name);
     if (!pattern) throw new Error(`unknown formation ${name}`);
     const models = list.split(",");
     // Fail fast on a missing provider key, before any round runs.
     for (const m of models) modelComplete(m, env, ARENA_CALL);
-    return { pattern, models, unanchored: Boolean(variant) };
+    return {
+      pattern,
+      models,
+      unanchored: variant?.toLowerCase() === "~unanchored",
+      meanOnly: variant?.toLowerCase() === "~meanonly",
+    };
   };
   const stages = [stageOf(head)];
   const then = parts.find((p) => p.startsWith("then:"));
@@ -724,8 +730,14 @@ async function formationForecasterFor(
       );
       if (inputs && inputs.roundId !== round.round_id)
         throw new Error("frozen inputs belong to another round");
-      const given = inputs ? structuredClone(inputs.start) : await start(round, lock);
       const shown = inputs ? structuredClone(inputs.lock) : await lockForModels(data, round, lock);
+      // The start carries the series' own move scale: the formation judges its
+      // members' moves against how far the series actually moves, not the start sd.
+      const given = withSeriesMoveScale(
+        round,
+        shown,
+        inputs ? structuredClone(inputs.start) : await start(round, lock),
+      );
       if (strictFreshness) requireFreshForecast(round, shown, given);
       const evidence = inputs
         ? inputs.dossier
@@ -791,6 +803,9 @@ async function formationForecasterFor(
               lessonBrief,
               proposalJudge,
             );
+      // `~meanonly`: the members set the mean, the start (and then the
+      // calibrator, under this variant's own method key) sets the sd.
+      if (stages.some((st) => st.meanOnly)) formations.meanOnlyForecast(f, given);
       f.lessons = lessons;
       let cost = (f as { dossier?: { costUsd?: number } }).dossier?.costUsd ?? 0;
       // The judge's calls and dollars, from each formation's audit record.

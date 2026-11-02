@@ -89,6 +89,7 @@ import {
   median,
   medianOutcome,
   movedCount,
+  moveScaleOf,
   round3,
   settle,
 } from "../orchestration/formations/combine-numeric";
@@ -145,6 +146,8 @@ export {
   MAX_FINAL_SD_MOVE,
   MAX_PROPOSAL_SD_MOVE,
   median,
+  moveScaleOf,
+  seriesMoveScale,
   settle,
 } from "../orchestration/formations/combine-numeric";
 
@@ -304,6 +307,35 @@ export function atLeastLinearPool(topline: Distribution, steps: FormationStep[])
   return pooled !== undefined && topline.sd < pooled ? { ...topline, sd: round3(pooled) } : topline;
 }
 
+/**
+ * The `~meanonly` formation variant, applied in place after the formation
+ * ran: the members' MEAN stands, but every sd is the start's — the nowcast's
+ * calibrated sd, which the spread calibrator then scales under this variant's
+ * own method key (`formation:<pattern>~meanonly`). The question it tests on
+ * resolved rounds: do the members' sds carry information beyond the
+ * calibrated start, or only the means? Records what it replaced; a forecast
+ * with no start sd to take (a ranking) is left alone.
+ */
+export function meanOnlyForecast(f: RoundForecast, start: RoundForecast): RoundForecast {
+  const replaced: Record<string, { from: number; to: number }> = {};
+  if (f.topline && start.topline && f.topline.sd !== start.topline.sd) {
+    replaced.topline = { from: f.topline.sd, to: start.topline.sd };
+    f.topline = { mean: f.topline.mean, sd: start.topline.sd };
+  }
+  if (f.profile && start.profile) {
+    for (const [cell, d] of Object.entries(f.profile)) {
+      const s = start.profile[cell];
+      if (!s || s.sd === d.sd) continue;
+      replaced[cell] = { from: d.sd, to: s.sd };
+      f.profile[cell] = { mean: d.mean, sd: s.sd };
+    }
+  }
+  if (!Object.keys(replaced).length) return f;
+  f.meanOnly = { sdFrom: "start", replaced };
+  f.note = `${f.note}; sd from the start (mean-only variant)`;
+  return f;
+}
+
 /** The sentence that anchors every member to the start forecast (removed by `unanchored`). */
 export const ANCHOR =
   "The start forecast is the default: move from it only for a concrete pattern in the data; extrapolating a short trend or betting on mean reversion usually loses at a horizon of a few days.";
@@ -379,14 +411,33 @@ function proposalOf(ctx: Ctx, reply: Record<string, unknown> | undefined): Propo
     if (step?.status === "ok") step.status = "invalid reply (no valid mean/sd)";
     return undefined;
   }
-  if (Math.abs(mean - ctx.base.mean) > MAX_PROPOSAL_SD_MOVE * ctx.base.sd) {
+  if (Math.abs(mean - ctx.base.mean) > MAX_PROPOSAL_SD_MOVE * moveScaleOf(ctx.base)) {
     if (step) {
-      step.status = `dropped: move ${Math.round((mean - ctx.base.mean) * 100) / 100} beyond ${MAX_PROPOSAL_SD_MOVE} start sd`;
+      step.status = `dropped: move ${Math.round((mean - ctx.base.mean) * 100) / 100} beyond ${MAX_PROPOSAL_SD_MOVE} ${moveScaleLabel(ctx.base)}`;
     }
     return undefined;
   }
   const reason = typeof reply.reason === "string" ? reply.reason.slice(0, 300) : undefined;
   return { mean, sd, ...(reason ? { reason } : {}) };
+}
+
+/** How a drop names its bound: the start sd, or the series' move scale when the start carries one. */
+export function moveScaleLabel(base: Distribution): string {
+  return base.moveScale !== undefined && moveScaleOf(base) !== base.sd
+    ? `move scale (${moveScaleOf(base)})`
+    : "start sd";
+}
+
+/**
+ * The start the formation moves from, carrying the series' own move scale
+ * when the filing supplied one (`RoundForecast.moveScale`, set by the service
+ * from the published history — `seriesMoveScale`). Without one the start is
+ * passed through untouched, so the pinned legacy run is byte-identical.
+ */
+function startBase(topline: Distribution, moveScale: number | undefined): Distribution {
+  return moveScale !== undefined && Number.isFinite(moveScale) && moveScale > 0
+    ? { ...topline, moveScale }
+    : topline;
 }
 
 /** Ask and validate in one step; the proposal is keyed by the step that produced it. */
@@ -662,9 +713,9 @@ const mapreduce: Protocol = async (ctx, members) => {
         if (step) step.status = "invalid reply (no valid adjustment/sd)";
         return undefined;
       }
-      if (Math.abs(adj) > MAX_PROPOSAL_SD_MOVE * ctx.base.sd) {
+      if (Math.abs(adj) > MAX_PROPOSAL_SD_MOVE * moveScaleOf(ctx.base)) {
         if (step)
-          step.status = `dropped: adjustment ${adj} beyond ${MAX_PROPOSAL_SD_MOVE} start sd`;
+          step.status = `dropped: adjustment ${adj} beyond ${MAX_PROPOSAL_SD_MOVE} ${moveScaleLabel(ctx.base)}`;
         return undefined;
       }
       const reason = typeof r.reason === "string" ? r.reason.slice(0, 300) : undefined;
@@ -686,7 +737,7 @@ const mapreduce: Protocol = async (ctx, members) => {
   // settle() applies the trust; pass the already-shrunk move with trust 1 on
   // the mean, and the sd blend at the mean weight.
   const blended = settle(ctx.base, 0, sd, w);
-  const cap = MAX_FINAL_SD_MOVE * ctx.base.sd;
+  const cap = MAX_FINAL_SD_MOVE * moveScaleOf(ctx.base);
   return {
     proposals: Object.fromEntries(ok.map((r) => [r.key, r.proposal])),
     topline: { mean: round3(ctx.base.mean + clamp(move, -cap, cap)), sd: blended.sd },
@@ -1367,7 +1418,7 @@ export async function formationForecastRound(
   const history = lock.answer_history ?? lock.history ?? [];
   const ctx: Ctx = {
     round,
-    base: baseline.topline,
+    base: startBase(baseline.topline, baseline.moveScale?.topline),
     history,
     head: [
       `Question: ${round.question}`,
@@ -1401,7 +1452,11 @@ export async function formationForecastRound(
   return {
     ...baseline,
     ...common,
-    formationStart: { mean: ctx.base.mean, sd: ctx.base.sd },
+    formationStart: {
+      mean: ctx.base.mean,
+      sd: ctx.base.sd,
+      ...(ctx.base.moveScale !== undefined ? { moveScale: ctx.base.moveScale } : {}),
+    },
     ...(signals.length ? { signals } : {}),
     topline: atLeastLinearPool(
       atLeastNarrowestProposal(judged?.topline ?? out.topline, out.proposals),

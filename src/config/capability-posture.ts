@@ -107,7 +107,6 @@ export const KNOB_POSTURE: Readonly<Record<string, Posture>> = {
   MARINA_OTLP_LOGS_ENABLED: byDesign("needs an operator-run collector"),
   MARINA_OTLP_ALLOW_INSECURE: byDesign("plaintext export to a remote collector"),
   MARINA_ARENA_AUTOPILOT: byDesign("filing an external competition is an operator act"),
-  MARINA_MODEL_ROUTE_FALLBACK: byDesign("moves library calls (data and spend) to another route"),
   MARINA_PASSTHRU_RESPONSE_CACHE: byDesign("replays an earlier answer; the caller opts in"),
   MARINA_AGENT_CACHE_KEEPALIVE: byDesign(
     "spends tokens on idle pings; worth it only for known traffic",
