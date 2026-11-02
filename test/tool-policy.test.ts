@@ -64,6 +64,8 @@ describe("agent tool reference monitor", () => {
       "memory set pace slow",
       "memory kv set channel_sends 2",
       "memory set focus_persistent true",
+      "memory set focus Review #19, then rest.",
+      "memory set review observe",
       "memory delete rest",
       "memory rm rest",
       "memory kv delete pace.",
@@ -72,6 +74,30 @@ describe("agent tool reference monitor", () => {
       "memory delete rest; project hab join",
     ]) {
       expect([command, classifyToolRisk("marina_command", { command })]).toEqual([command, "self"]);
+    }
+  });
+
+  it("a task verdict is a reply whose authority the command checks itself", () => {
+    for (const command of [
+      "task approve 19 Builder",
+      "task reject 19 Builder the note is still over 700 characters",
+      "task approve 2 builder",
+    ]) {
+      expect([command, classifyToolRisk("marina_command", { command })]).toEqual([
+        command,
+        "communicate",
+      ]);
+    }
+    for (const command of [
+      "task claim 19",
+      "task submit 19 done",
+      "task cancel 19",
+      "task approve",
+    ]) {
+      expect([command, classifyToolRisk("marina_command", { command })]).toEqual([
+        command,
+        "mutate",
+      ]);
     }
   });
 
