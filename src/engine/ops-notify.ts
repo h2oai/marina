@@ -7,8 +7,11 @@
  * Held actions (challenges) wait for a person, but an operator who is not in
  * the world when a hold opens never sees it, and the `ops inbox` item is
  * resolved when the hold expires. This hook pushes a content-free notice OUT of the world the moment
- * a hold opens (and when holds expire unanswered), to somewhere the operator
- * actually looks:
+ * a hold opens (and when holds expire unanswered), and the moment an
+ * operational alert OPENS (`alert.opened`: a filing in trouble, a schedule
+ * failing, a provider down — `MarinaDB.onOperationalAlert`; an alert that
+ * sat in the inbox for a month unread is the failure this closes), to
+ * somewhere the operator actually looks:
  *
  *   MARINA_OPS_NOTIFY=https://ntfy.example/marina   POST JSON to a webhook
  *   MARINA_OPS_NOTIFY=cmd:notify-send -a Marina      run a program (no shell);
@@ -31,7 +34,7 @@ export const OPS_NOTIFY_ENV = "MARINA_OPS_NOTIFY";
 export const OPS_NOTIFY_TIMEOUT_MS = 10_000;
 
 export interface OpsNotice {
-  /** `challenge.opened` | `challenge.unanswered` (stable, for routing rules). */
+  /** `challenge.opened` | `challenge.unanswered` | `alert.opened` (stable, for routing rules). */
   event: string;
   title: string;
   detail: string;

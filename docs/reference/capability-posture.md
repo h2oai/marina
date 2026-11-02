@@ -90,7 +90,7 @@ off-by-default setting has no entry.
 | `MARINA_ROUTE_EVIDENCE_WINDOW` | outcomes (any) | live-work evidence picks the same or better models as the benchmark ledger | 2026-12-01 |
 | `MARINA_VERIFY_ARBITER` | judge ledger surface arbiter | overrule precision clears the Arbiter's earned bar | 2026-12-01 |
 
-## By design (40)
+## By design (39)
 
 | Subject | Reason |
 |---|---|
@@ -119,7 +119,6 @@ off-by-default setting has no entry.
 | `MARINA_DECISION_GATE` | a fail-closed restriction an operator adds, never by evidence |
 | `MARINA_FEDERATION_ALLOW_UNSIGNED` | accepts events whose origin cannot be verified |
 | `MARINA_MEMORY_EMBEDDING_LOCAL_ONLY` | a restriction an operator adds to the embedder |
-| `MARINA_MODEL_ROUTE_FALLBACK` | moves library calls (data and spend) to another route |
 | `MARINA_OPEN_API` | development only: unauthenticated API access |
 | `MARINA_OPS_NOTIFY` | needs an operator-supplied destination |
 | `MARINA_OTLP_ALLOW_INSECURE` | plaintext export to a remote collector |

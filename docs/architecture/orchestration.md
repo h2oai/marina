@@ -172,7 +172,8 @@ assert what a formation must do:
   n − 1 refereed matches; the skeptic is asked once, after the proposals; the combiners' math
   (delphi medians, the referee's pick, the skeptic's trust, blowup bound, sd floor and
   informative-prior rule); the catalogue's arena formations cap the move and drop blowups on the
-  stored rounds (`test/fixtures/formations/arena-rounds.json`).
+  stored rounds (`test/fixtures/formations/arena-rounds.json`). The bound is the start's move
+  scale (`moveScaleOf`: its `moveScale`, else its sd — `test/arena-move-scale.test.ts`).
 - `test/formation-catalogue.test.ts`: a brief, a template, `PATTERN_FIT`, `TEXT_PATTERNS`,
   `CREW_ONLY_PATTERNS`, the typed list or the arena list drifting from the catalogue; templates that
   stop instantiating to valid Scores; the resident Scores' shape; `model:` and `role:` slots giving

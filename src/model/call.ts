@@ -68,9 +68,15 @@ export interface ModelCallOptions {
   trace?: ModelTraceContext;
 }
 
-/** `MARINA_MODEL_ROUTE_FALLBACK=on` lets library calls use the same-model OpenRouter route. */
+/**
+ * Library calls use the same-model OpenRouter route while a first-party key
+ * is usage-limited, unless `MARINA_MODEL_ROUTE_FALLBACK=off` (a `/v1` caller's
+ * `MARINA_PROVIDER_FALLBACK=off` still wins inside `sameModelFallback`). On by
+ * default since 2026-11: off, a limited Anthropic key cost the arena's delphi
+ * one member on 17 filings in two weeks, four of them a panel of one.
+ */
 export function modelRouteFallbackEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.MARINA_MODEL_ROUTE_FALLBACK ?? "").trim().toLowerCase() === "on";
+  return (env.MARINA_MODEL_ROUTE_FALLBACK ?? "").trim().toLowerCase() !== "off";
 }
 
 /** One model and the key to reach it. */
