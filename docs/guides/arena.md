@@ -763,12 +763,6 @@ rejects invalid chronology and conflicting forecasts/outcomes, admits only outco
 before the cutoff, and deduplicates repeated exports. Do not pass stochastic repetitions as
 additional calibration rounds.
 
-**Settlement replays.** `replayDelphiSettlement` in `src/arena/settlement-shadow.ts` re-aggregates
-a complete two-round Delphi trace with `{ meanWeight, spreadWeight, sdScale? }` (defaults 0.5, 0.5,
-1) without new model calls. It first reconstructs the recorded forecast exactly and refuses
-partial or incompatible traces. Record each setting before lock and compare on matched resolved
-rounds; repeats are correlated evidence, not independent questions.
-
 ### Frozen research comparisons (`arena:research`)
 
 ```bash
