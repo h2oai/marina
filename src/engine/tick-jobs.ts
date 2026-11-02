@@ -27,6 +27,7 @@ import {
   formatAssistanceExpiry,
   runAssistanceExpiry,
 } from "./assistance-expiry";
+import { commandVocabulary } from "./command-vocabulary";
 import { syncOperationalAlerts } from "./commands/ops";
 import {
   AGENT_CLEANUP_INTERVAL,
@@ -52,6 +53,7 @@ import {
   runRetentionPass,
 } from "./retention";
 import type { TickScheduleClock, TickScheduler } from "./tick-scheduler";
+import { openWorkPulseTask } from "./work-pulse";
 
 /** The autonomy pulse cadence (5 minutes, matching readiness's evidence window) in ticks. */
 export const AUTONOMY_PULSE_MS = 5 * 60_000;
@@ -344,6 +346,40 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
   // MARINA_EVENT_RETENTION), telemetry / ledger / audit tables by age, in
   // ≤ 5k-row batches (src/engine/retention.ts, MARINA_RETENTION_OVERRIDES).
   // Without this the append-only tables grow for the life of the deployment
+  // The work pulse: once a day, one real, bounded, reviewable task from a
+  // knowledge-hygiene finding when agents are running and the board has no
+  // open pulse task — so the task → review → outcome → lesson loop has
+  // something to learn from without a person feeding it (`work-pulse.ts`).
+  s.register({
+    name: "work-pulse",
+    every: WORK_PULSE_INTERVAL,
+    phase: WORK_PULSE_PHASE,
+    failureMessage: "Work pulse failed",
+    run: () => {
+      const db = host.db;
+      if (!db) return;
+      const result = openWorkPulseTask({
+        db,
+        vocabulary: commandVocabulary(host.engine),
+        runningAgents: () =>
+          host.agentRuntime
+            .list()
+            .filter(
+              (a) => a.state === "connected" || a.state === "autonomous" || a.state === "idle",
+            )
+            .map((a) => a.name),
+      });
+      if (result.opened) {
+        host.logger.info("agents", `work pulse opened task #${result.opened.id}`, {
+          kind: result.opened.kind,
+          title: result.opened.title,
+        });
+      } else if (result.skipped) {
+        host.logger.debug("agents", `work pulse: ${result.skipped}`);
+      }
+    },
+  });
+
   // and every scan over them (traces, activity, expiry) degrades linearly.
   s.register({
     name: "retention",
@@ -651,3 +687,6 @@ export const LIVE_PROMOTION_PHASE = 4200;
 
 /** The hourly phase of the lessons-from-work flush (distinct from every other hourly job). */
 export const LESSONS_FROM_WORK_PHASE = 3300;
+/** The work pulse: daily, durable on wall clock (`DURABLE_MIN_EVERY`), on its own phase. */
+export const WORK_PULSE_INTERVAL = 24 * NOTE_IMPORTANCE_INTERVAL;
+export const WORK_PULSE_PHASE = 5400;
