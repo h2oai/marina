@@ -84,8 +84,24 @@ export interface DreamProbe {
   after: "pass" | "fail" | null;
 }
 
-/** The ops' footprint, stored without text: the supersede text is a hash and a length. */
-export type StoredDreamOp =
+/**
+ * What applying an op changed, enough to reverse it: the statuses a merge
+ * closed, a decay's prior importance, a link's row, an adopted restatement's
+ * new note. Never text.
+ */
+export type AppliedFootprint =
+  | { kind: "merge"; prior: Record<string, "unverified" | "disputed"> }
+  | { kind: "decay"; priorImportance: number }
+  | { kind: "link"; linkId: number }
+  | { kind: "supersede"; newId: number; prior: "unverified" | "disputed" };
+
+/**
+ * The ops' footprint, stored without text: the supersede text is a hash and a
+ * length. `applied` is set when the op was applied (and `reverted` when a
+ * rollback undid it); `proposal` is set when a supersede was filed for the
+ * owner to adopt (its text waits in `core_memory` owner `memory:dream`).
+ */
+export type StoredDreamOp = (
   | { op: "merge"; keep: number; into: number[]; reason: string }
   | {
       op: "supersede";
@@ -94,9 +110,11 @@ export type StoredDreamOp =
       textLength: number;
       refs: number[];
       reason: string;
+      proposal?: "pending" | "adopted" | "dismissed" | "stale";
     }
   | { op: "link"; from: number; to: number; relation: DreamLinkRelation; reason: string }
-  | { op: "decay"; id: number; reason: string };
+  | { op: "decay"; id: number; reason: string }
+) & { applied?: AppliedFootprint; reverted?: true };
 
 export interface DreamChecks {
   proposed: number;
@@ -106,6 +124,8 @@ export interface DreamChecks {
   leaving: number;
   regionSize: number;
   probesBefore: { pass: number; fail: number };
+  /** Probes re-run on the dry-applied view (null when nothing would leave). */
+  probesAfter?: { pass: number; fail: number } | null;
 }
 
 export interface DreamSummary {
@@ -113,7 +133,7 @@ export interface DreamSummary {
   entityName: string;
   trigger: DreamTrigger;
   mode: DreamMode;
-  state: "observed" | "dry-run" | "skipped";
+  state: "observed" | "applied" | "dry-run" | "skipped";
   /** Why nothing ran (schedule gates, budget, no material, no model). */
   skipped?: string;
   region?: { records: number; newRecords: number; bytes: number; hash: string };
@@ -123,5 +143,7 @@ export interface DreamSummary {
   checks?: DreamChecks;
   model?: string;
   spendUsd?: number;
+  /** Supersede proposals filed for the owner (`on` only). */
+  proposals?: number;
   createdAt: number;
 }

@@ -2,8 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { memoryResult } from "../../memory/command-result";
-import { DREAM_APPLY_SUPPORTED, dreamingMode, runDream } from "../../memory/dream";
-import type { DreamProbe, RejectedOp, StoredDreamOp } from "../../memory/dream/types";
+import {
+  adoptProposal,
+  dismissProposal,
+  dreamingMode,
+  pendingProposals,
+  rollbackDream,
+  runDream,
+} from "../../memory/dream";
+import type { DreamChecks, DreamProbe, RejectedOp, StoredDreamOp } from "../../memory/dream/types";
 import {
   formatMemoryOperation,
   MEMORY_SERVICE_HELP,
@@ -89,7 +96,7 @@ const USEFULNESS_MAX_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const USEFULNESS_USAGE =
   "Usage: memory usefulness [window]   e.g. memory usefulness 7d · memory usefulness 24h (default 7d, max 90d)";
 const DREAM_USAGE =
-  "Usage: memory dream [now|dry-run|log|show <id>|rollback <id>]   now — run your consolidation pass (budget permitting; schedule gates skipped) · dry-run — same, recorded nowhere · log — your dreams · show <id> — one dream's ops, rejections and probes (ids and counts, never text)";
+  "Usage: memory dream [now|dry-run|log|show <id>|proposals|adopt <id> [n]|dismiss <id> [n]|rollback <id>]   now — run your consolidation pass (budget permitting; schedule gates skipped) · dry-run — same, recorded nowhere · log — your dreams · show <id> — one dream's ops, rejections and probes (ids and counts, never text) · proposals — restatements a dream filed for you · adopt/dismiss — take or drop one · rollback <id> — reverse an applied dream";
 const VOTE_USAGE =
   "Usage: memory useful <note id|record id> · memory useless <note id|record id>   (an item served to you in the last 7 days; one vote per item per day)";
 
@@ -221,6 +228,10 @@ export function memoryCommand(deps: {
       { syntax: "memory dream dry-run", effect: "execute" },
       { syntax: "memory dream log", effect: "read" },
       { syntax: "memory dream show <id>", effect: "read" },
+      { syntax: "memory dream proposals", effect: "read" },
+      { syntax: "memory dream brief", effect: "read" },
+      { syntax: "memory dream adopt <id> [n]", effect: "write" },
+      { syntax: "memory dream dismiss <id> [n]", effect: "write" },
       { syntax: "memory dream rollback <id>", effect: "write" },
       { syntax: "memory usefulness [window]", effect: "read" },
       { syntax: "memory useful <id>", effect: "write" },
@@ -241,7 +252,7 @@ export function memoryCommand(deps: {
       `${KV_USAGE}\n${MEMORY_FAMILY_HELP}\n` +
       "memory usefulness [window]  what memory was served to you (per surface, arm, tier; most-served items and the evidence on them)\n" +
       "memory useful <id> · memory useless <id>  rate an item you were served (half-weight evidence, once per item per day)\n" +
-      "memory dream [now|dry-run|log|show <id>]  the consolidation pass over your own records: what it would merge, restate, link or decay, with every rejection's reason — observed, applied nowhere until it has earned it\n\n" +
+      "memory dream [now|dry-run|log|show <id>|proposals|adopt|dismiss|rollback]  the consolidation pass over your own records: merges, links and decays it applied (or, in observe, would apply), restatements it proposed for you to adopt, every rejection's reason; rollback reverses an applied dream\n\n" +
       `${MEMORY_KV_HELP}\n\n` +
       `${MEMORY_WHICH_VERB}\n\n` +
       MEMORY_SERVICE_HELP +
@@ -352,9 +363,11 @@ export function memoryCommand(deps: {
 }
 
 /**
- * `memory dream [now|dry-run|log|show <id>|rollback <id>]`: the caller's own
- * consolidation pass (src/memory/dream). Ids, counts and reasons only — a
- * dream record carries no note text.
+ * `memory dream [now|dry-run|log|show <id>|proposals|adopt <id> [n]|dismiss
+ * <id> [n]|rollback <id>]`: the caller's own consolidation pass
+ * (src/memory/dream). A dream record carries ids, counts and reasons only;
+ * `proposals` shows the caller the restatement texts filed for it (its own
+ * notes' content, kept apart from the record) so it can adopt or dismiss them.
  */
 async function runDreamCommand(
   ctx: RoomContext,
@@ -363,8 +376,24 @@ async function runDreamCommand(
   entityId: Entity["id"],
   tokens: readonly string[],
 ): Promise<void> {
-  const verb = canonicalSub(tokens[0], ["now", "dry-run", "log", "show", "rollback"]) ?? "log";
+  const verb =
+    canonicalSub(tokens[0], [
+      "now",
+      "dry-run",
+      "log",
+      "show",
+      "proposals",
+      "brief",
+      "adopt",
+      "dismiss",
+      "rollback",
+    ]) ?? "log";
   const mode = dreamingMode();
+  const dreamId = () => {
+    const id = Number.parseInt(tokens[1] ?? "", 10);
+    const row = Number.isInteger(id) ? db.getDream(id) : undefined;
+    return row && row.entity_name === entity.name ? row : undefined;
+  };
   if (verb === "now" || verb === "dry-run") {
     if (mode === "off") {
       refuseCommand(ctx, entityId, "Dreaming is off (MARINA_DREAMING=off); nothing to run.");
@@ -380,7 +409,7 @@ async function runDreamCommand(
       header(
         summary.state === "dry-run"
           ? "Dream (dry run — recorded nowhere)"
-          : `Dream #${summary.id} (${mode}${mode === "on" && !DREAM_APPLY_SUPPORTED ? ", applied nowhere yet" : ""})`,
+          : `Dream #${summary.id} (${summary.state})`,
       ),
       separator(),
       label(
@@ -389,53 +418,114 @@ async function runDreamCommand(
       ),
       label(
         bold("Ops"),
-        `${c.accepted} accepted · ${c.rejected} rejected · ${c.leaving} of ${c.regionSize} would leave the active set`,
+        `${c.accepted} accepted · ${c.rejected} rejected · ${c.leaving} of ${c.regionSize} ${summary.state === "applied" ? "left" : "would leave"} the active set`,
       ),
-      label(
-        bold("Probes"),
-        `${c.probesBefore.pass} retrievable before · ${c.probesBefore.fail} not`,
-      ),
+      label(bold("Probes"), probesLine(c)),
       ...renderOps(summary.ops ?? []),
       ...renderRejected(summary.rejected ?? []),
       "",
       dim(
         summary.state === "dry-run"
           ? "Nothing recorded, nothing applied."
-          : "Observed: recorded and chronicled, applied nowhere. Every change here is a proposal until the pass has earned it on measured outcomes.",
+          : summary.state === "applied"
+            ? `Applied in one transaction; memory dream rollback ${summary.id} reverses it.${summary.proposals ? ` ${summary.proposals} restatement(s) await you: memory dream proposals.` : ""}`
+            : "Observed: recorded and chronicled, applied nowhere (MARINA_DREAMING=on applies merges, links and decays and files restatements for you).",
       ),
     ];
     ctx.send(entityId, lines.join("\n"));
     return;
   }
   if (verb === "rollback") {
-    refuseCommand(
-      ctx,
+    const row = dreamId();
+    if (!row) {
+      refuseCommand(ctx, entityId, `No dream #${tokens[1] ?? "?"} of yours. ${DREAM_USAGE}`);
+      return;
+    }
+    const out = rollbackDream(db, row);
+    if (!out.ok) {
+      refuseCommand(ctx, entityId, `Dream #${row.id}: ${out.reason}.`);
+      return;
+    }
+    ctx.send(
       entityId,
-      "Nothing to roll back: dreams are observed, not applied, in this build. `memory dream show <id>` reads what one would have done.",
+      `Dream #${row.id} rolled back: ${out.reverted} op(s) reversed, ${out.dismissed} proposal(s) dismissed.`,
     );
     return;
   }
+  if (verb === "adopt" || verb === "dismiss") {
+    const row = dreamId();
+    if (!row) {
+      refuseCommand(ctx, entityId, `No dream #${tokens[1] ?? "?"} of yours. ${DREAM_USAGE}`);
+      return;
+    }
+    const pending = pendingProposals(db, entity.name).filter((p) => p.dreamId === row.id);
+    let n = Number.parseInt(tokens[2] ?? "", 10);
+    if (!Number.isInteger(n)) {
+      if (pending.length !== 1) {
+        refuseCommand(
+          ctx,
+          entityId,
+          pending.length
+            ? `Dream #${row.id} has ${pending.length} pending proposals: say which (memory dream ${verb} ${row.id} <n>; memory dream proposals lists them).`
+            : `Dream #${row.id} has no pending proposals.`,
+        );
+        return;
+      }
+      n = pending[0]!.n;
+    }
+    if (verb === "dismiss") {
+      if (!dismissProposal(db, entity.name, row.id, n)) {
+        refuseCommand(ctx, entityId, `Dream #${row.id} has no pending proposal ${n}.`);
+        return;
+      }
+      ctx.send(entityId, `Dismissed proposal ${n} of dream #${row.id}.`);
+      return;
+    }
+    const out = adoptProposal(db, entity.name, row.id, n);
+    if (!out.ok) {
+      refuseCommand(ctx, entityId, `Proposal ${n} of dream #${row.id}: ${out.reason}.`);
+      return;
+    }
+    ctx.send(
+      entityId,
+      `Adopted: note #${out.newId} supersedes #${out.oldId}. memory dream rollback ${row.id} reverses the whole dream.`,
+    );
+    return;
+  }
+  if (verb === "proposals") {
+    const pending = pendingProposals(db, entity.name);
+    if (!pending.length) {
+      ctx.send(entityId, `No pending proposals. ${DREAM_USAGE}`);
+      return;
+    }
+    const lines = [header("Dream proposals"), separator()];
+    for (const p of pending) {
+      lines.push(
+        `  dream #${p.dreamId} proposal ${p.n} — restate #${p.id}${p.refs.length ? ` (with #${p.refs.join(", #")})` : ""}: ${p.reason}`,
+        `    ${p.text}`,
+        dim(
+          `    memory dream adopt ${p.dreamId} ${p.n} · memory dream dismiss ${p.dreamId} ${p.n}`,
+        ),
+      );
+    }
+    ctx.send(entityId, lines.join("\n"));
+    return;
+  }
+  if (verb === "brief") {
+    const line = dreamBriefLine(db, entity.name);
+    if (line) ctx.send(entityId, line);
+    return;
+  }
   if (verb === "show") {
-    const id = Number.parseInt(tokens[1] ?? "", 10);
-    const row = Number.isInteger(id) ? db.getDream(id) : undefined;
-    if (!row || row.entity_name !== entity.name) {
+    const row = dreamId();
+    if (!row) {
       ctx.send(entityId, `No dream #${tokens[1] ?? "?"} of yours. ${DREAM_USAGE}`);
       return;
     }
-    const checks = parseDreamJson<{
-      accepted: number;
-      rejected: number;
-      leaving: number;
-      regionSize: number;
-      probesBefore: { pass: number; fail: number };
-    }>(row.checks_json, {
-      accepted: 0,
-      rejected: 0,
-      leaving: 0,
-      regionSize: 0,
-      probesBefore: { pass: 0, fail: 0 },
-    });
+    const checks = parseChecks(row.checks_json);
     const probes = parseDreamJson<DreamProbe[]>(row.probes_json, []);
+    const ops = parseDreamJson<StoredDreamOp[]>(row.ops_json, []);
+    const pending = ops.filter((o) => o.op === "supersede" && o.proposal === "pending").length;
     ctx.send(
       entityId,
       [
@@ -449,15 +539,20 @@ async function runDreamCommand(
         ),
         label(
           bold("Ops"),
-          `${checks.accepted} accepted · ${checks.rejected} rejected · ${checks.leaving} of ${checks.regionSize} would leave`,
+          `${checks.accepted} accepted · ${checks.rejected} rejected · ${checks.leaving} of ${checks.regionSize} ${row.state === "applied" ? "left" : row.state === "rolled_back" ? "left, then returned" : "would leave"}`,
         ),
-        label(
-          bold("Probes"),
-          `${checks.probesBefore.pass} pass · ${checks.probesBefore.fail} fail (${probes.length} probed)`,
-        ),
+        label(bold("Probes"), `${probesLine(checks)} (${probes.length} probed)`),
         label(bold("Model"), `${row.model ?? "—"} · $${row.spend_usd.toFixed(4)}`),
-        ...renderOps(parseDreamJson<StoredDreamOp[]>(row.ops_json, [])),
+        ...renderOps(ops),
         ...renderRejected(parseDreamJson<RejectedOp[]>(row.rejected_json, [])),
+        ...(row.state === "applied"
+          ? [
+              "",
+              dim(
+                `memory dream rollback ${row.id} reverses it${pending ? ` · ${pending} proposal(s) pending: memory dream proposals` : ""}`,
+              ),
+            ]
+          : []),
       ].join("\n"),
     );
     return;
@@ -472,18 +567,68 @@ async function runDreamCommand(
   }
   const lines = [header("Dreams"), separator()];
   for (const row of rows) {
-    const checks = parseDreamJson<{
-      accepted: number;
-      rejected: number;
-      leaving: number;
-      regionSize: number;
-    }>(row.checks_json, { accepted: 0, rejected: 0, leaving: 0, regionSize: 0 });
+    const checks = parseChecks(row.checks_json);
     lines.push(
-      `  #${String(row.id).padEnd(5)} ${new Date(row.created_at).toISOString().slice(0, 16)}  ${row.state.padEnd(9)} ${checks.accepted} ops · ${checks.rejected} rejected · ${checks.leaving}/${checks.regionSize} would leave · ${row.trigger}`,
+      `  #${String(row.id).padEnd(5)} ${new Date(row.created_at).toISOString().slice(0, 16)}  ${row.state.padEnd(11)} ${checks.accepted} ops · ${checks.rejected} rejected · ${checks.leaving}/${checks.regionSize} ${row.state === "observed" ? "would leave" : "left"} · ${row.trigger}`,
     );
   }
+  const pending = pendingProposals(db, entity.name).length;
+  if (pending) lines.push("", `${pending} proposal(s) await you: memory dream proposals`);
   lines.push("", dim(`memory dream show <id> for one dream. ${DREAM_USAGE}`));
   ctx.send(entityId, lines.join("\n"));
+}
+
+const EMPTY_CHECKS: DreamChecks = {
+  proposed: 0,
+  accepted: 0,
+  rejected: 0,
+  leaving: 0,
+  regionSize: 0,
+  probesBefore: { pass: 0, fail: 0 },
+  probesAfter: null,
+};
+
+function parseChecks(json: string): DreamChecks {
+  return { ...EMPTY_CHECKS, ...parseDreamJson<Partial<DreamChecks>>(json, {}) };
+}
+
+function probesLine(c: DreamChecks): string {
+  const before = `${c.probesBefore.pass} retrievable before · ${c.probesBefore.fail} not`;
+  return c.probesAfter
+    ? `${before} · after: ${c.probesAfter.pass} retrievable · ${c.probesAfter.fail} not`
+    : before;
+}
+
+/**
+ * One content-free line for the agent's continuation prompt (`[Dream]`): the
+ * latest dream of the last day and what awaits the owner. Empty when there
+ * is nothing to say.
+ */
+export function dreamBriefLine(db: MarinaDB, entityName: string, now = Date.now()): string {
+  const row = db.listDreams(entityName, 1)[0];
+  const pending = pendingProposals(db, entityName, now);
+  if (!row || now - row.created_at > 24 * 60 * 60 * 1000) {
+    return pending.length
+      ? `${pending.length} restatement(s) await you: memory dream proposals`
+      : "";
+  }
+  const checks = parseChecks(row.checks_json);
+  const ops = parseDreamJson<StoredDreamOp[]>(row.ops_json, []);
+  const counts = { merge: 0, link: 0, decay: 0 };
+  for (const op of ops) if (op.applied && op.op !== "supersede") counts[op.op]++;
+  const did = Object.entries(counts)
+    .filter(([, n]) => n)
+    .map(([k, n]) => `${n} ${k}${n === 1 ? "" : "s"}`)
+    .join(", ");
+  const head =
+    row.state === "applied"
+      ? `dream #${row.id} applied ${did || "nothing"} to your notes (memory dream rollback ${row.id} reverses it)`
+      : row.state === "rolled_back"
+        ? `dream #${row.id} was rolled back`
+        : `dream #${row.id} observed: ${checks.accepted} op(s) would apply, ${checks.rejected} rejected (memory dream show ${row.id})`;
+  return pending.length
+    ? `${head} · ${pending.length} restatement(s) await you: memory dream proposals`
+    : head;
 }
 
 function renderOps(ops: readonly StoredDreamOp[]): string[] {

@@ -24,7 +24,9 @@ import { contextRevision } from "./db-context-revision";
 import {
   linkNumericNotes,
   materializeNumericNote,
+  restoreNumericNote,
   retireNumericNote,
+  revertNumericRevision,
   setNumericImportance,
   sourceNumericNote,
   verifyNumericNote,
@@ -1033,6 +1035,99 @@ export function consolidateNotes(
     }
   })();
   return changed;
+}
+
+/**
+ * The reverse of one `consolidateNotes` duplicate (a dream's rollback): the
+ * note's status goes back to `priorStatus`, the keeper's `supersedes` edge is
+ * removed and the canonical record reopens. Refused when the note is not
+ * currently superseded by that keeper.
+ */
+export function restoreSupersededNote(
+  db: Database,
+  entityName: string,
+  keeperId: number,
+  noteId: number,
+  priorStatus: "unverified" | "disputed",
+): boolean {
+  return db.transaction(() => {
+    const note = getNote(db, noteId);
+    if (!note || note.entity_name !== entityName || note.verification_status !== "superseded")
+      return false;
+    const edge = db
+      .query(
+        "SELECT 1 FROM note_links WHERE source_id=? AND target_id=? AND relationship='supersedes'",
+      )
+      .get(keeperId, noteId);
+    if (!edge) return false;
+    db.run(
+      "DELETE FROM note_links WHERE source_id=? AND target_id=? AND relationship='supersedes'",
+      [keeperId, noteId],
+    );
+    linkNumericNotes(db, keeperId, noteId, "supersedes", true);
+    restoreNumericNote(db, noteId);
+    db.run("UPDATE notes SET verification_status = ? WHERE id = ?", [priorStatus, noteId]);
+    return true;
+  })();
+}
+
+/**
+ * The reverse of one `reviseNote` (a dream's rollback of an adopted
+ * restatement): the old note is current again with `priorStatus`, the new
+ * note becomes the superseded one, the `supersedes` edge turns around and the
+ * shared canonical record reverts. Refused unless `newId` currently
+ * supersedes `oldId`.
+ */
+export function revertRevision(
+  db: Database,
+  entityName: string,
+  newId: number,
+  oldId: number,
+  priorStatus: "unverified" | "disputed",
+): boolean {
+  return db.transaction(() => {
+    const fresh = getNote(db, newId);
+    const old = getNote(db, oldId);
+    if (
+      !fresh ||
+      !old ||
+      fresh.entity_name !== entityName ||
+      old.entity_name !== entityName ||
+      fresh.supersedes_id !== oldId ||
+      fresh.verification_status === "superseded" ||
+      old.verification_status !== "superseded"
+    )
+      return false;
+    if (!revertNumericRevision(db, newId, oldId)) return false;
+    db.run(
+      "DELETE FROM note_links WHERE source_id=? AND target_id=? AND relationship='supersedes'",
+      [newId, oldId],
+    );
+    linkNumericNotes(db, newId, oldId, "supersedes", true);
+    db.run(
+      "UPDATE notes SET supersedes_id = NULL, verification_status = 'superseded' WHERE id = ?",
+      [newId],
+    );
+    db.run("UPDATE notes SET verification_status = ? WHERE id = ?", [priorStatus, oldId]);
+    return true;
+  })();
+}
+
+/** Set one note's importance (1–10), through the canonical record when bound. */
+export function setNoteImportance(
+  db: Database,
+  entityName: string,
+  noteId: number,
+  importance: number,
+): boolean {
+  const note = getNote(db, noteId);
+  if (!note || note.entity_name !== entityName) return false;
+  const value = Math.max(1, Math.min(10, Math.round(importance)));
+  db.transaction(() => {
+    setNumericImportance(db, noteId, value);
+    db.run("UPDATE notes SET importance = ? WHERE id = ?", [value, noteId]);
+  })();
+  return true;
 }
 
 export function touchNote(db: Database, id: number): void {

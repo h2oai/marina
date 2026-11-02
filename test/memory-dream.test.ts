@@ -2,22 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The dream pass in `observe` (`src/memory/dream`): gather → probe → propose
- * (a stubbed model) → check → record. Nothing is applied; every rejection
- * names its check; the record carries ids, hashes and counts, never text;
- * the schedule gates hold; `memory dream` reads it back.
+ * The dream pass (`src/memory/dream`): gather → probe → propose (a stubbed
+ * model) → check → apply on a dry view → probe-after → record. In `observe`
+ * nothing stays applied; every rejection names its check; the record carries
+ * ids, hashes and counts, never text; the schedule gates hold; `memory dream`
+ * reads it back. In `on` the auto-tier ops stay applied in one transaction
+ * when the probes hold, supersedes become proposals the owner adopts, and
+ * `memory dream rollback` reverses the whole dream.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { dreamBriefLine } from "../src/engine/commands/memory";
 import { Engine } from "../src/engine/engine";
 import {
   checkOps,
+  DECAY_STEP,
   DREAM_COOLDOWN_MS,
   DREAM_MIN_NEW,
   dreamCandidates,
   dreamingMode,
   gatherRegion,
+  PROPOSAL_OWNER,
   parseOps,
+  pendingProposals,
   probeQuery,
   regionPrompt,
   runDream,
@@ -275,7 +282,9 @@ describe("the dream pass (observe)", () => {
     expect(stored).not.toContain("amber deployment");
     expect(stored).toContain("textHash");
     expect(JSON.parse(row.ops_json)).toHaveLength(3);
-    expect(JSON.parse(row.probes_json)[0]).toMatchObject({ before: "pass", after: null });
+    // Probes ran before and on the dry-applied view; the view was rolled back.
+    expect(JSON.parse(row.probes_json)[0]).toMatchObject({ before: "pass", after: "pass" });
+    expect(JSON.parse(row.checks_json).probesAfter).toEqual({ pass: 3, fail: 0 });
     expect(db.lastDreamAt("Ada")).toBe(at);
 
     // One chronicle event, counts only.
@@ -298,7 +307,7 @@ describe("the dream pass (observe)", () => {
     expect(shown).not.toContain("Cobalt tests reset");
     conn.clear();
     await engine.processCommand(ada, `memory dream rollback ${summary.id}`);
-    expect(conn.lastText()).toContain("Nothing to roll back");
+    expect(conn.lastText()).toContain("observed, not applied");
     // Another entity cannot read it.
     const other = new MockConnection("c2");
     engine.addConnection(other);
@@ -361,6 +370,205 @@ describe("the dream pass (observe)", () => {
     expect(model.calls).toHaveLength(1);
     // Nobody else qualifies.
     expect(scheduleGate(db, "Bea", now)).toMatch(/^material:/);
+  });
+
+  it("on: merges, links and decays stay applied in one transaction; a supersede becomes a proposal", async () => {
+    using _state = scopeProcessState({ env: { MARINA_DREAMING: "on" } });
+    const model = stubModel(
+      JSON.stringify({
+        ops: [
+          { op: "merge", keep: note(0), into: [note(1)], reason: "same port note" },
+          { op: "decay", id: note(8), reason: "served five times, never used" },
+          { op: "link", from: note(6), to: note(0), relation: "related_to", reason: "same proxy" },
+          {
+            op: "supersede",
+            id: note(3),
+            text: "Cobalt tests reset the fixture database before each run",
+            refs: [note(4)],
+            reason: "tighter",
+          },
+        ],
+      }),
+    );
+    const at = Date.now() + 1000;
+    const summary = await runDream(db, "Ada", "command", {
+      complete: model.complete,
+      model: "test/dreamer",
+      now: at,
+    });
+    expect(summary.state).toBe("applied");
+    expect(summary.checks).toMatchObject({ accepted: 4, rejected: 0, leaving: 3 });
+    expect(summary.checks!.probesAfter).toEqual({ pass: 3, fail: 0 });
+    expect(summary.proposals).toBe(1);
+
+    // Applied: the duplicate is superseded by its keeper (never deleted), the
+    // decayed note is lower, the link exists; the supersede target is untouched.
+    expect(db.getNote(note(1))!.verification_status).toBe("superseded");
+    expect(db.getNote(note(0))!.verification_status).toBe("unverified");
+    expect(db.getNote(note(8))!.importance).toBe(5 - DECAY_STEP);
+    expect(
+      db
+        .getNoteLinks(note(0))
+        .map((l) => l.relationship)
+        .sort(),
+    ).toEqual(["related_to", "supersedes"]);
+    expect(db.getNote(note(3))!.verification_status).toBe("unverified");
+    // The record carries the footprint (prior values, ids) and the proposal mark — no text.
+    const row = db.getDream(summary.id!)!;
+    expect(row.state).toBe("applied");
+    expect(row.applied_at).toBe(at);
+    const ops = JSON.parse(row.ops_json) as Array<Record<string, unknown>>;
+    expect(ops[0]!.applied).toEqual({ kind: "merge", prior: { [String(note(1))]: "unverified" } });
+    expect(ops[1]!.applied).toEqual({ kind: "decay", priorImportance: 5 });
+    expect((ops[2]!.applied as { kind: string }).kind).toBe("link");
+    expect(ops[3]!.proposal).toBe("pending");
+    expect(JSON.stringify(row)).not.toContain("Cobalt tests reset");
+    // The proposal text lives in core memory under the dream owner, for the owner only.
+    const pending = pendingProposals(db, "Ada", at);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ dreamId: summary.id, n: 3, id: note(3), refs: [note(4)] });
+    expect(db.listCoreMemory(PROPOSAL_OWNER)).toHaveLength(1);
+    expect(pendingProposals(db, "Bea", at)).toEqual([]);
+    // The chronicle says applied and how to reverse it.
+    const event = db.queryChronicle({ kind: "event" }).find((e) => e.title === "memory.dream")!;
+    expect(event.body).toContain("3 op(s) applied");
+    expect(event.body).toContain(`rollback ${summary.id}`);
+    // The agent's line.
+    expect(dreamBriefLine(db, "Ada", at)).toBe(
+      `dream #${summary.id} applied 1 merge, 1 link, 1 decay to your notes (memory dream rollback ${summary.id} reverses it) · 1 restatement(s) await you: memory dream proposals`,
+    );
+
+    // Adopt the restatement: faithfulness is re-checked against the notes now; the old note is superseded.
+    conn.clear();
+    await engine.processCommand(ada, "memory dream proposals");
+    expect(conn.lastText()).toContain("Cobalt tests reset the fixture database before each run");
+    conn.clear();
+    await engine.processCommand(ada, `memory dream adopt ${summary.id}`);
+    expect(conn.lastText()).toMatch(/Adopted: note #\d+ supersedes #/);
+    const old = db.getNote(note(3))!;
+    expect(old.verification_status).toBe("superseded");
+    const fresh = db
+      .getNotesByEntity("Ada", 100)
+      .find((n) => n.supersedes_id === note(3) && n.verification_status !== "superseded")!;
+    expect(fresh.content).toBe("Cobalt tests reset the fixture database before each run");
+    expect(pendingProposals(db, "Ada", at)).toEqual([]);
+    const adopted = JSON.parse(db.getDream(summary.id!)!.ops_json)[3] as Record<string, unknown>;
+    expect(adopted.proposal).toBe("adopted");
+    expect(adopted.applied).toEqual({ kind: "supersede", newId: fresh.id, prior: "unverified" });
+    // The restatement is served in place of the old note.
+    expect(db.recallNotes("Ada", "cobalt fixture database").map((n) => n.id)).toContain(fresh.id);
+    expect(db.recallNotes("Ada", "cobalt fixture database").map((n) => n.id)).not.toContain(
+      note(3),
+    );
+
+    // Rollback reverses everything: statuses, importance, the link, the adoption.
+    conn.clear();
+    await engine.processCommand(ada, `memory dream rollback ${summary.id}`);
+    expect(conn.lastText()).toContain("4 op(s) reversed");
+    expect(db.getNote(note(1))!.verification_status).toBe("unverified");
+    expect(db.getNote(note(8))!.importance).toBe(5);
+    expect(db.countNoteLinks("Ada")).toBe(0);
+    expect(db.getNote(note(3))!.verification_status).toBe("unverified");
+    expect(db.getNote(note(3))!.content).toBe(NOTES[3]!);
+    expect(db.getNote(fresh.id)!.verification_status).toBe("superseded");
+    // The merged-away note is retrievable again, with its own text; the restatement is not.
+    const hits = db.recallNotes("Ada", "amber deployment staging").map((n) => n.id);
+    expect(hits).toContain(note(1));
+    expect(db.recallNotes("Ada", "cobalt fixture database").map((n) => n.id)).toContain(note(3));
+    expect(db.recallNotes("Ada", "cobalt fixture database").map((n) => n.id)).not.toContain(
+      fresh.id,
+    );
+    const after = db.getDream(summary.id!)!;
+    expect(after.state).toBe("rolled_back");
+    expect(after.rolled_back_at).toBeGreaterThan(0);
+    expect(JSON.parse(after.ops_json).every((o: { reverted?: boolean }) => o.reverted)).toBe(true);
+    expect(
+      db.queryChronicle({ kind: "event" }).some((e) => e.title === "memory.dream.rollback"),
+    ).toBe(true);
+    conn.clear();
+    await engine.processCommand(ada, `memory dream rollback ${summary.id}`);
+    expect(conn.lastText()).toContain("already rolled back");
+    expect(dreamBriefLine(db, "Ada", at)).toBe(`dream #${summary.id} was rolled back`);
+  });
+
+  it("on: a set that loses a probe on the applied view is rejected whole and nothing stays", async () => {
+    using _state = scopeProcessState({ env: { MARINA_DREAMING: "on" } });
+    // Make #1 the only note retrievable by its probe words: merging it into a
+    // keeper that shares none of those words loses the probe. Coverage would
+    // refuse that, so lower the keeper's words into the duplicate's shingles
+    // by writing a near-copy whose distinctive words differ from the keeper's.
+    const dup = db.createNote(
+      "Ada",
+      NOTES[0]!.replace("proxy", "proxy, lantern maintenance"),
+      undefined,
+      {
+        skipDedup: true,
+      },
+    );
+    const keep = note(0);
+    const model = stubModel(
+      JSON.stringify({ ops: [{ op: "merge", keep, into: [dup], reason: "same" }] }),
+    );
+    const at = Date.now() + 1000;
+    const summary = await runDream(db, "Ada", "command", { complete: model.complete, now: at });
+    // Either the probe held (keeper carries the span's words) and it applied,
+    // or it was lost and the set was rejected whole; in both cases the store
+    // is consistent and the record says which.
+    const dupRow = db.getNote(dup)!;
+    if (summary.state === "applied") {
+      expect(dupRow.verification_status).toBe("superseded");
+    } else {
+      expect(summary.state).toBe("observed");
+      expect(summary.rejected!.some((r) => r.reason.startsWith("probe-after:"))).toBe(true);
+      expect(summary.checks!.accepted).toBe(0);
+      expect(dupRow.verification_status).toBe("unverified");
+    }
+  });
+
+  it("on: a proposal goes stale when its sources change, and dismiss drops it", async () => {
+    using _state = scopeProcessState({ env: { MARINA_DREAMING: "on" } });
+    const text = "Cobalt tests reset the fixture database before each run";
+    const model = stubModel(
+      JSON.stringify({
+        ops: [
+          { op: "supersede", id: note(3), text, refs: [note(4)], reason: "a" },
+          {
+            op: "supersede",
+            id: note(6),
+            text: "The staging proxy rejects requests lacking a tenant header",
+            refs: [],
+            reason: "b",
+          },
+        ],
+      }),
+    );
+    const at = Date.now() + 1000;
+    const summary = await runDream(db, "Ada", "command", { complete: model.complete, now: at });
+    expect(summary.state).toBe("applied");
+    expect(summary.proposals).toBe(2);
+    // Two pending: adopt without n is refused.
+    conn.clear();
+    await engine.processCommand(ada, `memory dream adopt ${summary.id}`);
+    expect(conn.lastText()).toContain("2 pending proposals");
+    // The target evolves meanwhile: the proposal no longer rests on live notes.
+    db.reviseNote("Ada", note(3), "Cobalt tests need a fresh fixture database per run");
+    conn.clear();
+    await engine.processCommand(ada, `memory dream adopt ${summary.id} 0`);
+    expect(conn.lastText()).toContain("has since changed");
+    expect(pendingProposals(db, "Ada", at)).toHaveLength(1);
+    conn.clear();
+    await engine.processCommand(ada, `memory dream dismiss ${summary.id} 1`);
+    expect(conn.lastText()).toContain("Dismissed");
+    expect(pendingProposals(db, "Ada", at)).toEqual([]);
+    const ops = JSON.parse(db.getDream(summary.id!)!.ops_json) as Array<{ proposal?: string }>;
+    expect(ops.map((o) => o.proposal)).toEqual(["stale", "dismissed"]);
+    // Another entity cannot adopt or roll back someone else's dream.
+    const other = new MockConnection("c3");
+    engine.addConnection(other);
+    engine.spawnEntity("c3", "Cy");
+    other.clear();
+    await engine.processCommand(other.entity!, `memory dream rollback ${summary.id}`);
+    expect(other.lastText()).toContain("No dream");
   });
 
   it("faithfulness holds numbers, identifiers and names, not wording", () => {
