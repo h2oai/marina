@@ -17,7 +17,7 @@ on installs: that line is optional and never raises an alert. `test/capability-p
 fails when a new
 off-by-default setting has no entry.
 
-## Measure (68)
+## Measure (69)
 
 | Subject | Evidence | Promote when | Decide by |
 |---|---|---|---|
@@ -67,6 +67,7 @@ off-by-default setting has no entry.
 | `MARINA_CHALLENGE_JUDGE` | judge ledger surface challenge | the judge earns on its surface (`judge stats`), then `on` | 2026-12-01 |
 | `MARINA_CREW_DELIVERABLE_REVIEW` | outcomes source task:verdict | reviewed crew deliverables are approved more often by their creators | 2026-12-01 |
 | `MARINA_DECISION_VERIFY` | judge ledger surface verify | the judge earns on its surface (`judge stats`), then `on` | 2026-11-15 |
+| `MARINA_DREAMING` | outcomes kind task | task success per cost does not fall in the K runs after a dream vs the K before (paired, time-split), and the probe set holds | 2027-01-15 |
 | `MARINA_EVOLUTION_PROTOCOLS` | operator choice: never automatic | an evolve trial's adopted role beats its parent in a child world | 2027-01-15 |
 | `MARINA_FORECAST_ARBITER` | judge ledger surface arbiter | overrule precision clears the Arbiter's earned bar | 2026-12-01 |
 | `MARINA_FORECAST_CONTRACT` | benchmark ledger futurex-past-clean | a held-out forecast backtest wins by the promotion margin | 2026-12-01 |

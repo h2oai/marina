@@ -448,6 +448,7 @@ describe("Engine tick schedule", () => {
       { name: "memory-hygiene", every: 3600, phase: 2700 },
       { name: "memory-accumulation", every: 3600, phase: 900 },
       { name: "memory-usefulness-settle", every: 3600, phase: 3550 },
+      { name: "memory-dream", every: 3600, phase: 3400 },
       { name: "memory-observability-poll", every: 1, phase: 0 },
       { name: "work-pulse", every: 86400, phase: 5400 },
       { name: "retention", every: 3600, phase: 2100 },

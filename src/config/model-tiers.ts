@@ -46,6 +46,7 @@ export type ModelRole =
   | "room"
   | "crew"
   | "helper"
+  | "dreamer"
   | "judge"
   | "outcome-judge"
   | "lessons-judge"
@@ -78,6 +79,11 @@ export const MODEL_ROLES: Readonly<Record<ModelRole, ModelRoleInfo>> = {
     tier: "cheap",
     covers: "memory helpers: assistance/reflector agents, relevance gate, ingest notes",
     knobs: ["MARINA_MEMORY_RELEVANCE_GATE_MODEL", "MARINA_MEMORY_INGEST_NOTES_MODEL"],
+  },
+  dreamer: {
+    tier: "cheap",
+    covers: "the memory dream pass (one proposal call per idle agent per dream)",
+    knobs: [],
   },
   judge: {
     tier: "strong",

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { memoryResult } from "../../memory/command-result";
+import { DREAM_APPLY_SUPPORTED, dreamingMode, runDream } from "../../memory/dream";
+import type { DreamProbe, RejectedOp, StoredDreamOp } from "../../memory/dream/types";
 import {
   formatMemoryOperation,
   MEMORY_SERVICE_HELP,
@@ -11,6 +13,7 @@ import { residentMemoryOperation } from "../../memory/resident-service";
 import { type ExplicitVote, rateExplicit } from "../../memory/usefulness";
 import { bold, dim, header, label, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
+import { parseDreamJson } from "../../persistence/db-memory-dreams";
 import type { MemoryUsefulnessSummary } from "../../persistence/db-memory-usefulness";
 import type { CommandUsage } from "../../sdk/command-forms";
 import { memoryOperationError } from "../../sdk/memory-operations";
@@ -85,6 +88,8 @@ const USEFULNESS_DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const USEFULNESS_MAX_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const USEFULNESS_USAGE =
   "Usage: memory usefulness [window]   e.g. memory usefulness 7d · memory usefulness 24h (default 7d, max 90d)";
+const DREAM_USAGE =
+  "Usage: memory dream [now|dry-run|log|show <id>|rollback <id>]   now — run your consolidation pass (budget permitting; schedule gates skipped) · dry-run — same, recorded nowhere · log — your dreams · show <id> — one dream's ops, rejections and probes (ids and counts, never text)";
 const VOTE_USAGE =
   "Usage: memory useful <note id|record id> · memory useless <note id|record id>   (an item served to you in the last 7 days; one vote per item per day)";
 
@@ -211,6 +216,12 @@ export function memoryCommand(deps: {
       { syntax: "memory transfers [JSON filters]", effect: "read" },
       { syntax: "memory unwatch <NAME> <VERSION>", effect: "write" },
       { syntax: "memory usage", effect: "read" },
+      { syntax: "memory dream", effect: "read" },
+      { syntax: "memory dream now", effect: "execute" },
+      { syntax: "memory dream dry-run", effect: "execute" },
+      { syntax: "memory dream log", effect: "read" },
+      { syntax: "memory dream show <id>", effect: "read" },
+      { syntax: "memory dream rollback <id>", effect: "write" },
       { syntax: "memory usefulness [window]", effect: "read" },
       { syntax: "memory useful <id>", effect: "write" },
       { syntax: "memory useless <id>", effect: "write" },
@@ -229,7 +240,8 @@ export function memoryCommand(deps: {
       "The memory command: notes, recall, reflection, durable records and key-value beliefs.\n" +
       `${KV_USAGE}\n${MEMORY_FAMILY_HELP}\n` +
       "memory usefulness [window]  what memory was served to you (per surface, arm, tier; most-served items and the evidence on them)\n" +
-      "memory useful <id> · memory useless <id>  rate an item you were served (half-weight evidence, once per item per day)\n\n" +
+      "memory useful <id> · memory useless <id>  rate an item you were served (half-weight evidence, once per item per day)\n" +
+      "memory dream [now|dry-run|log|show <id>]  the consolidation pass over your own records: what it would merge, restate, link or decay, with every rejection's reason — observed, applied nowhere until it has earned it\n\n" +
       `${MEMORY_KV_HELP}\n\n` +
       `${MEMORY_WHICH_VERB}\n\n` +
       MEMORY_SERVICE_HELP +
@@ -254,9 +266,13 @@ export function memoryCommand(deps: {
         "usefulness",
         "useful",
         "useless",
+        "dream",
         ...KV_SUBS,
         ...DURABLE_SUBS,
       ]);
+
+      // ── The dream pass ──
+      if (sub === "dream") return runDreamCommand(ctx, db, entity, input.entity, tokens.slice(1));
 
       // ── Retrieval telemetry readout and explicit votes ──
       if (sub === "usefulness") {
@@ -333,6 +349,174 @@ export function memoryCommand(deps: {
       );
     },
   };
+}
+
+/**
+ * `memory dream [now|dry-run|log|show <id>|rollback <id>]`: the caller's own
+ * consolidation pass (src/memory/dream). Ids, counts and reasons only — a
+ * dream record carries no note text.
+ */
+async function runDreamCommand(
+  ctx: RoomContext,
+  db: MarinaDB,
+  entity: Entity,
+  entityId: Entity["id"],
+  tokens: readonly string[],
+): Promise<void> {
+  const verb = canonicalSub(tokens[0], ["now", "dry-run", "log", "show", "rollback"]) ?? "log";
+  const mode = dreamingMode();
+  if (verb === "now" || verb === "dry-run") {
+    if (mode === "off") {
+      refuseCommand(ctx, entityId, "Dreaming is off (MARINA_DREAMING=off); nothing to run.");
+      return;
+    }
+    const summary = await runDream(db, entity.name, verb === "now" ? "command" : "dry-run");
+    if (summary.state === "skipped") {
+      ctx.send(entityId, `No dream: ${summary.skipped}.`);
+      return;
+    }
+    const c = summary.checks!;
+    const lines = [
+      header(
+        summary.state === "dry-run"
+          ? "Dream (dry run — recorded nowhere)"
+          : `Dream #${summary.id} (${mode}${mode === "on" && !DREAM_APPLY_SUPPORTED ? ", applied nowhere yet" : ""})`,
+      ),
+      separator(),
+      label(
+        bold("Region"),
+        `${summary.region!.records} record${summary.region!.records === 1 ? "" : "s"} (${summary.region!.newRecords} new since the last dream, ${summary.region!.bytes} bytes)`,
+      ),
+      label(
+        bold("Ops"),
+        `${c.accepted} accepted · ${c.rejected} rejected · ${c.leaving} of ${c.regionSize} would leave the active set`,
+      ),
+      label(
+        bold("Probes"),
+        `${c.probesBefore.pass} retrievable before · ${c.probesBefore.fail} not`,
+      ),
+      ...renderOps(summary.ops ?? []),
+      ...renderRejected(summary.rejected ?? []),
+      "",
+      dim(
+        summary.state === "dry-run"
+          ? "Nothing recorded, nothing applied."
+          : "Observed: recorded and chronicled, applied nowhere. Every change here is a proposal until the pass has earned it on measured outcomes.",
+      ),
+    ];
+    ctx.send(entityId, lines.join("\n"));
+    return;
+  }
+  if (verb === "rollback") {
+    refuseCommand(
+      ctx,
+      entityId,
+      "Nothing to roll back: dreams are observed, not applied, in this build. `memory dream show <id>` reads what one would have done.",
+    );
+    return;
+  }
+  if (verb === "show") {
+    const id = Number.parseInt(tokens[1] ?? "", 10);
+    const row = Number.isInteger(id) ? db.getDream(id) : undefined;
+    if (!row || row.entity_name !== entity.name) {
+      ctx.send(entityId, `No dream #${tokens[1] ?? "?"} of yours. ${DREAM_USAGE}`);
+      return;
+    }
+    const checks = parseDreamJson<{
+      accepted: number;
+      rejected: number;
+      leaving: number;
+      regionSize: number;
+      probesBefore: { pass: number; fail: number };
+    }>(row.checks_json, {
+      accepted: 0,
+      rejected: 0,
+      leaving: 0,
+      regionSize: 0,
+      probesBefore: { pass: 0, fail: 0 },
+    });
+    const probes = parseDreamJson<DreamProbe[]>(row.probes_json, []);
+    ctx.send(
+      entityId,
+      [
+        header(
+          `Dream #${row.id} — ${new Date(row.created_at).toISOString().slice(0, 16)} (${row.trigger}, ${row.mode}, ${row.state})`,
+        ),
+        separator(),
+        label(
+          bold("Region"),
+          `${row.region_count} records · ${row.region_new} new · ${row.region_bytes} bytes · hash ${row.region_hash}`,
+        ),
+        label(
+          bold("Ops"),
+          `${checks.accepted} accepted · ${checks.rejected} rejected · ${checks.leaving} of ${checks.regionSize} would leave`,
+        ),
+        label(
+          bold("Probes"),
+          `${checks.probesBefore.pass} pass · ${checks.probesBefore.fail} fail (${probes.length} probed)`,
+        ),
+        label(bold("Model"), `${row.model ?? "—"} · $${row.spend_usd.toFixed(4)}`),
+        ...renderOps(parseDreamJson<StoredDreamOp[]>(row.ops_json, [])),
+        ...renderRejected(parseDreamJson<RejectedOp[]>(row.rejected_json, [])),
+      ].join("\n"),
+    );
+    return;
+  }
+  const rows = db.listDreams(entity.name, 10);
+  if (rows.length === 0) {
+    ctx.send(
+      entityId,
+      `No dreams yet. ${mode === "off" ? "Dreaming is off (MARINA_DREAMING=off)." : "The hourly pass dreams when you have written ≥ 12 records since your last dream, have been quiet for 30 min, and 8 h have passed; `memory dream now` runs it at once."}\n${DREAM_USAGE}`,
+    );
+    return;
+  }
+  const lines = [header("Dreams"), separator()];
+  for (const row of rows) {
+    const checks = parseDreamJson<{
+      accepted: number;
+      rejected: number;
+      leaving: number;
+      regionSize: number;
+    }>(row.checks_json, { accepted: 0, rejected: 0, leaving: 0, regionSize: 0 });
+    lines.push(
+      `  #${String(row.id).padEnd(5)} ${new Date(row.created_at).toISOString().slice(0, 16)}  ${row.state.padEnd(9)} ${checks.accepted} ops · ${checks.rejected} rejected · ${checks.leaving}/${checks.regionSize} would leave · ${row.trigger}`,
+    );
+  }
+  lines.push("", dim(`memory dream show <id> for one dream. ${DREAM_USAGE}`));
+  ctx.send(entityId, lines.join("\n"));
+}
+
+function renderOps(ops: readonly StoredDreamOp[]): string[] {
+  if (!ops.length) return ["", bold("Accepted ops"), "  none"];
+  const lines = ["", bold("Accepted ops")];
+  for (const op of ops) {
+    switch (op.op) {
+      case "merge":
+        lines.push(`  merge      keep #${op.keep} ← #${op.into.join(", #")} — ${op.reason}`);
+        break;
+      case "supersede":
+        lines.push(
+          `  supersede  #${op.id} (${op.textLength} chars, refs ${op.refs.map((r) => `#${r}`).join(", ") || "none"}) — ${op.reason}`,
+        );
+        break;
+      case "link":
+        lines.push(`  link       #${op.from} ${op.relation} #${op.to} — ${op.reason}`);
+        break;
+      case "decay":
+        lines.push(`  decay      #${op.id} — ${op.reason}`);
+        break;
+    }
+  }
+  return lines;
+}
+
+function renderRejected(rejected: readonly RejectedOp[]): string[] {
+  if (!rejected.length) return [];
+  const lines = ["", bold("Rejected")];
+  for (const r of rejected.slice(0, 20))
+    lines.push(`  ${r.op.padEnd(10)} ${r.ids.length ? `#${r.ids.join(", #")} ` : ""}— ${r.reason}`);
+  if (rejected.length > 20) lines.push(`  … ${rejected.length - 20} more`);
+  return lines;
 }
 
 /**

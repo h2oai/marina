@@ -19,6 +19,7 @@ export const MODEL_PURPOSES = [
   "swarm",
   "judge",
   "benchmark",
+  "dream",
   "agent",
   "other",
 ] as const;
@@ -41,6 +42,7 @@ const SPEND_SOURCE: Record<ModelPurpose, SpendSource> = {
   swarm: "model_api",
   judge: "decision",
   benchmark: "model_api",
+  dream: "model_api",
   agent: "agent",
   other: "model_api",
 };

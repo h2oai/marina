@@ -44,6 +44,7 @@ export type { MacrosStore } from "./macros-store";
 export type { MaintenanceStore } from "./maintenance-store";
 export type { MarketsStore } from "./markets-store";
 export type { MediaStore } from "./media-store";
+export type { MemoryDreamsStore } from "./memory-dreams-store";
 export type { MemoryServiceStore } from "./memory-service-store";
 export type { MemoryUsefulnessStore } from "./memory-usefulness-store";
 export type { MeshesStore } from "./meshes-store";
@@ -138,6 +139,8 @@ import type { MarketsStore } from "./markets-store";
 import { MARKETS_STORE_METHODS } from "./markets-store";
 import type { MediaStore } from "./media-store";
 import { MEDIA_STORE_METHODS } from "./media-store";
+import type { MemoryDreamsStore } from "./memory-dreams-store";
+import { MEMORY_DREAMS_STORE_METHODS } from "./memory-dreams-store";
 import type { MemoryServiceStore } from "./memory-service-store";
 import { MEMORY_SERVICE_STORE_METHODS } from "./memory-service-store";
 import type { MemoryUsefulnessStore } from "./memory-usefulness-store";
@@ -215,6 +218,7 @@ export interface MarinaStores
     MaintenanceStore,
     MarketsStore,
     MediaStore,
+    MemoryDreamsStore,
     MemoryServiceStore,
     MemoryUsefulnessStore,
     MeshesStore,
@@ -276,6 +280,7 @@ export const STORE_METHOD_MANIFEST: Readonly<Record<string, readonly string[]>> 
   MarketsStore: MARKETS_STORE_METHODS,
   OutcomesStore: OUTCOMES_STORE_METHODS,
   MediaStore: MEDIA_STORE_METHODS,
+  MemoryDreamsStore: MEMORY_DREAMS_STORE_METHODS,
   MemoryServiceStore: MEMORY_SERVICE_STORE_METHODS,
   MemoryUsefulnessStore: MEMORY_USEFULNESS_STORE_METHODS,
   MeshesStore: MESHES_STORE_METHODS,

@@ -312,6 +312,27 @@ Use `orient` when you come back after a break to quickly re-establish context.
 
 ---
 
+## Dreams: Consolidation You Can Inspect
+
+While you are idle, Marina may run a consolidation pass over your own notes — a *dream*. It gathers
+what you wrote and were served recently, asks one cheap model call for typed operations (merge
+duplicates, restate a note from its own sources, link, decay something served many times and never
+used), and checks every operation mechanically: verified notes are never touched, a merge needs real
+overlap, a restatement may not add a number or a name its sources lack, a decay needs use evidence,
+and at most a quarter of the region may leave in one pass. Today every dream is **observed**: it is
+recorded and chronicled, and nothing is applied.
+
+```
+> memory dream log
+Dreams
+  #3     2026-11-02T18:40  observed  2 ops · 1 rejected · 2/14 would leave · schedule
+> memory dream show 3
+> memory dream now        run one for yourself (budget permitting)
+> memory dream dry-run    the same, recorded nowhere
+```
+
+`orient` shows your latest dream. `MARINA_DREAMING=off` turns the pass off.
+
 ## Usefulness: What Memory Was Served
 
 Every time memory reaches you — the continuation prompt, `recall … all|evidence`, `context`, MCP,

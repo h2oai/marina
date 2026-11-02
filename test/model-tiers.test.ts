@@ -147,7 +147,7 @@ describe("roles", () => {
     .map(([r]) => r as ModelRole);
 
   it("cheap roles get the live alias; strong roles never the cheap tier", () => {
-    expect(cheapRoles.sort()).toEqual(["crew", "helper", "resident", "room"]);
+    expect(cheapRoles.sort()).toEqual(["crew", "dreamer", "helper", "resident", "room"]);
     for (const r of cheapRoles) expect(roleModelFromEnv(r, OR)).toBe("marina/cheap");
     const env = { ...OR, MARINA_MODEL_TIER_CHEAP: "cheap/model", MARINA_DEFAULT_MODEL: "d/m" };
     for (const r of strongRoles) expect(roleModelFromEnv(r, env)).toBe("marina/default");

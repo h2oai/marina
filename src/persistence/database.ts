@@ -231,6 +231,7 @@ import type {
 
 // ─── Base Schema (migration 0 — applied via CREATE IF NOT EXISTS) ────────────
 
+import * as dreamsDb from "./db-memory-dreams";
 // Schema + migrations live in ./schema.ts (pure data). Re-exported for the
 // tests and tools that introspect the migration chain.
 import { createNumericHandle } from "./db-memory-numeric";
@@ -651,6 +652,24 @@ export class MarinaDB implements MarinaStores {
     sinceMs: number,
   ): Record<string, { serves: number; cited: number }> {
     return usefulnessDb.citationRateByArm(this.reader, entityName, sinceMs);
+  }
+
+  // ── Dream records (db-memory-dreams.ts) ──
+
+  recordDream(input: dreamsDb.DreamInsert): number {
+    return dreamsDb.recordDream(this.db, input);
+  }
+
+  getDream(id: number): dreamsDb.DreamRow | undefined {
+    return dreamsDb.getDream(this.reader, id);
+  }
+
+  listDreams(entityName: string, limit = 20): dreamsDb.DreamRow[] {
+    return dreamsDb.listDreams(this.reader, entityName, limit);
+  }
+
+  lastDreamAt(entityName: string): number | undefined {
+    return dreamsDb.lastDreamAt(this.reader, entityName);
   }
 
   verifyEvidenceChain(): evidenceDb.EvidenceVerification {
