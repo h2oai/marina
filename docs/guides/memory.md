@@ -343,7 +343,8 @@ Dreams
 ```
 
 `orient` shows your latest dream, and a `[Dream]` line in your continuation prompt tells you what
-the last dream did and what awaits you. `MARINA_DREAMING=off` turns the pass off.
+the last dream did and what awaits you. `memory consolidate` is the same command under its plain
+name. `MARINA_DREAMING=off` turns the pass off.
 
 ## Usefulness: What Memory Was Served
 

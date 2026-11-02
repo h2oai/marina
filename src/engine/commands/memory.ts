@@ -233,6 +233,7 @@ export function memoryCommand(deps: {
       { syntax: "memory dream adopt <id> [n]", effect: "write" },
       { syntax: "memory dream dismiss <id> [n]", effect: "write" },
       { syntax: "memory dream rollback <id>", effect: "write" },
+      { syntax: "memory consolidate", effect: "read" },
       { syntax: "memory usefulness [window]", effect: "read" },
       { syntax: "memory useful <id>", effect: "write" },
       { syntax: "memory useless <id>", effect: "write" },
@@ -252,7 +253,7 @@ export function memoryCommand(deps: {
       `${KV_USAGE}\n${MEMORY_FAMILY_HELP}\n` +
       "memory usefulness [window]  what memory was served to you (per surface, arm, tier; most-served items and the evidence on them)\n" +
       "memory useful <id> · memory useless <id>  rate an item you were served (half-weight evidence, once per item per day)\n" +
-      "memory dream [now|dry-run|log|show <id>|proposals|adopt|dismiss|rollback]  the consolidation pass over your own records: merges, links and decays it applied (or, in observe, would apply), restatements it proposed for you to adopt, every rejection's reason; rollback reverses an applied dream\n\n" +
+      "memory dream [now|dry-run|log|show <id>|proposals|adopt|dismiss|rollback]  the consolidation pass over your own records: merges, links and decays it applied (or, in observe, would apply), restatements it proposed for you to adopt, every rejection's reason; rollback reverses an applied dream (alias: memory consolidate)\n\n" +
       `${MEMORY_KV_HELP}\n\n` +
       `${MEMORY_WHICH_VERB}\n\n` +
       MEMORY_SERVICE_HELP +
@@ -278,12 +279,15 @@ export function memoryCommand(deps: {
         "useful",
         "useless",
         "dream",
+        "consolidate",
         ...KV_SUBS,
         ...DURABLE_SUBS,
       ]);
 
       // ── The dream pass ──
-      if (sub === "dream") return runDreamCommand(ctx, db, entity, input.entity, tokens.slice(1));
+      // `memory consolidate` is the descriptive alias of `memory dream`.
+      if (sub === "dream" || sub === "consolidate")
+        return runDreamCommand(ctx, db, entity, input.entity, tokens.slice(1));
 
       // ── Retrieval telemetry readout and explicit votes ──
       if (sub === "usefulness") {

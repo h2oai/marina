@@ -308,6 +308,10 @@ describe("the dream pass (observe)", () => {
     conn.clear();
     await engine.processCommand(ada, `memory dream rollback ${summary.id}`);
     expect(conn.lastText()).toContain("observed, not applied");
+    // `memory consolidate` is the alias.
+    conn.clear();
+    await engine.processCommand(ada, `memory consolidate show ${summary.id}`);
+    expect(conn.lastText()).toContain("Accepted ops");
     // Another entity cannot read it.
     const other = new MockConnection("c2");
     engine.addConnection(other);
