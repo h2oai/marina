@@ -121,7 +121,10 @@ describe("resident forecasts on the outcome path", () => {
     expect(outcome).toMatchObject({ kind: "forecast", source: "market:probability", succeeded: 1 });
     expect(JSON.parse(outcome.participants_json!)).toEqual([{ agent: "Ann" }]);
     // Lessons, never the forecast pipeline's history.
-    expect(db.outcomeDeliveries(outcome.id).map((d) => d.consumer)).toEqual(["lessons"]);
+    expect(db.outcomeDeliveries(outcome.id).map((d) => d.consumer)).toEqual([
+      "lessons",
+      "usefulness",
+    ]);
     expect(forecastCredits(db, "u_ann")[0]?.amount).toBeCloseTo(0.48, 3);
   });
 
@@ -143,10 +146,12 @@ describe("resident forecasts on the outcome path", () => {
   it("`conduct track` sources resolve through the same path, lessons only", () => {
     expect(consumersFor("forecast", "mechanical", { source: "conduct:probability" })).toEqual([
       "lessons",
+      "usefulness",
     ]);
     expect(consumersFor("forecast", "mechanical", { source: "forecast:probability" })).toEqual([
       "lessons",
       "history",
+      "usefulness",
     ]);
     const id = fileResidentForecast(db, {
       owner: "Bob",

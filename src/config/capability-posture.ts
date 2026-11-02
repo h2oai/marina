@@ -199,6 +199,11 @@ export const KNOB_POSTURE: Readonly<Record<string, Posture>> = {
   // ── Memory and the obligations ledger ───────────────────────────────────
   MARINA_MEMORY_RANKING: measure(bench("longmemeval-v2-small"), MEMORY_BOARD, DEC_1),
   MARINA_MEMORY_RELEVANCE_GATE: measure(bench("longmemeval-v2-small"), MEMORY_BOARD, DEC_1),
+  MARINA_MEMORY_USEFULNESS_RANKING: measure(
+    outcomes(undefined, "task"),
+    "task success per cost on shared-memory readers does not fall when the term reorders (paired, time-split)",
+    JAN_15,
+  ),
   MARINA_MEMORY_INGEST_NOTES: measure(bench("longmemeval-v2-small"), MEMORY_BOARD, DEC_1),
   MARINA_OBLIGATIONS_CONSENT: measure(bench("tau2-airline"), PAIRED, DEC_1),
 };

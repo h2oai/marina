@@ -117,7 +117,11 @@ describe("one outcome path", () => {
     const raw = (db as unknown as { db: { run(sql: string): unknown } }).db;
     expect(() => raw.run("UPDATE outcomes SET succeeded = 0")).toThrow(/append-only/);
     await settleDelivery(db);
-    expect(db.outcomeDeliveries(o.id).map((d) => d.consumer)).toEqual(["history", "lessons"]);
+    expect(db.outcomeDeliveries(o.id).map((d) => d.consumer)).toEqual([
+      "history",
+      "lessons",
+      "usefulness",
+    ]);
   });
 
   it("an unscorable outcome leaves the answer open and records nothing", () => {

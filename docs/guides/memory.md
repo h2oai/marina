@@ -325,12 +325,25 @@ Most served
 ```
 
 A serve is exposure, not proof the item helped. The evidence line lists what has been recorded
-against the served items. Today that is `repeat`: when you write a note that says nearly the same
-thing as one of your recent notes, Marina stores your note, records the repetition as evidence on
-the earlier one, and tells you `Nearly the same as #N` with a pointer to `note evolve N <text>` in
-case the new wording should replace the old. It never merges the two for you: the word that differs
-may be the point. Writing the exact same text again stores nothing and replies
-`Note #N already holds this.`
+against the served items, and each most-served item shows its α/β and posterior mean (0.50 means
+no evidence yet):
+
+- **citation** (+1): you named a note you had been served (`#12` or `note:12`) in a note you saved
+  or a task you submitted. Naming a note you were never served counts for nothing.
+- **outcome** (+1 / −¼): work you did while that memory was in front of you succeeded or failed.
+- **explicit** (±½): `memory useful 12` / `memory useless 12`, on something served to you in the
+  last week, once per item per day.
+- **unused** (−¼, capped at four a day): it was served and you never cited it.
+- **repeat** (+1): you wrote a note that says nearly the same thing as one of your recent notes.
+  Marina stores your note, records the repetition as evidence on the earlier one, and tells you
+  `Nearly the same as #N` with a pointer to `note evolve N <text>` in case the new wording should
+  replace the old. It never merges the two for you: the word that differs may be the point.
+  Writing the exact same text again stores nothing and replies `Note #N already holds this.`
+
+Your own evidence shapes your own readout but never how others rank your notes. For shared memory
+(pools, spaces you do not own) the posterior becomes a small bounded nudge in ranking, reported
+beside the writer-standing term; `MARINA_MEMORY_USEFULNESS_RANKING` says whether it only reports
+(`observe`, the default) or reorders (`on`).
 
 ---
 

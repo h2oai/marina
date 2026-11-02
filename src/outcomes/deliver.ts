@@ -61,6 +61,7 @@ import {
 import { armedLearner, canHoldOwnLessons, ownerLessonSink } from "../learning/service";
 import { transientFailureReason } from "../learning/unavailable";
 import { workScopeFor } from "../learning/work";
+import { rateOutcomeUsefulness } from "../memory/usefulness";
 import type { MarinaDB } from "../persistence/database";
 import type { ForecastAnswerRow } from "../persistence/db-markets";
 import { AGGREGATING_REASON, type OutcomeRow } from "../persistence/db-outcomes";
@@ -849,6 +850,43 @@ async function deliverPass(
     } catch (err) {
       if (signal.aborted) break;
       t[retryOrFail(db, o, "history", String(err))]++;
+    }
+  }
+
+  // Usefulness: the memory served to the owner during the work, rated by the
+  // result (src/memory/usefulness.ts). Mechanical, no model, never waits on
+  // one; a measurement run teaches memory nothing (its serves were the
+  // measurement's own).
+  for (const o of db.pendingOutcomes("usefulness", max)) {
+    if (signal.aborted) break;
+    const t = tally("usefulness");
+    if (o.kind === "forecast" && db.isPrivateForecast(forecastId(o.subject) ?? -1)) {
+      db.setOutcomeDelivery(o.id, "usefulness", "skipped", "private investigation");
+      t.skipped++;
+      continue;
+    }
+    if (o.eval_mode === "measure") {
+      db.setOutcomeDelivery(o.id, "usefulness", "skipped", "measurement");
+      t.skipped++;
+      continue;
+    }
+    if (!o.owner) {
+      db.setOutcomeDelivery(o.id, "usefulness", "skipped", "no owner");
+      t.skipped++;
+      continue;
+    }
+    try {
+      const rated = rateOutcomeUsefulness(db, o);
+      db.setOutcomeDelivery(
+        o.id,
+        "usefulness",
+        rated ? "done" : "skipped",
+        rated ? `rated ${rated} served item(s)` : "nothing served during the work",
+      );
+      t[rated ? "done" : "skipped"]++;
+    } catch (err) {
+      if (signal.aborted) break;
+      t[retryOrFail(db, o, "usefulness", String(err))]++;
     }
   }
 

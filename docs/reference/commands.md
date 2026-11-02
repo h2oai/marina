@@ -5915,6 +5915,7 @@ Usage: memory kv list | memory kv set <key> <value> | memory kv get <key> | memo
 Family: memory note <text> · memory recall <query> [evidence|all] · memory reflect [topic] · memory recap <topic> · memory debrief · memory context <query>
 (bare note, recall, reflect, recap, debrief, context are aliases; `help memory full` lists every form)
 memory usefulness [window]  what memory was served to you (per surface, arm, tier; most-served items and the evidence on them)
+memory useful <id> · memory useless <id>  rate an item you were served (half-weight evidence, once per item per day)
 
 Key-value beliefs (core memory — mutable, per-entity, NOT the durable record store):
   memory kv list                        your keys (bare `memory list` = same)
@@ -6351,6 +6352,18 @@ Effect: read.
 
 - `field-0` (`window`): text, optional group `option-0`.
 - Group `option-0`: `window`.
+
+### `memory useful <id>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+
+### `memory useless <id>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
 
 ### `memory vocabulary`
 

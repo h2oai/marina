@@ -166,6 +166,7 @@ describe("Prophet write-back", () => {
     ).toEqual([
       ["history", "pending"],
       ["lessons", "pending"],
+      ["usefulness", "pending"],
     ]);
     // Resolving again: already settled; the wide event's open part stays open.
     expect(resolveProphetAnswers(db, resolutions, now)).toEqual({

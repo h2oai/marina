@@ -8,6 +8,7 @@ import {
   parseMemoryServiceCommand,
 } from "../../memory/human-interface";
 import { residentMemoryOperation } from "../../memory/resident-service";
+import { type ExplicitVote, rateExplicit } from "../../memory/usefulness";
 import { bold, dim, header, label, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { MemoryUsefulnessSummary } from "../../persistence/db-memory-usefulness";
@@ -84,6 +85,8 @@ const USEFULNESS_DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const USEFULNESS_MAX_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const USEFULNESS_USAGE =
   "Usage: memory usefulness [window]   e.g. memory usefulness 7d · memory usefulness 24h (default 7d, max 90d)";
+const VOTE_USAGE =
+  "Usage: memory useful <note id|record id> · memory useless <note id|record id>   (an item served to you in the last 7 days; one vote per item per day)";
 
 const KV_USAGE =
   "Usage: memory kv list | memory kv set <key> <value> | memory kv get <key> | memory kv delete <key> | memory kv history <key> | memory kv clear\n" +
@@ -209,6 +212,8 @@ export function memoryCommand(deps: {
       { syntax: "memory unwatch <NAME> <VERSION>", effect: "write" },
       { syntax: "memory usage", effect: "read" },
       { syntax: "memory usefulness [window]", effect: "read" },
+      { syntax: "memory useful <id>", effect: "write" },
+      { syntax: "memory useless <id>", effect: "write" },
       { syntax: "memory vocabulary", effect: "read" },
       { syntax: "memory watch <NAME> [RECORD_ID ...]", effect: "write" },
       ...FAMILY_USAGE,
@@ -223,7 +228,8 @@ export function memoryCommand(deps: {
     help:
       "The memory command: notes, recall, reflection, durable records and key-value beliefs.\n" +
       `${KV_USAGE}\n${MEMORY_FAMILY_HELP}\n` +
-      "memory usefulness [window]  what memory was served to you (per surface, arm, tier; most-served items and the evidence on them)\n\n" +
+      "memory usefulness [window]  what memory was served to you (per surface, arm, tier; most-served items and the evidence on them)\n" +
+      "memory useful <id> · memory useless <id>  rate an item you were served (half-weight evidence, once per item per day)\n\n" +
       `${MEMORY_KV_HELP}\n\n` +
       `${MEMORY_WHICH_VERB}\n\n` +
       MEMORY_SERVICE_HELP +
@@ -243,11 +249,39 @@ export function memoryCommand(deps: {
       const tokens = input.tokens;
       const rawSub = tokens[0];
       // `ls` → list (KV), `view`/`info` → show (durable), `rm`/`remove` → delete (KV).
-      const sub = canonicalSub(rawSub, ["kv", "usefulness", ...KV_SUBS, ...DURABLE_SUBS]);
+      const sub = canonicalSub(rawSub, [
+        "kv",
+        "usefulness",
+        "useful",
+        "useless",
+        ...KV_SUBS,
+        ...DURABLE_SUBS,
+      ]);
 
-      // ── Retrieval telemetry readout ──
+      // ── Retrieval telemetry readout and explicit votes ──
       if (sub === "usefulness") {
         runUsefulness(ctx, db, entity, input.entity, afterTokens(input.args, 1));
+        return;
+      }
+      if (sub === "useful" || sub === "useless") {
+        const itemId = tokens[1]?.replace(/^#/, "") ?? "";
+        if (!itemId || !/^[A-Za-z0-9_:-]{1,80}$/.test(itemId)) {
+          refuseCommand(ctx, input.entity, VOTE_USAGE);
+          return;
+        }
+        const refused = rateExplicit(db, {
+          entityName: entity.name,
+          itemId,
+          vote: sub as ExplicitVote,
+        });
+        if (refused) {
+          refuseCommand(ctx, input.entity, `Not recorded: ${refused}.`);
+          return;
+        }
+        ctx.send(
+          input.entity,
+          `Recorded: ${/^\d+$/.test(itemId) ? `#${itemId}` : itemId} ${sub} (half-weight evidence; counts toward how it ranks for others, never for you).`,
+        );
         return;
       }
 
@@ -327,12 +361,13 @@ function runUsefulness(
     }
     windowMs = Math.min(parsed, USEFULNESS_MAX_WINDOW_MS);
   }
-  const summary = db.memoryUsefulnessSummary(entity.name, Date.now() - windowMs, {
-    topItems: 10,
-  });
+  const since = Date.now() - windowMs;
+  const summary = db.memoryUsefulnessSummary(entity.name, since, { topItems: 10 });
+  const posterior = db.usefulnessPosterior(summary.topItems.map((i) => i.itemId));
+  const arms = db.citationRateByArm(entity.name, since);
   ctx.send(
     entityId,
-    renderUsefulness(summary, windowMs),
+    renderUsefulness(summary, windowMs, { posterior, arms }),
     undefined,
     memoryResult("usefulness", { success: true, usefulness: summary }),
   );
@@ -351,7 +386,14 @@ const counts = (m: Record<string, number>) =>
     .map(([k, n]) => `${k} ${n}`)
     .join(" · ") || "none";
 
-export function renderUsefulness(summary: MemoryUsefulnessSummary, windowMs: number): string {
+export function renderUsefulness(
+  summary: MemoryUsefulnessSummary,
+  windowMs: number,
+  detail: {
+    posterior?: Map<string, { alpha: number; beta: number; n: number; mean: number }>;
+    arms?: Record<string, { serves: number; cited: number }>;
+  } = {},
+): string {
   const lines = [header(`Memory served — last ${formatWindow(windowMs)}`), separator()];
   if (summary.serves === 0) {
     lines.push(
@@ -365,7 +407,17 @@ export function renderUsefulness(summary: MemoryUsefulnessSummary, windowMs: num
       `${summary.serves} item serve${summary.serves === 1 ? "" : "s"} · ${summary.distinctItems} distinct item${summary.distinctItems === 1 ? "" : "s"} · ${summary.distinctQueries} distinct quer${summary.distinctQueries === 1 ? "y" : "ies"}`,
     ),
     label(bold("Surfaces"), counts(summary.bySurface)),
-    label(bold("Arms"), counts(summary.byArm)),
+    label(
+      bold("Arms"),
+      detail.arms && Object.keys(detail.arms).length
+        ? Object.entries(detail.arms)
+            .map(
+              ([arm, a]) =>
+                `${arm} ${a.serves} served, ${a.cited} cited (${a.serves ? Math.round((100 * a.cited) / a.serves) : 0}%)`,
+            )
+            .join(" · ")
+        : counts(summary.byArm),
+    ),
     label(bold("Tiers"), counts(summary.byTier)),
     label(
       bold("Evidence"),
@@ -378,7 +430,12 @@ export function renderUsefulness(summary: MemoryUsefulnessSummary, windowMs: num
   );
   for (const item of summary.topItems) {
     const handle = /^\d+$/.test(item.itemId) ? `#${item.itemId}` : item.itemId;
-    const evidence = item.repeatAlpha > 0 ? ` · repeat +${item.repeatAlpha}` : "";
+    const p = detail.posterior?.get(item.itemId);
+    const evidence = p?.n
+      ? ` · α ${+p.alpha.toFixed(2)} β ${+p.beta.toFixed(2)} → ${p.mean.toFixed(2)}`
+      : item.repeatAlpha > 0
+        ? ` · repeat +${item.repeatAlpha}`
+        : "";
     lines.push(
       `  ${handle.padEnd(14)} ${item.tier.padEnd(10)} ${item.serves} serve${item.serves === 1 ? "" : "s"} · ${item.distinctQueries} quer${item.distinctQueries === 1 ? "y" : "ies"}${evidence}`,
     );
@@ -386,7 +443,7 @@ export function renderUsefulness(summary: MemoryUsefulnessSummary, windowMs: num
   lines.push(
     "",
     dim(
-      "A serve is exposure, not use. Evidence kinds: repeat (a rewording of an existing note rated it instead of storing a copy). Citation, outcome and explicit evidence are not recorded yet.",
+      "A serve is exposure, not use. Evidence: citation (you named a served note in a note or submission, +1), outcome (work you were served it during succeeded +1 / failed +¼ against), explicit (memory useful|useless, ±½), unused (served, never cited, +¼ against, capped daily), repeat (a rewording of an existing note, +1). α/β → the posterior mean; 0.50 is no evidence. Your own evidence never moves how others rank your notes.",
     ),
   );
   return lines.join("\n");
