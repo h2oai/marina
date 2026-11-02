@@ -25,6 +25,7 @@
  * Pure: no I/O, no model.
  */
 
+import { moveScaleOf } from "../orchestration/formations/combine-numeric";
 import type { RoundForecast } from "./forecast";
 import { freshestReading, rulesLines } from "./prompt-context";
 import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "./types";
@@ -139,9 +140,12 @@ export function parseProfile(
       issues.push(`${c} ${v === undefined ? "missing" : "invalid"}`);
       continue;
     }
-    if (Math.abs(d.mean - b.mean) > maxSdMove * b.sd) {
+    const scale = moveScaleOf(b);
+    if (Math.abs(d.mean - b.mean) > maxSdMove * scale) {
+      const bound =
+        b.moveScale !== undefined && scale !== b.sd ? `move scale (${scale})` : "start sd";
       issues.push(
-        `${c} move ${Math.round((d.mean - b.mean) * 100) / 100} beyond ${maxSdMove} start sd`,
+        `${c} move ${Math.round((d.mean - b.mean) * 100) / 100} beyond ${maxSdMove} ${bound}`,
       );
       continue;
     }

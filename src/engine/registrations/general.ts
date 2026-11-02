@@ -38,6 +38,7 @@ import { lsCommand } from "../commands/ls";
 import { mapCommand } from "../commands/map";
 import { marinaDescendCommand } from "../commands/marina-descend";
 import { meshCommand } from "../commands/mesh";
+import { methodsCommand } from "../commands/methods";
 import { moveCommand } from "../commands/move";
 import { mutationCommand } from "../commands/mutation";
 import { noteCommand } from "../commands/note";
@@ -209,6 +210,7 @@ export function registerGeneralCommands(engine: Engine): void {
   engine.commands.registerBuiltin(
     arbiterCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
+  engine.commands.registerBuiltin(methodsCommand({ store: () => engine.db }));
   engine.commands.registerBuiltin(
     judgeCommand({
       store: () => engine.db,

@@ -377,6 +377,8 @@ export const EVIDENCE_FENCE_POLICY: Readonly<Record<string, FenceRule>> = {
   guide: "refuse",
   outcome: "refuse",
   judge: "refuse",
+  // Every selector's current evidence and verdicts: dated by nature.
+  methods: "refuse",
   learned: "refuse",
   novelty: "refuse",
   market: "refuse",

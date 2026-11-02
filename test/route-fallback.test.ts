@@ -47,8 +47,8 @@ import { makeTestRoom } from "./helpers";
 import { scopeProcessState } from "./process-state";
 
 const WORKSPACE_LIMIT =
-  '400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC."},"request_id":"req_x"}';
-const RESET = Date.parse("2026-11-01T00:00:00Z");
+  '400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified workspace API usage limits. You will regain access on 2036-11-01 at 00:00 UTC."},"request_id":"req_x"}';
+const RESET = Date.parse("2036-11-01T00:00:00Z");
 const NOW = Date.parse("2026-10-14T00:00:00Z");
 
 afterEach(() => {
@@ -87,10 +87,10 @@ describe("classifyUpstreamRefusal", () => {
   });
 
   it("reads reset times in the common shapes, ignoring past dates", () => {
-    expect(parseLimitReset("regain access on 2026-11-01 at 00:00 UTC", NOW)).toBe(RESET);
-    expect(parseLimitReset("resets at 2026-11-01T00:00:00Z", NOW)).toBe(RESET);
-    expect(parseLimitReset("until 2026-11-01 00:00 UTC", NOW)).toBe(RESET);
-    expect(parseLimitReset("until 2026-11-01", NOW)).toBe(RESET);
+    expect(parseLimitReset("regain access on 2036-11-01 at 00:00 UTC", NOW)).toBe(RESET);
+    expect(parseLimitReset("resets at 2036-11-01T00:00:00Z", NOW)).toBe(RESET);
+    expect(parseLimitReset("until 2036-11-01 00:00 UTC", NOW)).toBe(RESET);
+    expect(parseLimitReset("until 2036-11-01", NOW)).toBe(RESET);
     expect(parseLimitReset("on 2020-01-01 at 00:00 UTC", NOW)).toBeUndefined();
     expect(parseLimitReset("no date here", NOW)).toBeUndefined();
   });
@@ -222,7 +222,7 @@ const ANTHROPIC_LIMIT = () =>
       error: {
         type: "invalid_request_error",
         message:
-          "You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.",
+          "You have reached your specified workspace API usage limits. You will regain access on 2036-11-01 at 00:00 UTC.",
       },
     }),
     { status: 400, statusText: "Bad Request", headers: { "Content-Type": "application/json" } },
@@ -331,7 +331,7 @@ describe("proxyToUpstream: a usage-limited direct route", () => {
       "openrouter/anthropic/claude-opus-5.5",
     );
     expect(resp.headers.get("x-marina-route")).toBe(
-      "via=openrouter; anthropic:direct=usage-limit; until=2026-11-01T00:00:00.000Z",
+      "via=openrouter; anthropic:direct=usage-limit; until=2036-11-01T00:00:00.000Z",
     );
     // OpenRouter's list price for the model: 10 × $4/M + 5 × $20/M.
     expect(Number(resp.headers.get("x-marina-cost-usd"))).toBeCloseTo(0.00014, 8);
@@ -371,7 +371,7 @@ describe("proxyToUpstream: a usage-limited direct route", () => {
     expect(second.status).toBe(429);
     const body = (await second.json()) as { error: { message: string; code: string } };
     expect(body.error.code).toBe("route_usage_limit");
-    expect(body.error.message).toContain("Anthropic API (direct key) usage limit until 2026-11-01");
+    expect(body.error.message).toContain("Anthropic API (direct key) usage limit until 2036-11-01");
     expect(body.error.message).toContain("no other route serves anthropic/claude-opus-5-5");
     expect(calls).toEqual([]);
   });
@@ -407,10 +407,10 @@ describe("proxyToUpstream: a usage-limited direct route", () => {
     const check = computeReadiness(engine).checks.find((c) => c.id === "provider-routes");
     expect(check?.status).toBe("degraded");
     expect(check?.detail).toContain(
-      "anthropic (direct key): usage limit until 2026-11-01 00:00 UTC; anthropic models served via openrouter",
+      "anthropic (direct key): usage limit until 2036-11-01 00:00 UTC; anthropic models served via openrouter",
     );
     const lines = renderRouteHealth(describeRouteHealth({ hasOpenRouterKey: true }));
     expect(lines[0]).toContain("not Marina's daily spend cap");
-    expect(lines[1]).toContain("anthropic (direct key): usage limit until 2026-11-01 00:00 UTC");
+    expect(lines[1]).toContain("anthropic (direct key): usage limit until 2036-11-01 00:00 UTC");
   });
 });
