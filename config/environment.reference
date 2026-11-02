@@ -488,6 +488,9 @@
 # Long heartbeat for an idle or resting resident, in milliseconds. With no new perception (while resting: no owed reply), no outstanding request, no work in its last run and no consolidation or reflection material, a resident makes no model call until this long after its last prompt. Default 1800000 (30 min); `0`/`off` = only events wake it.
 # MARINA_AGENT_HEARTBEAT_MS=1800000
 
+# What an idle resident is asked to do (src/agent/idle-reflection.ts) when `[Quiet — nothing needs your attention]` or `[Reflection Due]` fires. `append` (default): write ONE reflection — the current hypothesis and what changed it, citing note/task/outcome ids — as a new reflection-tier note, update the goal if it moved, then rest; never resolve, link, evolve, merge or delete (those rewrite the store and belong to a checked consolidation pass). `rest`: keep the idle detection and offer only rest or `brief`; `[Reflection Due]` is not shown. Neither mode rewrites the store; the two are compared on task success. The former curation menu is gone in both.
+# MARINA_IDLE_REFLECTION=append
+
 # Minimum gap between an agent's replies on one channel, in milliseconds.
 # AGENT_CHANNEL_REPLY_COOLDOWN_MS=30000
 

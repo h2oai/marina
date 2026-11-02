@@ -193,6 +193,14 @@ import {
 import { GameStateManager } from "./game-state";
 import { HookRegistry } from "./hook-registry";
 import { hostedModel, prepareHostedModel } from "./hosted-model";
+import {
+  idleReflectionMode,
+  QUIET_HEADER,
+  quietBody,
+  REFLECTION_DUE_HEADER,
+  reflectionDueBody,
+  savedReflection,
+} from "./idle-reflection";
 import { InterruptibleWaiter } from "./interruptible-waiter";
 import {
   applyLoopPreference,
@@ -4285,14 +4293,15 @@ export class LeanAgentAdapter implements AgentHandle {
       this.idleCycles = 0;
     }
 
-    // ── Idle consolidation: replace normal prompt with memory work ──
+    // ── Idle turn: replace the normal prompt with the append-only ask ──
+    // (src/agent/idle-reflection.ts: one reflection, a goal update, rest —
+    // never curation; `MARINA_IDLE_REFLECTION=rest` offers rest alone).
     // Skipped for crew-responder specialists — they have no autonomous
-    // cognitive life between messages, so consolidation just burns tokens
-    // on memory work the coordinator never asked for. Also skipped while a
-    // coding task is active — a bound coder that goes quiet needs the task
-    // restated, not a detour into memory housekeeping.
+    // cognitive life between messages, so an idle ask just burns tokens on
+    // work the coordinator never asked for. Also skipped while a coding task
+    // is active — a bound coder that goes quiet needs the task restated.
     // Offered only with material — notes written since the last offer — so an
-    // idle agent is not asked to tidy an unchanged memory every cycle.
+    // idle agent is not asked about an unchanged memory every cycle.
     if (
       this.idleCycles >= 3 &&
       this.notesSinceConsolidation > 0 &&
@@ -4302,8 +4311,7 @@ export class LeanAgentAdapter implements AgentHandle {
     ) {
       this.notesSinceConsolidation = 0;
       parts.push(
-        "[Quiet — nothing needs your attention]\n\n" +
-          "Options, if they improve future decisions: resolve a known contradiction, link evidence, evolve a stale belief, or store a genuinely reusable procedure. Notes that only record quiet, repeated orientation, or status broadcasts add noise. If memory is already sharp, run `brief` for new work, or rest (`memory set rest <why>`) and end the turn.",
+        `${QUIET_HEADER}\n\n${quietBody(idleReflectionMode())}`,
         MANDATORY_SECTION_PRIORITY,
         "quiet_consolidation",
       );
@@ -4919,15 +4927,16 @@ export class LeanAgentAdapter implements AgentHandle {
     // the most work. Thin responders reflect every 300 cycles (vs 75), so the
     // fast-dispatch economics survive and the reflection loop keeps running.
     // Coding-task mode: suppressed — reflection waits until the task is done.
+    // The ask is the same append-only one as `[Quiet]` (idle-reflection.ts):
+    // one reflection, never curation; absent in `rest` mode.
     if (
       cycle - this.lastReflectionCycle >= (this.crewResponderMode ? 300 : 75) &&
       this.notesSinceReflection >= 3 &&
       !this.activeCodingTask
     ) {
-      // The procedure itself is the built-in `consolidate-memory` skill.
-      const reflectionContent = `${this.notesSinceReflection} new notes since your last reflection. Consolidate: state your working hypothesis, \`memory recall\`/\`memory reflect\` your focus to test it against cited notes, then curate (link, supersede, store a skill) — \`skill builtin consolidate-memory\` has the steps. The goal is a smaller, sharper memory, not more notes.`;
-      if (this.shouldIncludeSection("reflection_due", reflectionContent)) {
-        parts.push(`[Reflection Due]\n${reflectionContent}`);
+      const reflectionContent = reflectionDueBody(idleReflectionMode(), this.notesSinceReflection);
+      if (reflectionContent && this.shouldIncludeSection("reflection_due", reflectionContent)) {
+        parts.push(`${REFLECTION_DUE_HEADER}\n${reflectionContent}`);
       }
     }
 
@@ -5933,11 +5942,12 @@ export class LeanAgentAdapter implements AgentHandle {
         // Count only genuine note creation ("Note #N saved") — not deletes,
         // not-found errors, or evolve/supersede, which also contain "Note #"
         // and would inflate the reflection-scheduling counter.
-        if (/Note #\d+ saved/.test(resultStr)) {
+        if (/Note #\d+ saved/.test(resultStr) && !savedReflection(resultStr)) {
           this.notesSinceReflection++;
           this.notesSinceConsolidation++;
         }
-        if (resultStr.includes("Reflection Created")) {
+        // A reflection answers the ask: `reflect` or a saved reflection-tier note.
+        if (resultStr.includes("Reflection Created") || savedReflection(resultStr)) {
           this.notesSinceReflection = 0;
           this.lastReflectionCycle = this.loopIterationCount;
         }

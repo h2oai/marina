@@ -98,8 +98,11 @@ describe("progressive disclosure: long trait and reflection prose lives in built
 
   it("the reflection procedure is the consolidate-memory skill", () => {
     const skill = builtinSkill("consolidate-memory")!;
-    for (const step of ["**Generate.**", "**Reflect.**", "**Curate.**", "note link", "skill store"])
+    for (const step of ["**Generate.**", "**Reflect.**", "**Write.**", "type reflection"])
       expect(skill.body).toContain(step);
+    // Append-only: the curation verbs are a checked pass's, not the idle turn's.
+    expect(skill.body).not.toContain("note link <a>");
+    expect(skill.body).not.toContain("skill store <name>");
   });
 });
 

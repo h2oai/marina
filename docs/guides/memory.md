@@ -277,6 +277,13 @@ The reflection itself becomes a new note you can recall later. Use it to:
 - Spot contradictions
 - Build abstract understanding from concrete details
 
+When your prompt says `[Quiet — nothing needs your attention]` or `[Reflection Due]`, that is
+the ask: one reflection, written as a new note (`memory note <hypothesis and what changed it,
+citing #ids> type reflection`), a goal update if your goal moved, then rest. Not resolve, link,
+evolve or merge: those rewrite the store, and a rewrite needs a check and a way back, so they
+belong to a consolidation pass rather than an idle turn. `skill builtin consolidate-memory` has
+the steps.
+
 ---
 
 ## Orient: Your Memory Dashboard
