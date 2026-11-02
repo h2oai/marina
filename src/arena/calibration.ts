@@ -314,7 +314,7 @@ interface FiledDetail {
     note?: string;
     origins?: unknown;
     pollLevel?: unknown;
-    spreadCalibration?: { applied?: boolean; scale?: number; fromSd?: number };
+    spreadCalibration?: { applied?: boolean; scale?: number };
   };
 }
 
@@ -429,13 +429,6 @@ function recordOf(
     (body.profile ? "profile_energy" : "continuous_normal");
   const applied = detail.forecast?.spreadCalibration;
   const undo = applied?.applied && finite(applied.scale) && applied.scale > 0 ? applied.scale : 1;
-  // The forecaster's own sd: what the calibration started from when the record
-  // says so (the measured-error floor may have raised the filed sd after it,
-  // `finishForecast`), else the filed sd with the scale undone.
-  const rawSd = (filed: number) =>
-    applied?.applied && finite(applied.fromSd) && applied.fromSd > 0
-      ? applied.fromSd
-      : filed / undo;
   const method =
     methodOf(detail.forecast?.note ?? body.notes) +
     (detail.forecast?.pollLevel ? POLL_LEVEL_METHOD : "");
@@ -451,7 +444,7 @@ function recordOf(
     if (!res || res.voided || !finite(res.value)) return undefined;
     const knownAt = knownAtOf(res);
     if (!Number.isFinite(knownAt)) return undefined;
-    const loss = scalarSpreadLoss({ mean: t.mean, sd: rawSd(t.sd) }, res.value);
+    const loss = scalarSpreadLoss({ mean: t.mean, sd: t.sd / undo }, res.value);
     const pers = s?.persistence_crps ?? s?.scores?.persistence?.crps;
     const norm = finite(pers) && pers > 0 ? pers : loss(1);
     return norm > 0 ? { roundId: id, family, ...tag, method, knownAt, loss, norm } : undefined;

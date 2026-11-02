@@ -284,7 +284,7 @@ describe("withSeriesMoveScale", () => {
   });
 });
 
-describe("finishForecast: the measured-error floor has the last word", () => {
+describe("finishForecast: floor, then calibration (resolved rounds have the last word)", () => {
   const raw = {
     ...start,
     topline: { mean: base.mean, sd: 0.5 },
@@ -307,14 +307,23 @@ describe("finishForecast: the measured-error floor has the last word", () => {
     note: `${f.note}; sd ×0.5 spread-calibrated`,
   });
 
-  it("a calibration that narrows below the floor files the floor", () => {
+  it("the floor raises the forecaster's sd first; the calibration then scales the floored sd", () => {
+    // 0.5 → floored to 0.4? No: 0.5 is above the floor, so the calibration halves it to 0.25.
     const f = finishForecast(round, raw, { spread: halve });
-    expect(f.topline!.sd).toBe(0.4);
-    expect(f.errorFloorApplied?.fromSd).toBe(0.25);
-    expect(f.note.indexOf("spread-calibrated")).toBeLessThan(f.note.indexOf("floored"));
+    expect(f.topline!.sd).toBe(0.25);
+    expect(f.errorFloorApplied).toBeUndefined();
+    // A forecaster below the floor is raised to it, and the calibration scales that.
+    const g = finishForecast(
+      round,
+      { ...raw, topline: { mean: base.mean, sd: 0.3 } },
+      { spread: halve },
+    );
+    expect(g.errorFloorApplied?.fromSd).toBe(0.3);
+    expect(g.topline!.sd).toBe(0.2);
+    expect(g.note.indexOf("floored")).toBeLessThan(g.note.indexOf("spread-calibrated"));
   });
 
-  it("a calibration that stays above the floor is filed as calibrated", () => {
+  it("a calibration that widens is filed as calibrated", () => {
     const widen = (_r: ArenaRound, f: RoundForecast): RoundForecast => ({
       ...f,
       topline: { ...f.topline!, sd: f.topline!.sd * 2 },

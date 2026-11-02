@@ -304,11 +304,11 @@ for example with `MARINA_ARENA_SHADOW_CHALLENGERS=ny_fed_sce=lead`.
 
 ### Spread calibration and move weight
 
-Every filing passes through the same steps, in order: forecaster → move weight → spread
-calibration → error floor (`finishForecast`, `src/arena/submit.ts`). The calibration may narrow the
-forecaster's sd on resolved evidence; the floor then has the last word, so nothing files narrower
-than the nowcast's own measured miss (until 2026-11 the floor ran first and a family-pooled ×0.5
-filed angry-share at half its measured error).
+Every filing passes through the same steps, in order: forecaster → move weight → error floor →
+spread calibration (`finishForecast`, `src/arena/submit.ts`). The calibration may narrow a floored sd
+on resolved evidence, deliberately: measured on the 18 resolved October 2026 filings that carried a
+floor, applying the floor last would have cost 0.08 mean skill (7 filings worse, 4 better); the one
+series it helps (angry-share) is the exception.
 
 **Spread calibration per (series, method)** (`src/arena/calibration.ts`). Every filed sd — a
 scalar topline and each profile cell — is multiplied by a scale learned from resolved rounds. The

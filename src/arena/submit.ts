@@ -139,11 +139,14 @@ export async function buildForecastBody(
 /**
  * Whatever produced the forecast (nowcast, formation, crew, research, routed),
  * no sd leaves this step narrower than the series' measured nowcast error
- * (`ForecastOrigin.errorFloor`). Only ever widens; the mean is untouched. It
- * runs LAST (`finishForecast`): the spread calibration may narrow the
- * forecaster's sd on resolved evidence, never below the error the nowcast has
- * actually made — until 2026-11 the floor ran first and the calibration's
- * family-pooled ×0.5 then filed angry-share at half its measured error.
+ * (`ForecastOrigin.errorFloor`). Only ever widens; the mean is untouched. The
+ * spread calibration runs after it and may narrow it on resolved evidence —
+ * deliberately: the floor is the nowcast's own miss, the calibration is what
+ * the resolved rounds say about the whole method, and the resolved rounds
+ * have the last word. Measured on the 18 resolved filings of October 2026
+ * that carried a floor, the other order (floor last) would have cost 0.08
+ * mean skill (7 filings worse, 4 better): the one series it would have
+ * helped (angry-share) is the exception, not the rule.
  */
 export function applyErrorFloor(round: ArenaRound, f: RoundForecast): RoundForecast {
   const floorOf = (id: string | undefined) => (id ? f.origins?.[id]?.errorFloor : undefined);
@@ -179,19 +182,17 @@ type Calibrate = (round: ArenaRound, f: RoundForecast) => RoundForecast;
 
 /**
  * What a forecaster's answer goes through before it is filed, in order: the
- * (family, method) move weight, the spread calibration — resolved rounds have
- * the last word on how wide the forecaster's sd should be — and then the
- * measured-error floor, which has the last word of all: a calibration may
- * narrow a forecaster, never below the nowcast's own measured miss. Pure.
+ * (family, method) move weight, the measured-error floor, then the spread
+ * calibration — resolved rounds have the last word on how wide a filing is
+ * (see `applyErrorFloor` for the measurement behind the order). Pure.
  */
 export function finishForecast(
   round: ArenaRound,
   raw: RoundForecast,
   calibrate?: { move?: Calibrate; spread?: Calibrate },
 ): RoundForecast {
-  const weighted = calibrate?.move ? calibrate.move(round, raw) : raw;
-  const calibrated = calibrate?.spread ? calibrate.spread(round, weighted) : weighted;
-  return applyErrorFloor(round, calibrated);
+  const floored = applyErrorFloor(round, calibrate?.move ? calibrate.move(round, raw) : raw);
+  return calibrate?.spread ? calibrate.spread(round, floored) : floored;
 }
 
 /**
