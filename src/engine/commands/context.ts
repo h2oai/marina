@@ -19,6 +19,8 @@ export async function previewParticipantContext(
   deps: ContextReader,
   id: EntityId,
   options: unknown,
+  /** Who is reading: the adapter's prompt build, the `context` command, or an MCP session. */
+  surface: "prompt" | "context" | "mcp" = "context",
 ) {
   const entity = deps.getEntity(id);
   if (!entity || !deps.db)
@@ -47,6 +49,7 @@ export async function previewParticipantContext(
     scope,
     budgetBytes,
     creditReflections: false,
+    surface,
     ...(fence.length ? { asOf: Math.min(...fence) } : {}),
   });
   if (deps.getEntity(id) !== entity) throw new Error("Resident session expired.");

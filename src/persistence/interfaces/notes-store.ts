@@ -1,12 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { NoteTier } from "../../engine/constants";
 import type { createNumericHandle } from "../db-memory-numeric";
 import type * as notesDb from "../db-notes";
 import type {
   CoreMemoryHistoryRow,
   CoreMemoryRow,
+  CreateNoteOptions,
+  CreateNoteOutcome,
   MemApiKeyRow,
   MemoryPoolRow,
   NoteLinkRow,
@@ -24,18 +25,14 @@ export interface NotesStore {
     entityName: string,
     content: string,
     roomId?: string,
-    opts?: {
-      importance?: number;
-      noteType?: string;
-      poolId?: string;
-      supersedesId?: number;
-      tier?: NoteTier;
-      skipDedup?: boolean;
-      confidence?: number;
-      verificationStatus?: string;
-      claimKey?: string;
-    },
+    opts?: CreateNoteOptions,
   ): number;
+  createNoteDetailed(
+    entityName: string,
+    content: string,
+    roomId?: string,
+    opts?: CreateNoteOptions,
+  ): CreateNoteOutcome;
   getNotesByEntity(entityName: string, limit?: number): NoteRow[];
   getNotesByType(entityName: string, noteType: string, limit?: number): NoteRow[];
   createNoteWithLinks(
@@ -169,6 +166,7 @@ export interface NotesStore {
 export const NOTES_STORE_METHODS = [
   "createMemoryNoteHandle",
   "createNote",
+  "createNoteDetailed",
   "getNotesByEntity",
   "getNotesByType",
   "createNoteWithLinks",

@@ -4621,10 +4621,11 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     }
 
-    // ── 2d. Lessons for the focus (opt-in, every 10th cycle, offset 7) ──
-    // MARINA_LESSONS_RESIDENT=on shows what judged outcomes taught about this
-    // kind of work (cross-board lessons labelled); `observe` logs the ids it
-    // would have shown and injects nothing; off (default) never asks.
+    // ── 2d. Lessons for the focus (every 10th cycle, offset 7) ──
+    // MARINA_LESSONS_RESIDENT follows MARINA_LESSONS_FROM_WORK (on with a model
+    // provider, else observe): `on` shows what judged outcomes taught about
+    // this kind of work (cross-board lessons labelled); `observe` logs the ids
+    // it would have shown and injects nothing; `off` never asks.
     const residentLessons = residentLessonsMode();
     if (
       residentLessons !== "off" &&

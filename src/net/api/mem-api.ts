@@ -604,6 +604,7 @@ export async function handleMemApi(
     const context = await buildUnifiedContext(db, agent, q, {
       budgetBytes,
       scope: scopeRaw as UnifiedScope,
+      surface: "rest",
     });
     // Legacy-note tiers carry note ids — apply the GET /mem/notes read predicate
     // so the unified surface cannot leak what the list surface hides.

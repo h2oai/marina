@@ -15,6 +15,13 @@ const worldDependencies = new Set([
   "entity_standing_cache",
 ]);
 
+/**
+ * `memory_*` tables that never change what is served and are written by the
+ * reads themselves: retrieval telemetry (`memory_served`, one row per served
+ * item). A trigger on it would invalidate the cache on every build.
+ */
+const memoryTelemetryTables = new Set(["memory_served"]);
+
 const ALL_EVENTS: readonly [string, string][] = [
   ["INSERT", "INSERT"],
   ["UPDATE", "UPDATE"],
@@ -57,7 +64,8 @@ export function contextRevision(db: Database): string {
       .all() as { name: string }[];
     for (const { name } of tables) {
       const events =
-        worldDependencies.has(name) || name.startsWith("memory_")
+        worldDependencies.has(name) ||
+        (name.startsWith("memory_") && !memoryTelemetryTables.has(name))
           ? ALL_EVENTS
           : assetReadDependencies[name];
       if (!events) continue;

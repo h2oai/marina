@@ -366,6 +366,7 @@ export async function buildInjectedContext(
       scope: "all",
       budgetBytes: ownBudget,
       perTier: { skill: 2, trusted: 3, evidence: 4, proposal: 2, unverified: 3 },
+      surface: "passthru",
     });
     unifiedTruncated = unified.truncated;
     let own = 0;

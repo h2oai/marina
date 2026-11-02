@@ -235,6 +235,7 @@ import type {
 // tests and tools that introspect the migration chain.
 import { createNumericHandle } from "./db-memory-numeric";
 import * as memoryServiceDb from "./db-memory-service";
+import * as usefulnessDb from "./db-memory-usefulness";
 import { BASE_SCHEMA, MIGRATIONS, SCHEMA_BASELINE, SCHEMA_VERSION } from "./schema";
 
 // Row types for the domains lifted out of this file live in their modules and
@@ -611,6 +612,31 @@ export class MarinaDB implements MarinaStores {
 
   listEvidenceReceipts(limit = 100): evidenceDb.EvidenceReceiptRow[] {
     return evidenceDb.listEvidenceReceipts(this.reader, limit);
+  }
+
+  // ── Retrieval telemetry and usefulness evidence (db-memory-usefulness.ts) ──
+
+  recordMemoryServed(rows: readonly usefulnessDb.MemoryServedInput[]): number {
+    return usefulnessDb.recordMemoryServed(this.db, rows);
+  }
+
+  applyUsefulness(rating: usefulnessDb.UsefulnessRatingInput): number {
+    return usefulnessDb.applyUsefulness(this.db, rating);
+  }
+
+  memoryUsefulnessSummary(
+    entityName: string,
+    sinceMs: number,
+    opts?: { topItems?: number },
+  ): usefulnessDb.MemoryUsefulnessSummary {
+    return usefulnessDb.memoryUsefulnessSummary(this.reader, entityName, sinceMs, opts);
+  }
+
+  usefulnessRatingsFor(
+    itemId: string,
+    limit = 50,
+  ): ReturnType<typeof usefulnessDb.usefulnessRatingsFor> {
+    return usefulnessDb.usefulnessRatingsFor(this.reader, itemId, limit);
   }
 
   verifyEvidenceChain(): evidenceDb.EvidenceVerification {
@@ -1862,19 +1888,18 @@ export class MarinaDB implements MarinaStores {
     entityName: string,
     content: string,
     roomId?: string,
-    opts?: {
-      importance?: number;
-      noteType?: string;
-      poolId?: string;
-      supersedesId?: number;
-      tier?: NoteTier;
-      skipDedup?: boolean;
-      confidence?: number;
-      verificationStatus?: string;
-      claimKey?: string;
-    },
+    opts?: notesDb.CreateNoteOptions,
   ): number {
     return notesDb.createNote(this.db, entityName, content, roomId, opts);
+  }
+
+  createNoteDetailed(
+    entityName: string,
+    content: string,
+    roomId?: string,
+    opts?: notesDb.CreateNoteOptions,
+  ): notesDb.CreateNoteOutcome {
+    return notesDb.createNoteDetailed(this.db, entityName, content, roomId, opts);
   }
 
   createMemoryNoteHandle(

@@ -1715,7 +1715,15 @@ export interface UnifiedContextOptions {
      * no per-item as-of, so they are withheld and reported degraded `fenced`.
      */
     asOf?: number;
+    /**
+     * Which surface is asking, for retrieval telemetry (`memory_served`): the
+     * agent's continuation prompt, a typed `context`/`recall`, MCP, passthru
+     * injection or the REST endpoint. Default `context`. Never part of the
+     * retrieval or its cache key.
+     */
+    surface?: UnifiedContextSurface;
 }
+export type UnifiedContextSurface = "prompt" | "context" | "recall" | "mcp" | "passthru" | "rest";
 ```
 
 ## memory-expansion
