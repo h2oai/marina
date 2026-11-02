@@ -114,6 +114,7 @@ export async function cmdTool(
                   { db: engine.db, getEntity: (id) => engine.entities.get(id) },
                   entity.id,
                   contextUpdate,
+                  "mcp",
                 ),
               };
         if (engine.getConnectionEntity(session.connId) !== entity.id)
@@ -190,6 +191,7 @@ export async function cmdTool(
           const context = await buildUnifiedContext(engine.db, entity.name, query, {
             ...options,
             creditReflections: false,
+            surface: "mcp",
           });
           if (engine.getConnectionEntity(session.connId) === entity.id) {
             const receipt = receiptForUnifiedContext(context, crypto.randomUUID());

@@ -10,6 +10,7 @@ import {
 import { residentMemoryOperation } from "../../memory/resident-service";
 import { bold, dim, header, label, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
+import type { MemoryUsefulnessSummary } from "../../persistence/db-memory-usefulness";
 import type { CommandUsage } from "../../sdk/command-forms";
 import { memoryOperationError } from "../../sdk/memory-operations";
 import type { CommandDef, Entity, RoomContext } from "../../types";
@@ -19,6 +20,7 @@ import { canonicalSub, unknownSubcommand } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
 import { CONTEXT_USAGE } from "./context";
 import { DEBRIEF_USAGE } from "./debrief";
+import { parseDuration } from "./format-duration";
 import { NOTE_USAGE } from "./note";
 import { RECALL_USAGE } from "./recall";
 import { RECAP_USAGE } from "./recap";
@@ -76,6 +78,12 @@ const DURABLE_SUBS = [
 
 /** Core key-value verbs. Canonical home is `memory kv <verb>`; bare forms stay accepted. */
 const KV_SUBS = ["list", "get", "set", "delete", "history", "clear"];
+
+/** `memory usefulness [window]` — default and bounds for the readout window. */
+const USEFULNESS_DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const USEFULNESS_MAX_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+const USEFULNESS_USAGE =
+  "Usage: memory usefulness [window]   e.g. memory usefulness 7d · memory usefulness 24h (default 7d, max 90d)";
 
 const KV_USAGE =
   "Usage: memory kv list | memory kv set <key> <value> | memory kv get <key> | memory kv delete <key> | memory kv history <key> | memory kv clear\n" +
@@ -200,6 +208,7 @@ export function memoryCommand(deps: {
       { syntax: "memory transfers [JSON filters]", effect: "read" },
       { syntax: "memory unwatch <NAME> <VERSION>", effect: "write" },
       { syntax: "memory usage", effect: "read" },
+      { syntax: "memory usefulness [window]", effect: "read" },
       { syntax: "memory vocabulary", effect: "read" },
       { syntax: "memory watch <NAME> [RECORD_ID ...]", effect: "write" },
       ...FAMILY_USAGE,
@@ -213,7 +222,8 @@ export function memoryCommand(deps: {
     unloggedSubcommands: ["api"],
     help:
       "The memory command: notes, recall, reflection, durable records and key-value beliefs.\n" +
-      `${KV_USAGE}\n${MEMORY_FAMILY_HELP}\n\n` +
+      `${KV_USAGE}\n${MEMORY_FAMILY_HELP}\n` +
+      "memory usefulness [window]  what memory was served to you (per surface, arm, tier; most-served items and the evidence on them)\n\n" +
       `${MEMORY_KV_HELP}\n\n` +
       `${MEMORY_WHICH_VERB}\n\n` +
       MEMORY_SERVICE_HELP +
@@ -233,7 +243,13 @@ export function memoryCommand(deps: {
       const tokens = input.tokens;
       const rawSub = tokens[0];
       // `ls` → list (KV), `view`/`info` → show (durable), `rm`/`remove` → delete (KV).
-      const sub = canonicalSub(rawSub, ["kv", ...KV_SUBS, ...DURABLE_SUBS]);
+      const sub = canonicalSub(rawSub, ["kv", "usefulness", ...KV_SUBS, ...DURABLE_SUBS]);
+
+      // ── Retrieval telemetry readout ──
+      if (sub === "usefulness") {
+        runUsefulness(ctx, db, entity, input.entity, afterTokens(input.args, 1));
+        return;
+      }
 
       // ── Key-value beliefs: canonical `memory kv <verb>`, bare verbs still accepted ──
       const kv =
@@ -283,6 +299,97 @@ export function memoryCommand(deps: {
       );
     },
   };
+}
+
+/**
+ * `memory usefulness [window]`: what the unified context surface served this
+ * entity in the window — exposure by surface, retrieval arm and tier, the
+ * most-served items and the usefulness evidence recorded on them. Ids and
+ * counts only. A serve is exposure, not proof of use; the footer says which
+ * evidence kinds exist so far.
+ */
+function runUsefulness(
+  ctx: RoomContext,
+  db: MarinaDB,
+  entity: Entity,
+  entityId: Entity["id"],
+  args: string,
+): void {
+  const windowText = args.trim().split(/\s+/)[0] ?? "";
+  let windowMs = USEFULNESS_DEFAULT_WINDOW_MS;
+  if (windowText) {
+    const parsed = /^\d+$/.test(windowText)
+      ? parseDuration(`${windowText}d`)
+      : parseDuration(windowText);
+    if (parsed === undefined || parsed <= 0) {
+      refuseCommand(ctx, entityId, USEFULNESS_USAGE);
+      return;
+    }
+    windowMs = Math.min(parsed, USEFULNESS_MAX_WINDOW_MS);
+  }
+  const summary = db.memoryUsefulnessSummary(entity.name, Date.now() - windowMs, {
+    topItems: 10,
+  });
+  ctx.send(
+    entityId,
+    renderUsefulness(summary, windowMs),
+    undefined,
+    memoryResult("usefulness", { success: true, usefulness: summary }),
+  );
+}
+
+function formatWindow(ms: number): string {
+  const day = 24 * 60 * 60 * 1000;
+  if (ms % day === 0) return `${ms / day}d`;
+  const hour = 60 * 60 * 1000;
+  if (ms % hour === 0) return `${ms / hour}h`;
+  return `${Math.round(ms / 60_000)}m`;
+}
+
+const counts = (m: Record<string, number>) =>
+  Object.entries(m)
+    .map(([k, n]) => `${k} ${n}`)
+    .join(" · ") || "none";
+
+export function renderUsefulness(summary: MemoryUsefulnessSummary, windowMs: number): string {
+  const lines = [header(`Memory served — last ${formatWindow(windowMs)}`), separator()];
+  if (summary.serves === 0) {
+    lines.push(
+      "Nothing served in this window. Memory reaches you through the continuation prompt, `recall … all|evidence`, `context`, MCP and passthru; each serve is recorded here (ids and counts, never text).",
+    );
+    return lines.join("\n");
+  }
+  lines.push(
+    label(
+      bold("Served"),
+      `${summary.serves} item serve${summary.serves === 1 ? "" : "s"} · ${summary.distinctItems} distinct item${summary.distinctItems === 1 ? "" : "s"} · ${summary.distinctQueries} distinct quer${summary.distinctQueries === 1 ? "y" : "ies"}`,
+    ),
+    label(bold("Surfaces"), counts(summary.bySurface)),
+    label(bold("Arms"), counts(summary.byArm)),
+    label(bold("Tiers"), counts(summary.byTier)),
+    label(
+      bold("Evidence"),
+      Object.keys(summary.ratingsByRater).length
+        ? counts(summary.ratingsByRater)
+        : "none recorded on these items yet",
+    ),
+    "",
+    bold("Most served"),
+  );
+  for (const item of summary.topItems) {
+    const handle = /^\d+$/.test(item.itemId) ? `#${item.itemId}` : item.itemId;
+    const evidence = item.repeatAlpha > 0 ? ` · repeat +${item.repeatAlpha}` : "";
+    lines.push(
+      `  ${handle.padEnd(14)} ${item.tier.padEnd(10)} ${item.serves} serve${item.serves === 1 ? "" : "s"} · ${item.distinctQueries} quer${item.distinctQueries === 1 ? "y" : "ies"}${evidence}`,
+    );
+  }
+  lines.push(
+    "",
+    dim(
+      "A serve is exposure, not use. Evidence kinds: repeat (a rewording of an existing note rated it instead of storing a copy). Citation, outcome and explicit evidence are not recorded yet.",
+    ),
+  );
+  return lines.join("\n");
 }
 
 /**

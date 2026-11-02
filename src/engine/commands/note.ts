@@ -1086,10 +1086,17 @@ export function noteCommand(deps: {
             return;
           }
           const parsed = parseNoteText(content);
-          const id = db.createNote(entity.name, parsed.content, input.room, {
-            importance: parsed.importance,
-            noteType: parsed.noteType,
-          });
+          const { id, duplicate, similar } = db.createNoteDetailed(
+            entity.name,
+            parsed.content,
+            input.room,
+            { importance: parsed.importance, noteType: parsed.noteType },
+          );
+          if (duplicate) {
+            // Nothing stored: the existing note is the record.
+            ctx.send(input.entity, `Note #${id} already holds this.`);
+            return;
+          }
           deps.logEvent?.({
             type: "note_created",
             entity: input.entity,
@@ -1134,7 +1141,12 @@ export function noteCommand(deps: {
             autoLinked.length > 0
               ? ` Auto-linked to notes ${autoLinked.map((i) => `#${i}`).join(", ")} (related_to).`
               : "";
-          ctx.send(input.entity, `Note #${id} saved${suffix}.${linkInfo}`);
+          // A near-restatement is evidence on the earlier note, not a merge:
+          // the words that differ may be the point (a corrected number).
+          const similarInfo = similar
+            ? ` Nearly the same as #${similar.id} (${Math.round(similar.overlap * 100)}% overlap) — recorded as evidence on it; if this replaces it, note evolve ${similar.id} <text>.`
+            : "";
+          ctx.send(input.entity, `Note #${id} saved${suffix}.${linkInfo}${similarInfo}`);
           return;
         }
       }

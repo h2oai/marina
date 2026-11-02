@@ -143,6 +143,7 @@ export function handleParticipantMessage(
       { db: engine.db, getEntity: (entityId) => engine.entities.get(entityId) },
       id,
       { ...parsed.options, request_id: requestId },
+      "prompt",
     ).then(deliver, (error) => deliver({ request_id: requestId, error: getErrorMessage(error) }));
     return;
   }

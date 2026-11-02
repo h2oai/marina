@@ -226,6 +226,39 @@ CREATE VIEW numeric_notes AS
  FROM notes n LEFT JOIN notes c ON c.id=n.content_id
  WHERE n.entity_name NOT LIKE 'memory:%' AND n.version_note=0;`,
   },
+  // Retrieval telemetry and usefulness evidence (src/persistence/db-memory-usefulness.ts):
+  // what the unified context surface served, to whom, from which arm — ids and
+  // numbers only — and the append-only evidence raters record on an item.
+  {
+    version: 188,
+    sql: `CREATE TABLE memory_served (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_name TEXT NOT NULL,
+  surface TEXT NOT NULL,
+  arm TEXT NOT NULL,
+  tier TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  record_id TEXT,
+  rank INTEGER NOT NULL,
+  query_hash TEXT NOT NULL,
+  served_at INTEGER NOT NULL
+);
+CREATE INDEX idx_memory_served_entity_at ON memory_served(entity_name, served_at);
+CREATE INDEX idx_memory_served_item ON memory_served(item_id, served_at);
+CREATE INDEX idx_memory_served_at ON memory_served(served_at);
+CREATE TABLE memory_ratings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id TEXT NOT NULL,
+  record_id TEXT,
+  rater TEXT NOT NULL CHECK(rater IN ('repeat','citation','outcome','explicit','unused')),
+  rater_entity TEXT,
+  alpha REAL NOT NULL DEFAULT 0,
+  beta REAL NOT NULL DEFAULT 0,
+  ref TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_memory_ratings_item ON memory_ratings(item_id, created_at);`,
+  },
 ];
 
 /** Migration 172 body — self-contained so later edits elsewhere never change it. */

@@ -37,9 +37,12 @@ export type {
  * service errors — a missing account is a deployment posture, not a failure.
  *
  * This module does not touch notes (last_accessed / recall_count stay with
- * the `recall` command so REST and passthru reads do not mutate memory). Being
- * recalled earns the author no standing (`reflection_recalled` is retired:
- * standing is earned by verified work, src/agent/standing.ts).
+ * the `recall` command so REST and passthru reads do not mutate memory). It
+ * does record what it served: one `memory_served` telemetry row per item
+ * (`recordServed`; ids, tiers, ranks and a query hash, never text), which the
+ * context cache's revision ignores. Being recalled earns the author no
+ * standing (`reflection_recalled` is retired: standing is earned by verified
+ * work, src/agent/standing.ts).
  *
  * `[proposal]` items carry INHERITED authority (TMA-NM non-laundering, Phase
  * 3.7): a helper's summary can be no more trustworthy than the least
@@ -62,9 +65,16 @@ import {
   persistDecisionReceipt,
 } from "../decisions/advisory";
 import type { DecisionProvider } from "../decisions/types";
-import { getErrorMessage } from "../engine/errors";
+import { getErrorMessage, tryLog } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import { ASSET_MEMORY_KIND, assetReadableBy } from "../engine/media/asset-memory-access";
 import type { MarinaDB, NoteRow, ScoredNoteRow } from "../persistence/database";
+import {
+  type MemoryServedArm,
+  type MemoryServedInput,
+  type MemoryServedSurface,
+  memoryQueryHash,
+} from "../persistence/db-memory-usefulness";
 import type { AdvisoryMode, DecisionReceipt } from "../sdk/decision-receipt";
 import type { MemoryAssistanceJob, MemoryAssistancePage } from "../sdk/memory-assistance";
 import { MemoryClientError } from "../sdk/memory-client";
@@ -98,6 +108,8 @@ import {
 import { residentMemoryOperation } from "./resident-service";
 import { expandMemoryRecall } from "./retrieval";
 import { queryTerms, termMatcher } from "./term-match";
+
+const logger = new Logger();
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -1152,7 +1164,7 @@ export async function buildUnifiedContext(
   const valueMode = advisoryMode(env.MARINA_MEMORY_CONTEXT_VALUE);
   const valueOptions = { ...deps.valueOptions, env };
   // The cache key carries the EFFECTIVE settings (env included), never a provider object.
-  const { relevanceGate: _gate, ...rest } = opts;
+  const { relevanceGate: _gate, surface: _surface, ...rest } = opts;
   const keyed: UnifiedContextOptions & { relevanceGateKey?: unknown; valueKey?: unknown } = {
     ...rest,
     search,
@@ -1177,7 +1189,45 @@ export async function buildUnifiedContext(
       `context:${result.valueDecision.id}`,
       result.valueDecision,
     );
+  recordServed(db, entityName, query, result, opts.surface ?? "context", opts.asOf, search);
   return result;
+}
+
+/**
+ * Retrieval telemetry: one `memory_served` row per item in the result, cache
+ * hits included (a cached result is still served). Ids, tiers, ranks and a
+ * query hash — never text. Best-effort: a failed write never fails a read.
+ */
+function recordServed(
+  db: MarinaDB,
+  entityName: string,
+  query: string,
+  result: UnifiedContextResult,
+  surface: MemoryServedSurface,
+  asOf: number | undefined,
+  search: "lexical" | "hybrid",
+): void {
+  const arm: MemoryServedArm = asOf !== undefined ? "as-of" : search;
+  const queryHash = memoryQueryHash(query);
+  const rows: MemoryServedInput[] = [];
+  for (const tier of result.tiers)
+    tier.items.forEach((item, index) => {
+      const recordId = item.meta?.record_id;
+      rows.push({
+        entityName,
+        surface,
+        arm,
+        tier: tier.tier,
+        itemId: item.id,
+        recordId: typeof recordId === "string" ? recordId : null,
+        rank: index + 1,
+        queryHash,
+      });
+    });
+  if (rows.length === 0) return;
+  tryLog(logger, "memory", "memory_served write failed", () => {
+    db.recordMemoryServed(rows);
+  });
 }
 
 /** Items the gate never judges or drops: `core` memory and pinned items. */

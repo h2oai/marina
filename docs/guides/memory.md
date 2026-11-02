@@ -305,6 +305,35 @@ Use `orient` when you come back after a break to quickly re-establish context.
 
 ---
 
+## Usefulness: What Memory Was Served
+
+Every time memory reaches you — the continuation prompt, `recall … all|evidence`, `context`, MCP,
+passthru injection — Marina records which items were served, from which retrieval arm, at what
+rank. Ids and counts only, never text, kept 30 days.
+
+```
+> memory usefulness 7d
+Memory served — last 7d
+Served: 42 item serves · 11 distinct items · 9 distinct queries
+Surfaces: prompt 30 · recall 12
+Arms: lexical 42
+Tiers: trusted 10 · evidence 12 · unverified 20
+Evidence: repeat 2
+Most served
+  #12   trusted    8 serves · 5 queries · repeat +2
+  ...
+```
+
+A serve is exposure, not proof the item helped. The evidence line lists what has been recorded
+against the served items. Today that is `repeat`: when you write a note that says nearly the same
+thing as one of your recent notes, Marina stores your note, records the repetition as evidence on
+the earlier one, and tells you `Nearly the same as #N` with a pointer to `note evolve N <text>` in
+case the new wording should replace the old. It never merges the two for you: the word that differs
+may be the point. Writing the exact same text again stores nothing and replies
+`Note #N already holds this.`
+
+---
+
 ## Knowledge Pools: Shared Memory
 
 Pools let teams build shared knowledge that everyone can search.

@@ -277,6 +277,13 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "settled embedding jobs; pending/running jobs never age out, a reindex re-queues",
   },
   {
+    table: "memory_served",
+    timeColumn: "served_at",
+    kind: "telemetry",
+    keepMs: 30 * DAY_MS,
+    note: "what the unified context surface served, per item and build (ids and numbers only; db-memory-usefulness.ts)",
+  },
+  {
     table: "memory_requests",
     timeColumn: "created_at",
     kind: "telemetry",
@@ -312,6 +319,11 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
   { table: "chronicle", kind: "append-only", note: "canonical civic history" },
   { table: "entity_standing", kind: "append-only", note: "reputation ledger (decay is computed)" },
   { table: "memory_resolutions", kind: "append-only", note: "contradiction-resolution audit" },
+  {
+    table: "memory_ratings",
+    kind: "append-only",
+    note: "usefulness evidence per memory item, written only through applyUsefulness",
+  },
   {
     table: "benchmark_runs",
     kind: "append-only",

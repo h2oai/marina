@@ -17,7 +17,9 @@ import {
   PROCESS_TIER_QUOTA,
   SIMILAR_NOTE_RELEVANCE_THRESHOLD,
 } from "../engine/constants";
+import { tryLog } from "../engine/errors";
 import { Logger } from "../engine/logger";
+import { nearDuplicate } from "../memory/near-duplicate";
 import { contextRevision } from "./db-context-revision";
 import {
   linkNumericNotes,
@@ -27,6 +29,7 @@ import {
   sourceNumericNote,
   verifyNumericNote,
 } from "./db-memory-numeric";
+import { applyUsefulness } from "./db-memory-usefulness";
 import { createStoredNote, deleteStoredNote } from "./db-note-storage";
 import { buildFtsQuery, MATCHED_FROM, MATCHED_FROM_SCOPE, MATCHED_NOTES_CTE } from "./fts";
 
@@ -125,43 +128,121 @@ function lexicalFrom(
   return hits <= cap ? MATCHED_FROM : MATCHED_FROM_SCOPE;
 }
 
+export interface CreateNoteOptions {
+  importance?: number;
+  noteType?: string;
+  poolId?: string;
+  supersedesId?: number;
+  tier?: NoteTier;
+  /** Skip write-path dedup check. Default false. Dedup is skipped
+   *  automatically for pool notes and process-tier notes (they are
+   *  expected to be noisy and shouldn't merge with real insights). */
+  skipDedup?: boolean;
+  confidence?: number;
+  verificationStatus?: string;
+  claimKey?: string;
+}
+
+/** The handle a write resolved to, and what the write found beside it. */
+export interface CreateNoteOutcome {
+  id: number;
+  /** Set when nothing was stored: the same text already exists as `id`. */
+  duplicate?: { kind: "exact" };
+  /**
+   * Set when the note WAS stored but an own note of the last
+   * `NEAR_DUPLICATE_WINDOW_MS` says nearly the same thing (`overlap` is the
+   * word-shingle Jaccard). The repetition was recorded as `repeat` usefulness
+   * evidence on that note (`ref: note:<new id>`). The new note is kept: a
+   * lexical match cannot tell a restatement from a correction (`port 8443`
+   * vs `port 9443`), so merging is the consolidation pass's call, with its
+   * coverage checks and rollback — never the write path's.
+   */
+  similar?: { id: number; overlap: number };
+}
+
+/** A near-duplicate must be this recent: a restatement a month later is a new observation. */
+export const NEAR_DUPLICATE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
 export function createNote(
   db: Database,
   entityName: string,
   content: string,
   roomId?: string,
-  opts?: {
-    importance?: number;
-    noteType?: string;
-    poolId?: string;
-    supersedesId?: number;
-    tier?: NoteTier;
-    /** Skip write-path dedup check. Default false. Dedup is skipped
-     *  automatically for pool notes and process-tier notes (they are
-     *  expected to be noisy and shouldn't merge with real insights). */
-    skipDedup?: boolean;
-    confidence?: number;
-    verificationStatus?: string;
-    claimKey?: string;
-  },
+  opts?: CreateNoteOptions,
 ): number {
+  return createNoteDetailed(db, entityName, content, roomId, opts).id;
+}
+
+/**
+ * `createNote` with the outcome. A fact-like, non-pool, non-superseding write
+ * first takes the exact-content lookup (nothing stored, the existing handle
+ * returned), then stores, and if the writer's own recent note of the same tier
+ * says nearly the same thing (`findNearDuplicateForWrite`) records that
+ * repetition as `repeat` usefulness evidence on the earlier note
+ * (`applyUsefulness`, +1 α) and reports it as `similar`. Repetition becomes
+ * evidence; the copy stays until a checked consolidation merges it.
+ */
+export function createNoteDetailed(
+  db: Database,
+  entityName: string,
+  content: string,
+  roomId?: string,
+  opts?: CreateNoteOptions,
+): CreateNoteOutcome {
   const noteType = opts?.noteType ?? "observation";
   const tier = opts?.tier ?? inferTier(content, noteType);
-  return db.transaction(() => {
-    if (
-      !opts?.skipDedup &&
-      !opts?.poolId &&
-      !opts?.supersedesId &&
-      FACT_LIKE_TIERS.includes(tier)
-    ) {
+  return db.transaction((): CreateNoteOutcome => {
+    const dedup =
+      !opts?.skipDedup && !opts?.poolId && !opts?.supersedesId && FACT_LIKE_TIERS.includes(tier);
+    if (dedup) {
       const duplicate = findDuplicateForWrite(db, entityName, content, noteType);
-      if (duplicate) return duplicate.id;
+      if (duplicate) return { id: duplicate.id, duplicate: { kind: "exact" } };
     }
+    const near = dedup ? findNearDuplicateForWrite(db, entityName, content, tier) : undefined;
     const id = createStoredNote(db, entityName, content, roomId, opts);
     materializeNumericNote(db, id);
     if (tier === "process" && !opts?.poolId) enforceProcessQuota(db, entityName);
-    return id;
+    if (!near) return { id };
+    tryLog(logger, "db", "near-duplicate usefulness rating failed", () => {
+      applyUsefulness(db, {
+        itemId: String(near.candidate.id),
+        rater: "repeat",
+        raterEntity: entityName,
+        alpha: 1,
+        ref: `note:${id}`,
+      });
+    });
+    return { id, similar: { id: near.candidate.id, overlap: near.overlap } };
   })();
+}
+
+/** Recent own notes compared on a near-duplicate check (newest first). */
+export const NEAR_DUPLICATE_CANDIDATES = 50;
+
+/**
+ * The writer's own recent, same-tier, fact-like note that says the same thing
+ * in other words, if any. Candidates are the newest `NEAR_DUPLICATE_CANDIDATES`
+ * live notes of that tier in the window (one probe of `idx_notes_entity_tier`,
+ * no FTS: bm25 rank is near zero in a small corpus, so a relevance cut would
+ * miss exactly the rewording of an entity's only note on a subject).
+ */
+export function findNearDuplicateForWrite(
+  db: Database,
+  entityName: string,
+  content: string,
+  tier: NoteTier,
+  now = Date.now(),
+): { candidate: NoteRow; overlap: number } | undefined {
+  if (!content) return undefined;
+  const candidates = db
+    .query(
+      `SELECT * FROM numeric_notes
+       WHERE entity_name = ? AND tier = ? AND pool_id IS NULL
+         AND verification_status != 'superseded' AND created_at >= ?
+       ORDER BY id DESC LIMIT ?`,
+    )
+    .all(entityName, tier, now - NEAR_DUPLICATE_WINDOW_MS, NEAR_DUPLICATE_CANDIDATES) as NoteRow[];
+  return nearDuplicate(content, candidates);
 }
 
 /** Look for an existing note with the exact same content + note_type from

@@ -204,6 +204,7 @@ export const EXPORT_TABLES = [
   "memory_resolutions",
   "memory_resolution_members",
   "memory_hygiene_snapshots",
+  "memory_ratings",
   "canvas_edges",
   "benchmark_runs",
   "benchmark_items",
@@ -272,6 +273,8 @@ export function isExcludedFromExport(table: string): boolean {
   if (table === "memory_known_at_backfill") return true;
   // Recent room history (migration 175): bounded, short-lived and local to this world's rooms.
   if (table === "room_log") return true;
+  // Retrieval telemetry (migration 188): 30-day exposure rows, local to this deployment's reads.
+  if (table === "memory_served") return true;
   return (
     table === "sessions" ||
     table === "principal_credentials" ||

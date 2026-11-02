@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CoreMemoryRow, NoteRow } from "../persistence/database";
+import type { MemoryUsefulnessSummary } from "../persistence/db-memory-usefulness";
 import type { Perception } from "../types";
 
 export interface MemoryNoteResult {
@@ -19,7 +20,8 @@ export type MemoryOperation =
   | "skill-search"
   | "core-get"
   | "core-set"
-  | "core-delete";
+  | "core-delete"
+  | "usefulness";
 
 export interface MemoryCommandResult {
   schema: "marina.memory.command.v1";
@@ -27,6 +29,8 @@ export interface MemoryCommandResult {
   success: boolean;
   notes?: MemoryNoteResult[];
   entry?: CoreMemoryRow;
+  /** `memory usefulness`: the served/evidence summary (ids and counts only). */
+  usefulness?: MemoryUsefulnessSummary;
   error?: string;
 }
 

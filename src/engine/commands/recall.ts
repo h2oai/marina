@@ -204,6 +204,7 @@ export function recallCommand(deps: {
             weights,
             noteType,
             budgetBytes,
+            surface: "recall",
             ...(asOf !== undefined ? { asOf } : {}),
           });
 
