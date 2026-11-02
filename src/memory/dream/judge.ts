@@ -107,7 +107,7 @@ export function settleQuietDreams(db: MarinaDB, now = Date.now()): number {
   for (const [id, ns] of byDream) {
     if (dreams >= DREAM_SETTLE_BATCH) break;
     const row = db.getDream(id);
-    if (!row || row.state !== "applied" || !row.applied_at) continue;
+    if (row?.state !== "applied" || !row.applied_at) continue;
     if (now - row.applied_at < DREAM_SETTLE_MS) continue;
     const ops = JSON.parse(row.ops_json) as StoredDreamOp[];
     for (const n of ns) {

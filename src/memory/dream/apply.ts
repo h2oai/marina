@@ -280,7 +280,7 @@ function markProposal(
   if (!row) return;
   const ops = parseDreamJson<StoredDreamOp[]>(row.ops_json, []);
   const op = ops[proposal.n];
-  if (!op || op.op !== "supersede") return;
+  if (op?.op !== "supersede") return;
   ops[proposal.n] = { ...op, proposal: mark, ...(applied ? { applied } : {}) };
   db.updateDream(row.id, { ops });
 }
