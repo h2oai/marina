@@ -5,6 +5,7 @@ import { MAX_AGENTS } from "../../agent/agent-runtime";
 import { roleModelFromEnv } from "../../config/model-tiers";
 import { describeDefaultUpstream } from "../../net/model-api/upstream";
 import type { EntityId } from "../../types";
+import { commandVocabulary } from "../command-vocabulary";
 import { askCommand } from "../commands/ask";
 import { bankrollCommand } from "../commands/bankroll";
 import { benchmarkCommand } from "../commands/benchmark";
@@ -13,7 +14,6 @@ import { debriefCommand } from "../commands/debrief";
 import { digCommand } from "../commands/dig";
 import { evolveCommand } from "../commands/evolve";
 import { guideCommand } from "../commands/guide";
-import type { CommandVocabulary } from "../commands/knowledge-hygiene";
 import { learnedCommand } from "../commands/learned";
 import { lessonsCommand } from "../commands/lessons";
 import { marketCommand } from "../commands/market";
@@ -34,14 +34,6 @@ import { workCommand } from "../commands/work";
 import type { Engine } from "../engine";
 import { trialCallBudget } from "../evolution-trial";
 import { answerViaLocalModel } from "./model-helpers";
-
-/** Live builtins plus the loaded rooms' own command names, for knowledge audits. */
-function commandVocabulary(engine: Engine): CommandVocabulary {
-  return {
-    commands: engine.commands.allBuiltins(),
-    knownCommands: engine.rooms.all().flatMap((room) => Object.keys(room.module.commands ?? {})),
-  };
-}
 
 export function registerMemoryCommands(engine: Engine): void {
   engine.commands.registerBuiltin(
