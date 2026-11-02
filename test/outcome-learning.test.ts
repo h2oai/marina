@@ -106,6 +106,30 @@ describe("outcome learning: candidates", () => {
     );
     expect(ruled.category).toBe("python test run");
     expect(ruled.text).toContain("rule: Run the project runner, not bun.");
+    expect(ruled.evidence).toBeUndefined();
+  });
+
+  it("keeps the writer's evidence apart from the rule, and discards it with a leaking rule", async () => {
+    const withEvidence = await candidateFromOutcome(
+      outcome(),
+      writer(
+        '{"category":"python test run","rule":"Run the project runner, not bun.","evidence":"5 of 6 runs passed; mean cost $0.02","scope":"tooling"}',
+      ),
+    );
+    expect(withEvidence.rule).toBe("Run the project runner, not bun.");
+    expect(withEvidence.evidence).toBe("5 of 6 runs passed; mean cost $0.02");
+    // The rule's text is unchanged by the evidence: numbers never ride in the rule.
+    expect(withEvidence.text).not.toContain("5 of 6");
+    // Evidence that quotes the case is item content: the whole writer answer is discarded.
+    const leaking = await candidateFromOutcome(
+      outcome({ privateContext: "the secret fixture answer is forty-two dolphins exactly" }),
+      writer(
+        '{"category":"python test run","rule":"Run the project runner, not bun.","evidence":"the secret fixture answer is forty-two dolphins exactly"}',
+      ),
+    );
+    expect(leaking.evidence).toBeUndefined();
+    expect(leaking.rule).toBeUndefined();
+    expect(leaking.provenance?.writer_note).toContain("writer rule discarded");
   });
 
   it("a writer with no rule is asked once more, then the candidate says why it has none", async () => {
