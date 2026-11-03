@@ -28,7 +28,7 @@ export async function previewParticipantContext(
   if (!options || typeof options !== "object" || Array.isArray(options))
     throw new Error("Expected context options.");
   const request = options as Record<string, unknown>;
-  const { query, scope = "all", budgetBytes = 4096 } = request;
+  const { query, scope = "all", budgetBytes = 4096, warm } = request;
   if (typeof query !== "string" || !query.trim() || query.length > 4000)
     throw new Error("Supply a query of 1–4000 characters.");
   if (scope !== "all" && scope !== "evidence") throw new Error("Scope must be all or evidence.");
@@ -45,12 +45,15 @@ export async function previewParticipantContext(
   const fence = [currentEvidenceCutoffMs(), entityEvidenceFence(id)?.cutoff].filter(
     (c): c is number => c !== undefined,
   );
+  // `warm`: the adapter's sleep-time precompute (src/memory/context-cache.ts) —
+  // the same build, cached for hours for the next prompt; prompt surface only.
   const context = await buildUnifiedContext(deps.db, entity.name, query, {
     scope,
     budgetBytes,
     creditReflections: false,
     surface,
     ...(fence.length ? { asOf: Math.min(...fence) } : {}),
+    ...(warm === true && surface === "prompt" ? { precompute: true } : {}),
   });
   if (deps.getEntity(id) !== entity) throw new Error("Resident session expired.");
   return {

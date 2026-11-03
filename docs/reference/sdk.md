@@ -311,7 +311,11 @@ export declare class MarinaClient {
     private capabilityCache?;
     /** Query the authenticated live command registry, including room overrides. */
     capabilities(timeoutMs?: number): Promise<CapabilityManifest>;
-    contextPreview(query: string, budgetBytes?: number, signal?: AbortSignal): Promise<{
+    contextPreview(query: string, budgetBytes?: number, signal?: AbortSignal, 
+    /** `warm`: a sleep-time precompute — the server caches the build for the next prompt. */
+    opts?: {
+        warm?: boolean;
+    }): Promise<{
         context: UnifiedContextResult;
         createdAt: number;
     }>;
@@ -1687,6 +1691,12 @@ export interface UnifiedContextOptions {
     noteType?: string;
     /** Pay authors of cross-author reflection hits in the legacy tiers (default true). */
     creditReflections?: boolean;
+    /**
+     * A sleep-time precompute: an idle agent pre-building its prompt context for
+     * its focus. The result is cached for hours (revision-checked on every hit)
+     * instead of seconds; never part of the cache key.
+     */
+    precompute?: boolean;
     /**
      * Durable record search: `lexical` (FTS5) or `hybrid` (lexical + the vector
      * index; needs `MARINA_MEMORY_EMBEDDINGS`, degradation labelled). Default
