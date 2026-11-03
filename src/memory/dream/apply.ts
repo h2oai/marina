@@ -9,11 +9,13 @@
  * `consolidateNotes`: superseded, never deleted), `link` (one knowledge-graph
  * edge), `decay` (importance lowered by DECAY_STEP, reversible). They apply
  * in ONE transaction, after the probe set is re-run on the applied view and
- * holds. PROPOSE-TIER ops change meaning — `supersede` with new text — and
- * are filed for the owner: the text waits in `core_memory` (owner
- * `memory:dream`) and `memory dream adopt <dream> <n>` applies it through
- * `reviseNote` after the faithfulness check is run again against the notes
- * as they are THEN. Nothing a dream writes is ever final: the dream row keeps
+ * holds. PROPOSE-TIER ops change meaning — `supersede` with new text,
+ * `propose-skill` with a drafted skill — and are filed for the owner: the
+ * text waits in `core_memory` (owner `memory:dream`) and `memory dream adopt
+ * <dream> <n>` applies it — a restatement through `reviseNote` after the
+ * faithfulness check is run again against the notes as they are THEN, a
+ * skill as a DRAFT note (`src/memory/skill-draft.ts`) after the coverage
+ * check is run again. Nothing a dream writes is ever final: the dream row keeps
  * a footprint of every applied op (ids and prior values, never text) and
  * `memory dream rollback <id>` reverses the whole set in one transaction.
  */
@@ -21,15 +23,18 @@
 import type { MarinaDB } from "../../persistence/database";
 import type { DreamRow } from "../../persistence/db-memory-dreams";
 import { parseDreamJson } from "../../persistence/db-memory-dreams";
+import { coversProcedure, skillContent, skillSlug } from "../skill-draft";
 import { faithfulTo, leavingIds, SUPERSEDE_MAX_CHARS } from "./check";
 import { settleDreamOp, settleRolledBack } from "./judge";
 import type { ProbePlan } from "./probe";
 import { probeHit } from "./probe";
+import type { ProcedureCandidate } from "./procedures";
 import type {
   AppliedFootprint,
   DreamChecks,
   DreamOp,
   DreamProbe,
+  ProposalMark,
   RejectedOp,
   StoredDreamOp,
 } from "./types";
@@ -43,16 +48,53 @@ export const PROPOSAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type PriorStatus = "unverified" | "disputed";
 
-/** A supersede waiting for the owner. */
-export interface DreamProposal {
+/** A propose-tier op waiting for the owner: a restatement, or a skill draft. */
+export type DreamProposal = {
   entityName: string;
   dreamId: number;
   n: number;
-  id: number;
-  text: string;
-  refs: number[];
   reason: string;
   createdAt: number;
+} & (
+  | { kind: "supersede"; id: number; text: string; refs: number[] }
+  | {
+      kind: "skill";
+      procedure: string;
+      name: string;
+      description: string;
+      steps: string[];
+      tasks: number[];
+    }
+);
+
+/** A skill draft note from a proposal: the library's content shape, importance 5, exact duplicates fold. */
+export function createSkillDraft(
+  db: MarinaDB,
+  entityName: string,
+  skill: { name: string; description: string },
+  steps: readonly string[],
+): number | undefined {
+  const content = skillContent(skillSlug(skill.name), skill.description, steps, { draft: true });
+  const id = db.createNote(entityName, content, undefined, { importance: 5, noteType: "skill" });
+  return id > 0 ? id : undefined;
+}
+
+/** Whether one of the owner's skills or any macro already covers these steps. */
+export function procedureCovered(db: MarinaDB, entityName: string, steps: readonly string[]) {
+  return [
+    ...db.getNotesByType(entityName, "skill", 500).map((n) => n.content),
+    ...db.listMacros().map((m) => m.command),
+  ].some((text) => coversProcedure(text, steps));
+}
+
+function withProposal(
+  base: StoredDreamOp,
+  mark: ProposalMark,
+  applied?: AppliedFootprint,
+): StoredDreamOp {
+  if (base.op !== "supersede" && base.op !== "propose-skill")
+    return applied ? { ...base, applied } : base;
+  return applied ? { ...base, proposal: mark, applied } : { ...base, proposal: mark };
 }
 
 const proposalKey = (entityName: string, dreamId: number, n: number) =>
@@ -77,8 +119,8 @@ export interface ApplyResult {
   ops: StoredDreamOp[];
   probes: DreamProbe[];
   probesAfter: DreamChecks["probesAfter"];
-  /** Supersede ops, in op order, that `on` files as proposals. */
-  proposals: Array<{ n: number; op: Extract<DreamOp, { op: "supersede" }> }>;
+  /** Propose-tier ops, in op order, that `on` files as proposals. */
+  proposals: Array<{ n: number; op: Extract<DreamOp, { op: "supersede" | "propose-skill" }> }>;
   /** Probe ids that passed before and fail on the applied view. */
   lost: number[];
   /** Accepted ops the store refused on contact (a link already present): rejected, by index. */
@@ -98,7 +140,13 @@ export function applyOps(
   accepted: readonly DreamOp[],
   stored: readonly StoredDreamOp[],
   plan: ProbePlan,
-  opts: { commit: boolean; applySupersedes?: boolean },
+  opts: {
+    commit: boolean;
+    applySupersedes?: boolean;
+    applySkills?: boolean;
+    /** The region's repeated procedures (a propose-skill's steps). */
+    procedures?: readonly ProcedureCandidate[];
+  },
 ): ApplyResult {
   const run = (): ApplyResult => {
     const ops: StoredDreamOp[] = [];
@@ -160,16 +208,32 @@ export function applyOps(
           } else proposals.push({ n, op });
           break;
         }
+        case "propose-skill": {
+          const candidate = opts.procedures?.find((p) => p.key === op.procedure);
+          if (!candidate) {
+            skipped.push({
+              n,
+              rejected: {
+                op: "propose-skill",
+                ids: [],
+                reason: `procedure: ${op.procedure} is not in this dream's region`,
+              },
+            });
+            break;
+          }
+          if (!opts.applySkills) {
+            proposals.push({ n, op });
+            break;
+          }
+          // An earned dreamer stores the draft at once — still a draft: a
+          // validation run or a person's verify makes it servable.
+          const newId = createSkillDraft(db, entityName, op, candidate.steps);
+          if (newId) applied = { kind: "propose-skill", newId };
+          else proposals.push({ n, op });
+          break;
+        }
       }
-      ops.push(
-        applied
-          ? base.op === "supersede"
-            ? { ...base, applied, proposal: "earned" }
-            : { ...base, applied }
-          : base.op === "supersede"
-            ? { ...base, proposal: "pending" }
-            : base,
-      );
+      ops.push(applied ? withProposal(base, "earned", applied) : withProposal(base, "pending"));
     });
     const probes = probesAfter(db, entityName, plan);
     const lost = probes
@@ -219,21 +283,31 @@ export function fileProposals(
   dreamId: number,
   proposals: ApplyResult["proposals"],
   now = Date.now(),
+  procedures: readonly ProcedureCandidate[] = [],
 ): number {
+  let filed = 0;
   for (const { n, op } of proposals) {
-    const value: DreamProposal = {
-      entityName,
-      dreamId,
-      n,
-      id: op.id,
-      text: op.text,
-      refs: op.refs,
-      reason: op.reason,
-      createdAt: now,
-    };
+    const base = { entityName, dreamId, n, reason: op.reason, createdAt: now };
+    let value: DreamProposal;
+    if (op.op === "supersede")
+      value = { ...base, kind: "supersede", id: op.id, text: op.text, refs: op.refs };
+    else {
+      const candidate = procedures.find((p) => p.key === op.procedure);
+      if (!candidate) continue;
+      value = {
+        ...base,
+        kind: "skill",
+        procedure: op.procedure,
+        name: skillSlug(op.name),
+        description: op.description,
+        steps: candidate.steps,
+        tasks: candidate.tasks,
+      };
+    }
     db.setCoreMemory(PROPOSAL_OWNER, proposalKey(entityName, dreamId, n), JSON.stringify(value));
+    filed++;
   }
-  return proposals.length;
+  return filed;
 }
 
 export function readProposal(
@@ -245,7 +319,14 @@ export function readProposal(
   const row = db.getCoreMemory(PROPOSAL_OWNER, proposalKey(entityName, dreamId, n));
   if (!row) return undefined;
   const value = parseDreamJson<DreamProposal | null>(row.value, null);
-  return value?.entityName === entityName ? value : undefined;
+  return value?.entityName === entityName ? withKind(value) : undefined;
+}
+
+/** A proposal filed before skill drafts existed carries no `kind`: it is a restatement. */
+function withKind(value: DreamProposal): DreamProposal {
+  return (value as { kind?: string }).kind
+    ? value
+    : ({ ...value, kind: "supersede" } as DreamProposal);
 }
 
 /** The owner's pending proposals, oldest first; expired ones are dropped as they are met. */
@@ -258,8 +339,9 @@ export function pendingProposals(
   const out: DreamProposal[] = [];
   for (const row of db.listCoreMemory(PROPOSAL_OWNER)) {
     if (!row.key.startsWith(prefix)) continue;
-    const value = parseDreamJson<DreamProposal | null>(row.value, null);
-    if (!value || value.entityName !== entityName) continue;
+    const raw = parseDreamJson<DreamProposal | null>(row.value, null);
+    if (!raw || raw.entityName !== entityName) continue;
+    const value = withKind(raw);
     if (now - value.createdAt > PROPOSAL_TTL_MS) {
       db.deleteCoreMemory(PROPOSAL_OWNER, row.key);
       markProposal(db, value, "stale");
@@ -280,21 +362,24 @@ function markProposal(
   if (!row) return;
   const ops = parseDreamJson<StoredDreamOp[]>(row.ops_json, []);
   const op = ops[proposal.n];
-  if (op?.op !== "supersede") return;
-  ops[proposal.n] = { ...op, proposal: mark, ...(applied ? { applied } : {}) };
+  if (op?.op !== "supersede" && op?.op !== "propose-skill") return;
+  ops[proposal.n] = withProposal(op, mark, applied);
   db.updateDream(row.id, { ops });
 }
 
 export type AdoptOutcome =
-  | { ok: true; newId: number; oldId: number }
+  | { ok: true; kind: "supersede"; newId: number; oldId: number }
+  | { ok: true; kind: "skill"; newId: number }
   | { ok: false; reason: string; stale?: boolean };
 
 /**
- * Adopt one filed restatement: the target and its refs must still be the
- * owner's live, unverified notes, and the text must still be faithful to
- * them as they are now. Applies through `reviseNote` (one transaction; the
- * old note is superseded, never deleted) and records the footprint on the
- * dream so `rollback` can reverse it.
+ * Adopt one filed proposal. A restatement: the target and its refs must
+ * still be the owner's live, unverified notes, and the text must still be
+ * faithful to them as they are now; applied through `reviseNote` (one
+ * transaction; the old note is superseded, never deleted). A skill: no skill
+ * or macro may have come to cover the procedure since; stored as a DRAFT
+ * note. Either way the footprint goes on the dream so `rollback` can reverse
+ * it.
  */
 export function adoptProposal(
   db: MarinaDB,
@@ -310,6 +395,22 @@ export function adoptProposal(
   if (dream.state === "rolled_back") {
     dismissProposal(db, entityName, dreamId, n);
     return { ok: false, reason: `dream #${dreamId} was rolled back`, stale: true };
+  }
+  if (proposal.kind === "skill") {
+    if (procedureCovered(db, entityName, proposal.steps)) {
+      dismissProposal(db, entityName, dreamId, n, "stale");
+      return { ok: false, reason: "a skill or macro already covers this procedure", stale: true };
+    }
+    const newId = db.transaction(() => {
+      const id = createSkillDraft(db, entityName, proposal, proposal.steps);
+      if (!id) return undefined;
+      db.deleteCoreMemory(PROPOSAL_OWNER, proposalKey(entityName, dreamId, n));
+      markProposal(db, proposal, "adopted", { kind: "propose-skill", newId: id });
+      return id;
+    });
+    if (!newId) return { ok: false, reason: "the draft could not be stored" };
+    settleDreamOp(db, dreamId, n, true);
+    return { ok: true, kind: "skill", newId };
   }
   const target = db.getNote(proposal.id);
   const refs = proposal.refs.map((id) => db.getNote(id));
@@ -345,7 +446,7 @@ export function adoptProposal(
   });
   if (!newId) return { ok: false, reason: "the note could not be revised" };
   settleDreamOp(db, dreamId, n, true);
-  return { ok: true, newId, oldId: proposal.id };
+  return { ok: true, kind: "supersede", newId, oldId: proposal.id };
 }
 
 export function dismissProposal(
@@ -374,8 +475,8 @@ export type RollbackOutcome =
  * Reverse an applied dream in one transaction: merged-away notes reopen
  * (status, edge and canonical validity), decays restore their importance,
  * links are removed, adopted restatements step aside (the original is current
- * again, the restatement stays as a superseded note); pending proposals are
- * dismissed. Ops are reversed newest first.
+ * again, the restatement stays as a superseded note), adopted skill drafts
+ * are retired; pending proposals are dismissed. Ops are reversed newest first.
  * A note that has moved on since (deleted, re-superseded by something else)
  * is skipped, not forced.
  */
@@ -390,7 +491,7 @@ export function rollbackDream(db: MarinaDB, row: DreamRow, now = Date.now()): Ro
   db.transaction(() => {
     for (let i = ops.length - 1; i >= 0; i--) {
       const op = ops[i]!;
-      if (op.op === "supersede" && op.proposal === "pending") {
+      if ((op.op === "supersede" || op.op === "propose-skill") && op.proposal === "pending") {
         if (dismissProposal(db, entityName, row.id, i)) dismissed++;
         ops[i] = { ...op, proposal: "dismissed" };
         continue;
@@ -420,6 +521,9 @@ export function rollbackDream(db: MarinaDB, row: DreamRow, now = Date.now()): Ro
         case "supersede":
           if (op.op === "supersede")
             done = db.revertRevision(entityName, applied.newId, op.id, applied.prior);
+          break;
+        case "propose-skill":
+          if (op.op === "propose-skill") done = db.deleteNote(applied.newId, entityName);
           break;
       }
       if (done) reverted++;

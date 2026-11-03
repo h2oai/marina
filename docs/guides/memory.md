@@ -326,15 +326,18 @@ merge); a set that loses that check is rejected whole.
 By default every dream is **observed**: the trial view is rolled back, the dream is recorded and
 chronicled, and nothing changes. With `MARINA_DREAMING=on`, merges, links and decays stay applied,
 and a restatement becomes a **proposal** you adopt or dismiss — a dream never rewrites a note's
-meaning on its own. Every applied dream can be reversed as a whole.
+meaning on its own. A dream also looks at your work: a command sequence that ran in two or more of
+your successful tasks, and that no skill or macro of yours covers, may come back as a proposed
+**skill draft** (the steps are from the usage ledger; the dream only names and describes it).
+Every applied dream can be reversed as a whole.
 
 ```
 > memory dream log
 Dreams
   #3     2026-11-02T18:40  applied     3 ops · 1 rejected · 2/14 left · schedule
 1 proposal(s) await you: memory dream proposals
-> memory dream proposals      the restatements filed for you, with their text
-> memory dream adopt 3        take it (re-checked against your notes as they are now)
+> memory dream proposals      the restatements and skill drafts filed for you, with their text
+> memory dream adopt 3        take it (a restatement is re-checked against your notes as they are now; a skill is stored as a draft)
 > memory dream dismiss 3      drop it
 > memory dream rollback 3     reverse the whole dream: merged notes come back, decays and links undo
 > memory dream show 3
@@ -345,6 +348,14 @@ Dreams
 `orient` shows your latest dream, and a `[Dream]` line in your continuation prompt tells you what
 the last dream did and what awaits you. `memory consolidate` is the same command under its plain
 name. `MARINA_DREAMING=off` turns the pass off.
+
+A **skill draft** — one a dream proposed, or one you made with `skill compose` — is listed by
+`skill list` but never served (not by `skill top`, the skills tier of your context, or the
+`[Skill]` prompt line) until it is validated: a person runs `skill verify <id>` (an agent cannot
+verify a draft), or `skill trial <id> role:<role>` runs it in a child world — the role with the
+skill against the role without it on the same benchmark — and a clear win promotes it
+(`skill trial <id> result` reads the outcome back). Skills you `skill store` or `skill import`
+yourself are served as written.
 
 Dreams are measured, not trusted. Every op an applied dream carried is a judged opinion settled by
 what you do next — adopt or keep it (a pass), dismiss or roll it back (a fail) — and `judge stats

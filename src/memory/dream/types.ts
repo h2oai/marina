@@ -8,6 +8,8 @@
  * ids, hashes and counts only.
  */
 
+import type { ProcedureCandidate } from "./procedures";
+
 export type DreamMode = "off" | "observe" | "on";
 export type DreamTrigger = "schedule" | "command" | "dry-run";
 
@@ -29,10 +31,25 @@ export type DreamOp =
   /** Structure between two notes. */
   | { op: "link"; from: number; to: number; relation: DreamLinkRelation; reason: string }
   /** Soft decay: served, never used — lowered, reversible. */
-  | { op: "decay"; id: number; reason: string };
+  | { op: "decay"; id: number; reason: string }
+  /**
+   * A skill drafted over a procedure the gather stage found repeated across
+   * successful tasks (`procedures.ts`): the model names and describes it; the
+   * steps are the ledger's. Propose-tier: the owner adopts it as a DRAFT.
+   */
+  | { op: "propose-skill"; procedure: string; name: string; description: string; reason: string };
 
 export type DreamOpKind = DreamOp["op"];
-export const DREAM_OP_KINDS: readonly DreamOpKind[] = ["merge", "supersede", "link", "decay"];
+export const DREAM_OP_KINDS: readonly DreamOpKind[] = [
+  "merge",
+  "supersede",
+  "link",
+  "decay",
+  "propose-skill",
+];
+
+/** Where a propose-tier op stands with its owner. `earned`: applied at once by a dreamer that earned the op kind (`judge.ts`). */
+export type ProposalMark = "pending" | "adopted" | "dismissed" | "stale" | "earned";
 
 /** A rejected op with the check that failed it (agent-swarm's `rejected[]`). */
 export interface RejectedOp {
@@ -69,6 +86,8 @@ export interface DreamRegion {
   outcomes: { total: number; succeeded: number; failed: number };
   /** New records written since the last dream (the trigger's material). */
   newRecords: number;
+  /** Command sequences repeated across the owner's successful tasks that no skill covers. */
+  procedures: ProcedureCandidate[];
   hash: string;
   bytes: number;
 }
@@ -93,7 +112,9 @@ export type AppliedFootprint =
   | { kind: "merge"; prior: Record<string, "unverified" | "disputed"> }
   | { kind: "decay"; priorImportance: number }
   | { kind: "link"; linkId: number }
-  | { kind: "supersede"; newId: number; prior: "unverified" | "disputed" };
+  | { kind: "supersede"; newId: number; prior: "unverified" | "disputed" }
+  /** The skill draft note an adopted (or earned) propose-skill created. */
+  | { kind: "propose-skill"; newId: number };
 
 /**
  * The ops' footprint, stored without text: the supersede text is a hash and a
@@ -110,11 +131,22 @@ export type StoredDreamOp = (
       textLength: number;
       refs: number[];
       reason: string;
-      /** `earned`: applied at once by a dreamer that earned the op kind (`judge.ts`). */
-      proposal?: "pending" | "adopted" | "dismissed" | "stale" | "earned";
+      proposal?: ProposalMark;
     }
   | { op: "link"; from: number; to: number; relation: DreamLinkRelation; reason: string }
   | { op: "decay"; id: number; reason: string }
+  | {
+      op: "propose-skill";
+      procedure: string;
+      /** How many commands the procedure has, and the tasks it recurred in. */
+      steps: number;
+      tasks: number[];
+      /** The drafted name and description, hashed. */
+      textHash: string;
+      textLength: number;
+      reason: string;
+      proposal?: ProposalMark;
+    }
 ) & { applied?: AppliedFootprint; reverted?: true };
 
 export interface DreamChecks {
@@ -144,7 +176,7 @@ export interface DreamSummary {
   checks?: DreamChecks;
   model?: string;
   spendUsd?: number;
-  /** Supersede proposals filed for the owner (`on` only). */
+  /** Proposals filed for the owner (`on` only): restatements and skill drafts. */
   proposals?: number;
   createdAt: number;
 }

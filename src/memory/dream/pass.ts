@@ -18,8 +18,9 @@
  *     every install, before any dream is allowed to do it.
  *   - `on`: auto-tier ops (merge, link, decay) stay applied when every probe
  *     that passed before still passes after; a lost probe rejects the whole
- *     set. Supersedes are filed as proposals for the owner (`memory dream
- *     adopt`). `memory dream rollback <id>` reverses an applied dream.
+ *     set. Supersedes and skill drafts are filed as proposals for the owner
+ *     (`memory dream adopt`). `memory dream rollback <id>` reverses an
+ *     applied dream.
  *
  * Schedule gates (the `memory-dream` tick job): material (≥ DREAM_MIN_NEW own
  * records since the last dream), quiet (no tool call for DREAM_IDLE_MS),
@@ -45,6 +46,7 @@ import type {
   DreamChecks,
   DreamMode,
   DreamOp,
+  DreamRegion,
   DreamSummary,
   DreamTrigger,
   StoredDreamOp,
@@ -78,17 +80,38 @@ export interface DreamDeps {
   model?: string;
 }
 
-function storedOp(op: DreamOp): StoredDreamOp {
-  if (op.op !== "supersede") return op;
-  return {
-    op: "supersede",
-    id: op.id,
-    textHash: createHash("sha256").update(op.text, "utf8").digest("hex").slice(0, 16),
-    textLength: op.text.length,
-    refs: op.refs,
-    reason: op.reason,
-  };
+const textHash = (text: string) =>
+  createHash("sha256").update(text, "utf8").digest("hex").slice(0, 16);
+
+/** The op without its text: hashes and lengths in place of what the model wrote. */
+function storedOp(op: DreamOp, region: DreamRegion): StoredDreamOp {
+  if (op.op === "supersede")
+    return {
+      op: "supersede",
+      id: op.id,
+      textHash: textHash(op.text),
+      textLength: op.text.length,
+      refs: op.refs,
+      reason: op.reason,
+    };
+  if (op.op === "propose-skill") {
+    const candidate = region.procedures.find((p) => p.key === op.procedure);
+    const text = `${op.name}\n${op.description}`;
+    return {
+      op: "propose-skill",
+      procedure: op.procedure,
+      steps: candidate?.steps.length ?? 0,
+      tasks: candidate?.tasks ?? [],
+      textHash: textHash(text),
+      textLength: text.length,
+      reason: op.reason,
+    };
+  }
+  return op;
 }
+
+const isProposal = (op: StoredDreamOp) =>
+  (op.op === "supersede" || op.op === "propose-skill") && op.proposal !== undefined;
 
 /** The agent's last tool call, from the usage ledger; undefined when it never acted. */
 export function lastActivityAt(db: MarinaDB, entityName: string): number | undefined {
@@ -219,10 +242,12 @@ export async function runDream(
   // The utility-curve guard (guard.ts) holds a tripped agent at observe.
   const guarded = mode === "on" && guardTripped(db, entityName);
   const commit = mode === "on" && trigger !== "dry-run" && !guarded;
-  // An earned dreamer (judge.ts, MARINA_DREAM_JUDGE=on) applies restatements at once.
+  // An earned dreamer (judge.ts, MARINA_DREAM_JUDGE=on) applies restatements
+  // at once, or stores skill drafts at once — per op kind.
   const applySupersedes = commit && dreamJudgeApplies(db, model, "supersede", env);
+  const applySkills = commit && dreamJudgeApplies(db, model, "propose-skill", env);
   let accepted = checked.accepted;
-  let stored: StoredDreamOp[] = accepted.map(storedOp);
+  let stored: StoredDreamOp[] = accepted.map((op) => storedOp(op, region));
   let view: ApplyResult | undefined;
   let id: number | undefined;
   let proposals = 0;
@@ -231,7 +256,12 @@ export async function runDream(
     // Apply (or dry-apply) the set and re-run the probes on the result. A set
     // that loses a probe is rejected whole — fail closed — whatever the mode.
     if (accepted.length) {
-      view = applyOps(db, entityName, accepted, stored, plan, { commit, applySupersedes });
+      view = applyOps(db, entityName, accepted, stored, plan, {
+        commit,
+        applySupersedes,
+        applySkills,
+        procedures: region.procedures,
+      });
       if (view.lost.length) {
         const lost = `probe-after: #${view.lost.join(", #")} no longer retrievable once the set is applied`;
         for (const op of accepted) rejected.push({ op: op.op, ids: opIds(op), reason: lost });
@@ -246,7 +276,7 @@ export async function runDream(
       }
     }
     const probes = view?.probes ?? plan.probes;
-    const applied = commit && stored.some((o) => o.applied || (o.op === "supersede" && o.proposal));
+    const applied = commit && stored.some((o) => o.applied || isProposal(o));
     const checks: DreamChecks = {
       proposed: proposed.ops.length + proposed.rejected.length,
       accepted: accepted.length,
@@ -295,7 +325,8 @@ export async function runDream(
     });
     if (applied) {
       db.updateDream(id, { appliedAt: now });
-      if (view) proposals = fileProposals(db, entityName, id, view.proposals, now);
+      if (view)
+        proposals = fileProposals(db, entityName, id, view.proposals, now, region.procedures);
       recordDreamOpinions(db, id, model, stored, now);
     }
     const appliedCount = stored.filter((o) => o.applied).length;
@@ -304,7 +335,7 @@ export async function runDream(
       source: "memory",
       title: "memory.dream",
       body: applied
-        ? `${entityName}: ${appliedCount} op(s) applied over ${checks.regionSize} record(s), ${proposals} restatement(s) proposed, ${checks.rejected} rejected, ${checks.leaving} left the active set; memory dream rollback ${id} reverses it`
+        ? `${entityName}: ${appliedCount} op(s) applied over ${checks.regionSize} record(s), ${proposals} proposal(s) filed, ${checks.rejected} rejected, ${checks.leaving} left the active set; memory dream rollback ${id} reverses it`
         : `${entityName}: ${checks.accepted} op(s) proposed over ${checks.regionSize} record(s), ${checks.rejected} rejected, ${checks.leaving} would leave the active set; observed, nothing applied${guarded ? " (guard: dreaming paused for this agent)" : ""}`,
       participants: [entityName],
       refs: [`dream:${id}`],

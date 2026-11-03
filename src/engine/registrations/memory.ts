@@ -12,7 +12,7 @@ import { benchmarkCommand } from "../commands/benchmark";
 import { contextCommand } from "../commands/context";
 import { debriefCommand } from "../commands/debrief";
 import { digCommand } from "../commands/dig";
-import { evolveCommand } from "../commands/evolve";
+import { evolveCommand, type TrialOptions } from "../commands/evolve";
 import { guideCommand } from "../commands/guide";
 import { learnedCommand } from "../commands/learned";
 import { lessonsCommand } from "../commands/lessons";
@@ -32,7 +32,7 @@ import { shareCommand } from "../commands/share";
 import { skillCommand } from "../commands/skill";
 import { workCommand } from "../commands/work";
 import type { Engine } from "../engine";
-import { trialCallBudget } from "../evolution-trial";
+import { type TrialDeps, trialCallBudget } from "../evolution-trial";
 import { answerViaLocalModel } from "./model-helpers";
 
 export function registerMemoryCommands(engine: Engine): void {
@@ -251,6 +251,69 @@ export function registerMemoryCommands(engine: Engine): void {
       taskManager: engine.taskManager,
     }),
   );
+  // The parts a trial runs on (`evolve trial`, `skill trial`): the agent
+  // runtime, a model channel per arm and the benchmark runner. Undefined when
+  // this world lacks one of them.
+  const trialDepsFor = (opts: TrialOptions): TrialDeps | undefined => {
+    const rt = engine.agentRuntime;
+    const cm = engine.channelManager;
+    const runner = engine.benchmarkRunner;
+    const db = engine.db;
+    if (!rt?.isAvailable() || !cm || !runner || !db) return undefined;
+    let lastSpawn = 0;
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    return {
+      spawn: async (name, role) => {
+        // The runtime refuses spawns closer than 1 s apart.
+        const wait = lastSpawn + 1_100 - Date.now();
+        if (wait > 0) await sleep(wait);
+        lastSpawn = Date.now();
+        await rt.spawn({
+          name,
+          model: opts.agentModel,
+          role,
+          spawnedBy: opts.callerId,
+          budgetCalls: trialCallBudget(opts.limit ?? (opts.benchmark === "smoke" ? 15 : 100)),
+        });
+      },
+      entityIdOf: (name) => rt.get(name)?.getStatus().entityId ?? undefined,
+      subjectOf: (name) => {
+        const s = rt.get(name)?.getStatus();
+        return {
+          agent: name,
+          ...(s?.role ? { role: s.role } : {}),
+          ...(s?.promptVersion ? { promptVersion: s.promptVersion } : {}),
+        };
+      },
+      createModelChannel: (name, entityId) => {
+        const ch =
+          cm.getChannelByName(name) ??
+          cm.createChannel({ type: "model", name, retentionHours: 24 });
+        cm.addMember(ch.id, entityId);
+      },
+      deleteModelChannel: (name) => {
+        const ch = cm.getChannelByName(name);
+        if (ch) cm.deleteChannel(ch.id);
+      },
+      startBenchmark: (model, subjects) =>
+        runner.start({
+          benchmark: opts.benchmark,
+          model,
+          subjects,
+          ...(opts.limit ? { limit: opts.limit } : {}),
+          ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
+          ...(opts.partition ? { partition: opts.partition } : {}),
+          agentId: opts.callerId,
+        }).id,
+      runStatus: (id) => {
+        const r = db.getBenchmarkRun(id);
+        return r && { status: r.status, score: r.score, answered: r.answered, total: r.total };
+      },
+      stop: (name) => rt.stop(name),
+      sleep,
+      now: () => Date.now(),
+    };
+  };
   engine.commands.registerBuiltin(
     evolveCommand({
       getEntity: (id) => engine.entities.get(id as EntityId),
@@ -272,66 +335,7 @@ export function registerMemoryCommands(engine: Engine): void {
           agentsLeft: () => Math.max(0, MAX_AGENTS - rt.list().length),
         };
       },
-      trialDeps: (opts) => {
-        const rt = engine.agentRuntime;
-        const cm = engine.channelManager;
-        const runner = engine.benchmarkRunner;
-        const db = engine.db;
-        if (!rt?.isAvailable() || !cm || !runner || !db) return undefined;
-        let lastSpawn = 0;
-        const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-        return {
-          spawn: async (name, role) => {
-            // The runtime refuses spawns closer than 1 s apart.
-            const wait = lastSpawn + 1_100 - Date.now();
-            if (wait > 0) await sleep(wait);
-            lastSpawn = Date.now();
-            await rt.spawn({
-              name,
-              model: opts.agentModel,
-              role,
-              spawnedBy: opts.callerId,
-              budgetCalls: trialCallBudget(opts.limit ?? (opts.benchmark === "smoke" ? 15 : 100)),
-            });
-          },
-          entityIdOf: (name) => rt.get(name)?.getStatus().entityId ?? undefined,
-          subjectOf: (name) => {
-            const s = rt.get(name)?.getStatus();
-            return {
-              agent: name,
-              ...(s?.role ? { role: s.role } : {}),
-              ...(s?.promptVersion ? { promptVersion: s.promptVersion } : {}),
-            };
-          },
-          createModelChannel: (name, entityId) => {
-            const ch =
-              cm.getChannelByName(name) ??
-              cm.createChannel({ type: "model", name, retentionHours: 24 });
-            cm.addMember(ch.id, entityId);
-          },
-          deleteModelChannel: (name) => {
-            const ch = cm.getChannelByName(name);
-            if (ch) cm.deleteChannel(ch.id);
-          },
-          startBenchmark: (model, subjects) =>
-            runner.start({
-              benchmark: opts.benchmark,
-              model,
-              subjects,
-              ...(opts.limit ? { limit: opts.limit } : {}),
-              ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
-              ...(opts.partition ? { partition: opts.partition } : {}),
-              agentId: opts.callerId,
-            }).id,
-          runStatus: (id) => {
-            const r = db.getBenchmarkRun(id);
-            return r && { status: r.status, score: r.score, answered: r.answered, total: r.total };
-          },
-          stop: (name) => rt.stop(name),
-          sleep,
-          now: () => Date.now(),
-        };
-      },
+      trialDeps: trialDepsFor,
       notifyEvolutionState: (entityNames, state) => {
         for (const name of entityNames) {
           const target = engine.findEntityGlobal(name);
@@ -365,6 +369,9 @@ export function registerMemoryCommands(engine: Engine): void {
       db: engine.db,
       logEvent: (event) => engine.logEvent(event),
       getCommandVocabulary: () => commandVocabulary(engine),
+      trialDeps: trialDepsFor,
+      benchmarkReady: (name) => engine.benchmarkRunner?.datasetReady(name) ?? false,
+      trackBackground: (work) => engine.trackBackground(work),
     }),
   );
   engine.commands.registerBuiltin(

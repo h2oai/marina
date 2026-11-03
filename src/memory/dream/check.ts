@@ -17,9 +17,12 @@
  *   usefulness mean below neutral — decay follows use evidence, never taste.
  * - preservation: at most PRESERVATION_MAX_LOSS of the region may leave the
  *   active set in one dream (merge-into, supersede, decay).
+ * - procedure (propose-skill): the key names one of the region's repeated
+ *   procedures (`procedures.ts`), the name makes a slug, the description fits.
  */
 
 import { shingleSimilarity } from "../near-duplicate";
+import { SKILL_DESCRIPTION_MAX, skillSlug } from "../skill-draft";
 import type { DreamOp, DreamRegion, RegionRecord, RejectedOp } from "./types";
 
 export const MERGE_MIN_OVERLAP = 0.5;
@@ -66,6 +69,8 @@ export function opIds(op: DreamOp): number[] {
       return [op.from, op.to];
     case "decay":
       return [op.id];
+    case "propose-skill":
+      return [];
   }
 }
 
@@ -78,6 +83,7 @@ export function leavingIds(op: DreamOp): number[] {
     case "decay":
       return [op.id];
     case "link":
+    case "propose-skill":
       return [];
   }
 }
@@ -94,6 +100,22 @@ export function checkOps(
     rejected.push({ op: op.op, ids: opIds(op), reason });
 
   for (const op of ops) {
+    if (op.op === "propose-skill") {
+      if (!region.procedures.some((p) => p.key === op.procedure)) {
+        reject(op, `procedure: ${op.procedure} is not a repeated procedure of this dream`);
+        continue;
+      }
+      if (!skillSlug(op.name)) {
+        reject(op, "propose-skill: the name is empty");
+        continue;
+      }
+      if (!op.description.trim() || op.description.length > SKILL_DESCRIPTION_MAX) {
+        reject(op, `propose-skill: the description must be 1–${SKILL_DESCRIPTION_MAX} characters`);
+        continue;
+      }
+      accepted.push(op);
+      continue;
+    }
     const ids = opIds(op);
     const missing = ids.filter((id) => !byId.has(id));
     if (missing.length) {
