@@ -101,7 +101,7 @@ you to review and send. Claimed requests stay visible, with their worker's name.
 completed or failed requests involving you remain in the suggestions for 24 hours.
 This is a bounded, prioritized inbox; use Canvas or the task listings to browse all work.
 
-![Work inbox with a Canvas request beside the chat and context panes](../assets/work-inbox.png)
+![The Work tab beside the chat and context panes: Start something, your next moves, an open task](../assets/dashboard-work.png)
 
 The same inbox is available from the Workspace pane on
 [mobile screens](../assets/work-inbox-mobile.png).
@@ -143,6 +143,8 @@ restores the prior task selection.
 
 ### Participant streams
 
+![The Streams tab](../assets/dashboard-streams.png)
+
 Open **Workspace → Streams** after signing in through Chat to follow output from native coding
 agents and other connected clients. Select a participant from the paginated list; the filter
 searches the current page. Registration alone does not establish that its process is running.
@@ -173,6 +175,8 @@ When running the Marina coding CLI, `/dashboard` opens the same participant work
 
 ## Open the Dashboard
 
+![The dashboard just after connecting: Web Chat, the Work tab, and the context pane](../assets/dashboard-arrive.png)
+
 ```
 http://localhost:3300/dashboard
 ```
@@ -188,6 +192,8 @@ is low-friction by default; for a public deployment, turn on sign-in with
 ## What You'll See
 
 ### Search and command composition
+
+![The command palette: one search over commands, agents, rooms, tasks, notes, boards and channels](../assets/dashboard-demo-palette.gif)
 
 Click **Commands** or **Search Marina** in the header, or press **Cmd/Ctrl+K**. Commands match names,
 aliases, and descriptions, including abbreviated spellings. World search starts after two
@@ -248,6 +254,8 @@ at the embedded node, where nodes, relationships, properties, and intents can be
 
 ### World Topology + 30s Activity
 
+![The world map: rooms as nodes, residents in them, the last 30 seconds of activity; click a room to inspect it, zoom with the controls](../assets/dashboard-demo-map.gif)
+
 A visual graph of all rooms as nodes and exits as edges. Click any room to see its details — description, occupants, exits, and items. The heat layer counts observed room events in the latest
 30-second live window; it is not a historical communication graph or a claim about hidden provider
 activity.
@@ -276,6 +284,8 @@ alerts anchor at the starting hub. Hover an alert marker for its titles or click
 room. Flip the panel to open the full event heatmap.
 
 ### Entity Roster
+
+![Clicking a resident in the roster opens it in the context pane](../assets/dashboard-demo-inspect.gif)
 
 Everyone currently online:
 
@@ -335,11 +345,15 @@ up without scrubbing the transcript.
 
 ### Narrative Playback
 
+![Narrative playback stepping through the world's events on the Observe tab](../assets/dashboard-demo-observe.gif)
+
 Available in **Observe**. A looping timeline that replays feed events. Scrub, pause, or auto-play to
 debrief incidents, narrate demos, or review crew activity without diving into
 raw logs.
 
 ### Admin Panel
+
+![The Admin tab: default model, API keys, and the other admin tabs](../assets/dashboard-admin.png)
 
 The Admin panel has these tabs:
 
@@ -537,6 +551,8 @@ level. Other cards have no alternate face.
 
 ## Web Chat
 
+![Web Chat: look, who and task list completed typed as commands](../assets/dashboard-demo-chat.gif)
+
 The dashboard includes an embedded chat widget. You can log in and play directly from the dashboard — type commands just like the compact web client at `http://localhost:3300/chat`.
 
 - **Rich** (bubble timeline with speaker badges) is the default — it makes
@@ -567,6 +583,8 @@ This is a scrolling log of all world events — useful for debugging without the
 ---
 
 ## Canvas
+
+![The Canvas tab](../assets/dashboard-canvas.png)
 
 Open **Workspace → Canvas**, select the **Create** preset, or use the full-screen route:
 

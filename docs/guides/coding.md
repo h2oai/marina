@@ -11,7 +11,13 @@ parts that make it more than a CLI.
 
 ## Start in your project folder
 
-Run `marina` in a project and describe a task. The default runtime is Marina's coding
+![A recorded coding session: the task typed in plain words, the coder's edits and test run, verification passed on a frozen snapshot, task submitted for review](../assets/coding-session.gif)
+
+Run `marina` in a project and describe a task. The recording above is one such session, as it
+happened: "Add nextLowTide to src/tide.ts and a test for both functions, then run the tests."
+The coder wrote the function and five tests, ran them, had the same tests re-run on a frozen
+snapshot of the code, submitted task #1 for review with that receipt, and noted one thing it
+left alone because it was outside the task. The default runtime is Marina's coding
 agent, using your configured provider (`~/.marina/.env`, or
 [per folder](configuration.md#where-the-marina-cli-reads-settings)). You can also use an installed coding tool and
 its existing credentials through the same terminal:
