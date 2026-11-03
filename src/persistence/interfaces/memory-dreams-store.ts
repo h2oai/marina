@@ -9,6 +9,7 @@ export interface MemoryDreamsStore {
   recordDream(input: dreamsDb.DreamInsert): number;
   getDream(id: number): dreamsDb.DreamRow | undefined;
   listDreams(entityName: string, limit?: number): dreamsDb.DreamRow[];
+  listRecentDreams(limit?: number, entityName?: string): dreamsDb.DreamRow[];
   lastDreamAt(entityName: string): number | undefined;
   updateDream(id: number, patch: dreamsDb.DreamUpdate): boolean;
 }
@@ -18,6 +19,7 @@ export const MEMORY_DREAMS_STORE_METHODS = [
   "recordDream",
   "getDream",
   "listDreams",
+  "listRecentDreams",
   "lastDreamAt",
   "updateDream",
 ] as const satisfies readonly (keyof MemoryDreamsStore)[];

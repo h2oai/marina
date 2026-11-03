@@ -667,6 +667,9 @@ export class MarinaDB implements MarinaStores {
   listDreams(entityName: string, limit = 20): dreamsDb.DreamRow[] {
     return dreamsDb.listDreams(this.reader, entityName, limit);
   }
+  listRecentDreams(limit = 30, entityName?: string): dreamsDb.DreamRow[] {
+    return dreamsDb.listRecentDreams(this.reader, limit, entityName);
+  }
 
   lastDreamAt(entityName: string): number | undefined {
     return dreamsDb.lastDreamAt(this.reader, entityName);

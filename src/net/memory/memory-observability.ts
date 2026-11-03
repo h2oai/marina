@@ -31,6 +31,8 @@ import type { Engine } from "../../engine/engine";
 import { ACCUMULATION_TASK_MARKER, SHARED_WRITE_REVIEW_MARKER } from "../../engine/memory-dispatch";
 import { HYGIENE_NOTE_PREFIX, HYGIENE_TASK_MARKER } from "../../engine/memory-hygiene";
 import { computeTrustProfile } from "../../engine/readiness";
+import { dreamEffect, dreamingMode, isPoolScopeName, PROPOSAL_OWNER } from "../../memory/dream";
+import type { DreamChecks, RejectedOp, StoredDreamOp } from "../../memory/dream/types";
 import {
   computeHygieneRatios,
   computeSpaceHealth,
@@ -45,11 +47,14 @@ import {
 import { DURABLE_TWIN_URL_PREFIX, parseDurableTwinUrl } from "../../memory/legacy-projection";
 import { residentMemoryOperation } from "../../memory/resident-service";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
+import { type DreamRow, parseDreamJson } from "../../persistence/db-memory-dreams";
 import type { MemoryAnswer } from "../../sdk/memory-answer";
 import type { EngineEvent } from "../../types";
 import { responseCacheCounters } from "../response-cache";
 import type {
   MemoryCreditView,
+  MemoryDreamsResponse,
+  MemoryDreamView,
   MemoryGraph,
   MemoryGraphEdge,
   MemoryGraphNode,
@@ -355,6 +360,97 @@ function encodeCursor(job: JobRow): string {
 }
 
 /** Keyset-paged, observer-scoped job list. Never includes task/answer. */
+/**
+ * `GET /api/memory/dreams`: the newest dreams — every entity's and pool's for
+ * a privileged observer (with the guard's state and the held-out measurement),
+ * the caller's own for a resident. Rows carry ids, counts and hashes only;
+ * the proposals' text stays in `core_memory` and is never served here.
+ */
+export function listMemoryDreams(
+  db: MarinaDB,
+  scope: MemoryObserverScope,
+  query: { limit?: number; entity?: string } = {},
+): MemoryDreamsResponse {
+  const limit = Math.min(Math.max(1, query.limit ?? 30), 200);
+  const mode = dreamingMode();
+  let rows: DreamRow[];
+  if (scope.privileged) rows = db.listRecentDreams(limit, query.entity?.trim() || undefined);
+  else if (scope.entityName) rows = db.listDreams(scope.entityName, limit);
+  else rows = [];
+  const dreams = rows.map((row) => {
+    const ops = parseDreamJson<StoredDreamOp[]>(row.ops_json, []);
+    const rejected = parseDreamJson<RejectedOp[]>(row.rejected_json, []);
+    const checks = parseDreamJson<Partial<DreamChecks>>(row.checks_json, {});
+    const byKind: Record<string, number> = {};
+    for (const op of ops) byKind[op.op] = (byKind[op.op] ?? 0) + 1;
+    const rejectedByCheck: Record<string, number> = {};
+    for (const r of rejected) {
+      const check = r.reason.split(":")[0]?.trim() || "other";
+      rejectedByCheck[check] = (rejectedByCheck[check] ?? 0) + 1;
+    }
+    return {
+      id: row.id,
+      entity: row.entity_name,
+      pool: isPoolScopeName(row.entity_name),
+      trigger: row.trigger,
+      mode: row.mode,
+      state: row.state,
+      createdAt: row.created_at,
+      appliedAt: row.applied_at,
+      rolledBackAt: row.rolled_back_at,
+      region: {
+        records: row.region_count,
+        newRecords: row.region_new,
+        bytes: row.region_bytes,
+        hash: row.region_hash,
+      },
+      ops: {
+        accepted: checks.accepted ?? ops.length,
+        rejected: checks.rejected ?? rejected.length,
+        leaving: checks.leaving ?? 0,
+        applied: ops.filter((o) => o.applied && !o.reverted).length,
+        pendingProposals: ops.filter((o) => o.proposal === "pending").length,
+        byKind,
+      },
+      probes: {
+        before: checks.probesBefore ?? { pass: 0, fail: 0 },
+        after: checks.probesAfter ?? null,
+      },
+      rejectedByCheck,
+      model: row.model,
+      spendUsd: row.spend_usd,
+    } satisfies MemoryDreamView;
+  });
+  if (!scope.privileged) return { mode, dreams, guarded: [] };
+  const guarded: string[] = [];
+  for (const row of db.listCoreMemory(PROPOSAL_OWNER)) {
+    if (!row.key.startsWith("guard:")) continue;
+    const state = parseDreamJson<{ entityName?: string; tripped?: unknown } | null>(
+      row.value,
+      null,
+    );
+    if (state?.tripped && typeof state.entityName === "string") guarded.push(state.entityName);
+  }
+  const e = dreamEffect(db);
+  return {
+    mode,
+    dreams,
+    guarded: guarded.sort(),
+    effect: {
+      verdict: e.verdict,
+      applied: e.applied,
+      measured: e.measured,
+      margin: e.margin,
+      holdout: {
+        dreams: e.holdout.dreams,
+        before: e.holdout.before.rate,
+        after: e.holdout.after.rate,
+        interval: e.holdout.interval,
+      },
+    },
+  };
+}
+
 export function listMemoryJobs(
   db: MarinaDB,
   scope: MemoryObserverScope,

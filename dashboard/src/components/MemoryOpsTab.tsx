@@ -19,6 +19,7 @@ import {
   Gauge,
   Landmark,
   ListChecks,
+  Moon,
   Receipt,
   Scale,
   ShieldCheck,
@@ -37,6 +38,7 @@ import type {
 import type { DashboardEvent } from "../lib/types";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { GlassPanel } from "./GlassPanel";
+import { DreamsSection } from "./memory-ops/DreamsSection";
 import {
   cacheHitRate,
   formatAge,
@@ -119,6 +121,10 @@ export function MemoryOpsTab({
 
       <Section title="Jobs" icon={<ListChecks size={12} />}>
         <JobsSection focusJobId={focusJobId} />
+      </Section>
+
+      <Section title="Dreams" icon={<Moon size={12} />}>
+        <DreamsSection />
       </Section>
 
       <Section title="Resolutions & ratifications" icon={<Scale size={12} />}>

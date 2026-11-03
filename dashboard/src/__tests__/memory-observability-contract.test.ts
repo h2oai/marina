@@ -26,6 +26,8 @@ import * as Unified from "../unified/lib/memory-map-types";
 describe("memory-observability-types (dashboard lib) matches the backend contract", () => {
   it("re-exports every shared view type unchanged", () => {
     expectTypeOf<Lib.MemoryJobView>().toEqualTypeOf<Backend.MemoryJobView>();
+    expectTypeOf<Lib.MemoryDreamView>().toEqualTypeOf<Backend.MemoryDreamView>();
+    expectTypeOf<Lib.MemoryDreamsResponse>().toEqualTypeOf<Backend.MemoryDreamsResponse>();
     expectTypeOf<Lib.MemoryResolutionView>().toEqualTypeOf<Backend.MemoryResolutionView>();
     expectTypeOf<Lib.MemoryRatificationView>().toEqualTypeOf<Backend.MemoryRatificationView>();
     expectTypeOf<Lib.MemoryCreditView>().toEqualTypeOf<Backend.MemoryCreditView>();

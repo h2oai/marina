@@ -254,3 +254,54 @@ export type MemoryGraph = {
   edges: MemoryGraphEdge[];
   truncated: boolean;
 };
+
+/**
+ * One dream of the consolidation pass (`src/memory/dream`) as the dashboard
+ * sees it: ids, counts and hashes — never note text, never a proposal's text.
+ * `entity` is an agent, or `pool:<name>` for a pool dream.
+ */
+export type MemoryDreamView = {
+  id: number;
+  entity: string;
+  pool: boolean;
+  trigger: "schedule" | "command" | "dry-run" | "compaction";
+  mode: "off" | "observe" | "on";
+  state: "observed" | "applied" | "rolled_back";
+  createdAt: number;
+  appliedAt: number | null;
+  rolledBackAt: number | null;
+  region: { records: number; newRecords: number; bytes: number; hash: string };
+  ops: {
+    accepted: number;
+    rejected: number;
+    leaving: number;
+    /** Ops that stayed applied (auto-tier, or earned). */
+    applied: number;
+    /** Proposals still waiting for the owner or a ratifier. */
+    pendingProposals: number;
+    /** Accepted ops by kind: merge, supersede, link, decay, propose-skill. */
+    byKind: Record<string, number>;
+  };
+  probes: { before: { pass: number; fail: number }; after: { pass: number; fail: number } | null };
+  /** Rejected ops by the check that refused them (`region`, `taint`, `coverage`, …). */
+  rejectedByCheck: Record<string, number>;
+  model: string | null;
+  spendUsd: number;
+};
+
+/** `GET /api/memory/dreams` — the newest dreams in the caller's scope, with the operator's readouts. */
+export type MemoryDreamsResponse = {
+  /** `MARINA_DREAMING` as the server reads it. */
+  mode: "off" | "observe" | "on";
+  dreams: MemoryDreamView[];
+  /** Agents whose utility-curve guard is tripped (privileged only; else empty). */
+  guarded: string[];
+  /** The held-out measurement the posture decides on (privileged only). */
+  effect?: {
+    verdict: "wins" | "no change" | "loses" | "insufficient";
+    applied: number;
+    measured: number;
+    margin: number;
+    holdout: { dreams: number; before: number; after: number; interval: [number, number] };
+  };
+};

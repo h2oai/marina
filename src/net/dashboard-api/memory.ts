@@ -17,6 +17,7 @@ import {
   buildMemoryOverview,
   cancelMemoryJob,
   getMemoryJob,
+  listMemoryDreams,
   listMemoryJobs,
   memoryHygieneHistory,
   memoryHygieneRatios,
@@ -29,7 +30,7 @@ function getMemoryCore(db: MarinaDB, entityName: string): Response {
   return json(db.listCoreMemory(entityName));
 }
 
-/** Observer-scoped memory observability — overview, hygiene, jobs, graph. */
+/** Observer-scoped memory observability — overview, hygiene, jobs, dreams, graph. */
 export async function handleMemoryObservabilityRoutes(
   ctx: DashboardRouteContext,
 ): Promise<Response | undefined> {
@@ -78,6 +79,17 @@ export async function handleMemoryObservabilityRoutes(
     } catch (cause) {
       return json({ error: getErrorMessage(cause) }, 400);
     }
+  }
+  // The dream pass (src/memory/dream): the newest dreams in the caller's scope —
+  // ids, counts and hashes only; an operator also gets the guard and the measure.
+  if (url.pathname === "/api/memory/dreams" && method === "GET" && db) {
+    const limitParam = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
+    return json(
+      listMemoryDreams(db, memoryObserverScope(engine, callerId), {
+        limit: Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 30,
+        entity: url.searchParams.get("entity") ?? undefined,
+      }),
+    );
   }
   const memoryJobMatch = url.pathname.match(/^\/api\/memory\/jobs\/([^/]+)(\/cancel)?$/);
   if (memoryJobMatch && db) {

@@ -130,6 +130,14 @@ export function listDreams(db: Database, entityName: string, limit = 20): DreamR
     .all(entityName, Math.max(1, limit)) as DreamRow[];
 }
 
+/** The newest dreams of every entity (or of one), newest first — the dashboard's list. */
+export function listRecentDreams(db: Database, limit = 30, entityName?: string): DreamRow[] {
+  const bounded = Math.min(Math.max(1, limit), 200);
+  return entityName
+    ? listDreams(db, entityName, bounded)
+    : (db.query("SELECT * FROM memory_dreams ORDER BY id DESC LIMIT ?").all(bounded) as DreamRow[]);
+}
+
 /** When the entity last dreamed (any state), or undefined. */
 export function lastDreamAt(db: Database, entityName: string): number | undefined {
   const row = db
