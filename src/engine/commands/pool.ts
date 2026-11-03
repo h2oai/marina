@@ -39,7 +39,23 @@ import {
 import { runPoolDreamCommand } from "./pool-dream";
 import { resolveProjectPrefix } from "./project";
 
-const POOL_ACTIONS = ["list", "status", "audit", "add", "ratify", "recall", "dream"];
+const POOL_ACTIONS = ["list", "status", "audit", "add", "ratify", "recall", "show", "dream"];
+
+/** How much of a note a listing shows before it points at the whole note. */
+const EXCERPT_CHARS = 60;
+
+/**
+ * A listing line's excerpt. A note longer than the excerpt ends in an ellipsis
+ * and names the command that shows it whole, so a reader (an agent reviewing
+ * another's work most of all) never takes the first sixty characters for the
+ * note. Seen 2026-11-03: Critic approved a submission having "read only the
+ * first ~60 chars of #48", because the recall listing was all it had.
+ */
+function excerpt(pool: string, note: { id: number; content: string }): string {
+  const text = note.content.replace(/\s+/g, " ").trim();
+  if (text.length <= EXCERPT_CHARS) return text;
+  return `${text.slice(0, EXCERPT_CHARS).trimEnd()}… ${dim(`(pool ${pool} show ${note.id})`)}`;
+}
 
 /**
  * The pool a name means: exact, then case-insensitive, then the pool of the
@@ -167,6 +183,7 @@ export function poolCommand(deps: {
       { syntax: "pool <name> list", effect: "read" },
       { syntax: "pool <name> ratify <noteId> [importance:N] [rationale]", effect: "write" },
       { syntax: "pool <name> recall", effect: "read" },
+      { syntax: "pool <name> show <id>", effect: "read" },
       { syntax: "pool <name> dream", effect: "read" },
       { syntax: "pool <name> dream now", effect: "write" },
       { syntax: "pool <name> dream dry-run", effect: "read" },
@@ -182,7 +199,7 @@ export function poolCommand(deps: {
     ],
     name: "pool",
     aliases: [],
-    help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> [group <groupName>] | pool <name> add <text> [importance:N] | pool <name> recall|list|status|audit|ratify|dream | pool list\n  (importance also as trailing `importance N` or `!N`; `ls` = list)\n\nExamples:\n  pool create findings\n  pool create crew-notes group project:Beta   (members-only pool; you must belong to the group)\n  pool findings add The decode room responds to binary input importance:7\n  pool findings recall binary\n  pool findings list\n  pool findings status\n  pool findings audit\n  pool guide ratify 42 importance 8 verified against the command registry\n\nInstitutional pools (guide, orchestration:*, tradition:*): on a shared instance `add` files a proposal (importance capped at 4, unverified) until someone with standing >= 15 (rank 2), a sovereign, or the local operator runs `pool <name> ratify <noteId> [importance N] [rationale]` — which lifts the cap, marks it verified, and mirrors it into the institutional durable space.\n\nDreaming over a pool: `pool <name> dream` is the consolidation pass over the pool's shared records (merges, links, decays); every op it proposes waits for a ratifier — standing >= 15, a sovereign, or the local operator, who wrote none of the notes it touches — `pool <name> dream proposals|ratify <id> [n]|dismiss|rollback <id>`.",
+    help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> [group <groupName>] | pool <name> add <text> [importance:N] | pool <name> recall|list|status|audit|ratify|dream | pool <name> show <id> | pool list\n  (importance also as trailing `importance N` or `!N`; `ls` = list)\n\nExamples:\n  pool create findings\n  pool create crew-notes group project:Beta   (members-only pool; you must belong to the group)\n  pool findings add The decode room responds to binary input importance:7\n  pool findings recall binary\n  pool findings show 12          (the whole note; listings show the first 60 characters)\n  pool findings list\n  pool findings status\n  pool findings audit\n  pool guide ratify 42 importance 8 verified against the command registry\n\nInstitutional pools (guide, orchestration:*, tradition:*): on a shared instance `add` files a proposal (importance capped at 4, unverified) until someone with standing >= 15 (rank 2), a sovereign, or the local operator runs `pool <name> ratify <noteId> [importance N] [rationale]` — which lifts the cap, marks it verified, and mirrors it into the institutional durable space.\n\nDreaming over a pool: `pool <name> dream` is the consolidation pass over the pool's shared records (merges, links, decays); every op it proposes waits for a ratifier — standing >= 15, a sovereign, or the local operator, who wrote none of the notes it touches — `pool <name> dream proposals|ratify <id> [n]|dismiss|rollback <id>`.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -322,7 +339,7 @@ export function poolCommand(deps: {
           separator(),
           ...notes.map((n) => {
             const date = dim(new Date(n.created_at).toISOString().slice(0, 10));
-            return `  ${fmtId(n.id)} ${date} (${fmtEntity(n.entity_name)}) ${importance(n.importance)}: ${n.content.slice(0, 60)}`;
+            return `  ${fmtId(n.id)} ${date} (${fmtEntity(n.entity_name)}) ${importance(n.importance)}: ${excerpt(poolName, n)}`;
           }),
         ];
         ctx.send(input.entity, lines.join("\n"));
@@ -535,6 +552,36 @@ export function poolCommand(deps: {
           return;
         }
 
+        case "show": {
+          const id = Number(tokens[2]);
+          if (!Number.isInteger(id) || id <= 0) {
+            refuseCommand(ctx, input.entity, `Usage: pool ${poolName} show <id>`);
+            return;
+          }
+          const note = db.getPoolNotes(pool.id, 10_000).find((n) => n.id === id);
+          if (!note) {
+            ctx.send(
+              input.entity,
+              `No note #${id} in pool "${poolName}". Browse with \`pool ${poolName} list\`.`,
+            );
+            return;
+          }
+          db.touchNote(note.id);
+          const date = dim(new Date(note.created_at).toISOString().slice(0, 10));
+          ctx.send(
+            input.entity,
+            [
+              header(`Pool "${poolName}" note #${note.id}`),
+              `  ${date} (${fmtEntity(note.entity_name)}) ${importance(note.importance)}`,
+              separator(),
+              note.content,
+            ].join("\n"),
+            undefined,
+            memoryResult("pool-recall", { success: true, notes: memoryNoteResults([note]) }),
+          );
+          return;
+        }
+
         case "dream":
           return runPoolDreamCommand(ctx, db, entity, input.entity, pool, tokens.slice(2));
 
@@ -565,7 +612,7 @@ export function poolCommand(deps: {
               const now = Date.now();
               const age = Math.floor((now - n.created_at) / DAY_MS);
               const ageStr = age === 0 ? "today" : `${age}d ago`;
-              return `  #${n.id} [score=${n.score.toFixed(2)} imp=${n.importance} ${ageStr}] (${n.entity_name}): ${n.content.slice(0, 60)}`;
+              return `  #${n.id} [score=${n.score.toFixed(2)} imp=${n.importance} ${ageStr}] (${n.entity_name}): ${excerpt(poolName, n)}`;
             }),
           ];
           ctx.send(
@@ -583,7 +630,7 @@ export function poolCommand(deps: {
             unknownSubcommand(
               "pool",
               tokens[1],
-              `Usage: pool ${poolName} add <text> | pool ${poolName} recall <query> | pool ${poolName} list | pool ${poolName} status | pool ${poolName} audit | pool ${poolName} ratify <noteId>`,
+              `Usage: pool ${poolName} add <text> | pool ${poolName} recall <query> | pool ${poolName} show <id> | pool ${poolName} list | pool ${poolName} status | pool ${poolName} audit | pool ${poolName} ratify <noteId>`,
             ),
           );
       }
