@@ -36,6 +36,7 @@ export default defineConfig({
           label: "Start here",
           items: [
             { label: "What is Marina?", slug: "docs/overview" },
+            { label: "The tour, in pictures", slug: "docs/tour" },
             { label: "Getting started", slug: "docs/guides/getting-started" },
             { label: "Connecting", slug: "docs/guides/connecting" },
             { label: "Commands", slug: "docs/guides/commands" },

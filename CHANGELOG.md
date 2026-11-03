@@ -89,6 +89,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A pool listing points at the whole note.** `pool <name> list` and `pool <name> recall` show
+  the first 60 characters of each note; a longer note now ends in an ellipsis and names
+  `pool <name> show <id>`, a new read form that prints it whole. Seen in a recorded session: the
+  reviewer approved a submission "having read only the first ~60 chars" of the note it cited,
+  because the listing was all it had and nothing said there was more.
+
+- **The front door shows a real world running.** The site's landing page, the overview, the
+  README and a new "tour, in pictures" page are built on a recorded session in the default
+  world: `site/scripts/capture.mjs` boots an isolated server with the four seeded agents, sends
+  Host the seeded Launch Brief, films the dashboard, and takes every still (tabs, `/who` pages);
+  `capture-terminal.py` + `capture-terminal.mjs` record and render any terminal program (the
+  `marina connect` REPL, a `marina .` coding session), one picture or frames for a GIF;
+  `capture.mjs demo` films a walkthrough of the dashboard itself (chat, command palette, map,
+  canvas, narrative playback, entity inspector, streams, admin, a resident's page) and
+  `render-demo` cuts it into one clip per feature for the tour page and the dashboard guide. Every picture in `docs/assets/` comes from those scripts, so they can be remade in
+  one run instead of going stale. The site serves `docs/assets/` itself (the guides' pictures
+  were sent to GitHub `blob` pages and rendered broken), redeploys when an asset changes, and
+  `test/docs-images.test.ts` holds every image reference in the public docs to a real file.
+  Landing-page counts (commands, guides) are read from the generated registries at build time.
+
 - **Model helpers share the configured output allowance.** Text and JSON helpers use
   `MARINA_DEFAULT_MAX_TOKENS` (default 16,384, bounded by model capacity) instead of small,
   unrelated limits. Automatic allowances can grow after truncation; explicit caps stay fixed.
