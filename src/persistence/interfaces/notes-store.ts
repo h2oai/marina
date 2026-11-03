@@ -87,6 +87,7 @@ export interface NotesStore {
   ): boolean;
   findMemoryContradictions(entityName: string): notesDb.ContradictionCandidate[];
   consolidateNotes(entityName: string, keeperId: number, duplicateIds: number[]): number;
+  consolidatePoolNotes(poolId: string, keeperId: number, duplicateIds: number[]): number;
   restoreSupersededNote(
     entityName: string,
     keeperId: number,
@@ -202,6 +203,7 @@ export const NOTES_STORE_METHODS = [
   "updateNoteQuality",
   "findMemoryContradictions",
   "consolidateNotes",
+  "consolidatePoolNotes",
   "restoreSupersededNote",
   "setNoteImportance",
   "revertRevision",

@@ -30,6 +30,7 @@ import { dreamEffect, renderDreamEffect } from "../../src/memory/dream/measure";
 import { DREAM_FIRST_WINDOW_MS } from "../../src/memory/dream/pass";
 import { probeHit, probeQuery } from "../../src/memory/dream/probe";
 import { gatherRegion } from "../../src/memory/dream/region";
+import { scopeRecall } from "../../src/memory/dream/scope";
 import type { DreamChecks, DreamOp, DreamProbe, StoredDreamOp } from "../../src/memory/dream/types";
 import { MarinaDB } from "../../src/persistence/database";
 import { parseDreamJson } from "../../src/persistence/db-memory-dreams";
@@ -70,7 +71,7 @@ export function replayDream(
     const query = probeQuery(note.content);
     if (h(query) === probe.queryHash) counts.intact++;
     else counts.drifted++;
-    const hits = query ? db.recallNotes(row.entity_name, query) : [];
+    const hits = query ? scopeRecall(db, row.entity_name, query) : [];
     if (probeHit(hits, probe.itemId, successor.get(probe.itemId))) counts.passNow++;
   }
   const checks = parseDreamJson<Partial<DreamChecks>>(row.checks_json, {});

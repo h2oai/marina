@@ -1038,6 +1038,38 @@ export function consolidateNotes(
 }
 
 /**
+ * `consolidateNotes` over a shared pool: duplicates by ANY member fold into
+ * the keeper (same pool, live, never already superseded). A ratified pool
+ * dream's merge — the ratifier stood for the pool, so no author is asked.
+ */
+export function consolidatePoolNotes(
+  db: Database,
+  poolId: string,
+  keeperId: number,
+  duplicateIds: number[],
+): number {
+  const keeper = getNote(db, keeperId);
+  if (!keeper || keeper.pool_id !== poolId || keeper.verification_status === "superseded") return 0;
+  let changed = 0;
+  db.transaction(() => {
+    for (const id of [...new Set(duplicateIds)]) {
+      if (id === keeperId) continue;
+      const note = getNote(db, id);
+      if (!note || note.pool_id !== poolId || note.verification_status === "superseded") continue;
+      db.run("UPDATE notes SET verification_status = 'superseded' WHERE id = ?", [id]);
+      db.run(
+        "INSERT OR IGNORE INTO note_links (source_id, target_id, relationship, created_at) VALUES (?, ?, 'supersedes', ?)",
+        [keeperId, id, Date.now()],
+      );
+      retireNumericNote(db, id, "superseded", keeperId);
+      linkNumericNotes(db, keeperId, id, "supersedes");
+      changed++;
+    }
+  })();
+  return changed;
+}
+
+/**
  * The reverse of one `consolidateNotes` duplicate (a dream's rollback): the
  * note's status goes back to `priorStatus`, the keeper's `supersedes` edge is
  * removed and the canonical record reopens. Refused when the note is not

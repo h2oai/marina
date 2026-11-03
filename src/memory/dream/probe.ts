@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import type { MarinaDB } from "../../persistence/database";
 import { normalizedWords } from "../near-duplicate";
 import { leavingIds } from "./check";
+import { scopeRecall } from "./scope";
 import type { DreamOp, DreamProbe, DreamRegion } from "./types";
 
 export const PROBE_QUERY_WORDS = 4;
@@ -71,7 +72,7 @@ export function probePlan(
     const record = byId.get(id);
     if (!record) continue;
     const query = probeQuery(record.content);
-    const hits = query ? db.recallNotes(region.entityName, query) : [];
+    const hits = query ? scopeRecall(db, region.entityName, query) : [];
     queries.set(id, { query, successor });
     probes.push({
       itemId: id,

@@ -48,8 +48,8 @@ export function recordDreamOpinions(
 ): number {
   let n = 0;
   ops.forEach((op, i) => {
-    const proposed = (op.op === "supersede" || op.op === "propose-skill") && op.proposal;
-    if (!op.applied && !proposed) return;
+    // Applied, or filed for the owner (a restatement, a skill draft — or any op of a pool dream).
+    if (!op.applied && !op.proposal) return;
     recordJudgeOpinion(db, {
       surface: DREAM_JUDGE_SURFACE,
       question: op.op,

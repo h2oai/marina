@@ -8,12 +8,19 @@
  * successful tasks (`procedures.ts`). Own fact-like legacy notes only — never
  * a pool, never another owner's space, never the process tier. Byte-capped,
  * newest first; what does not fit waits for the next dream.
+ *
+ * A POOL region (`scope.ts`, name `pool:<name>`) is the same over a shared
+ * pool: the pool's fact-like records written in the window ∪ those served to
+ * any member in the window, with use evidence from every member, plus the
+ * outcomes of the records' authors. No procedures: a pool proposes merges,
+ * links and decays only.
  */
 
 import { createHash } from "node:crypto";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import { itemsServedTo, usefulnessPosterior } from "../../persistence/db-memory-usefulness";
 import { gatherProcedures } from "./procedures";
+import { type DreamScope, scopeOf } from "./scope";
 import type { DreamRegion, RegionRecord } from "./types";
 
 /** Newest own records considered per dream. */
@@ -31,59 +38,133 @@ function trimContent(content: string): string {
     : content;
 }
 
+const liveFactLike = (note: NoteRow | undefined): note is NoteRow =>
+  !!note && note.verification_status !== "superseded" && FACT_LIKE.includes(note.tier);
+
+/** The scope's live fact-like records written in the window, newest first. */
+function writtenIn(db: MarinaDB, scope: DreamScope, since: number, until: number): NoteRow[] {
+  const raw = db.memoryRepository().raw;
+  return scope.kind === "pool"
+    ? raw
+        .query<NoteRow, [string, number, number, number]>(
+          `SELECT * FROM numeric_notes
+           WHERE pool_id = ? AND created_at BETWEEN ? AND ?
+             AND verification_status != 'superseded' AND tier IN ('fact','reflection','skill')
+           ORDER BY id DESC LIMIT ?`,
+        )
+        .all(scope.poolId, since, until, REGION_MAX_RECORDS)
+    : raw
+        .query<NoteRow, [string, number, number, number]>(
+          `SELECT * FROM numeric_notes
+           WHERE entity_name = ? AND pool_id IS NULL AND created_at BETWEEN ? AND ?
+             AND verification_status != 'superseded' AND tier IN ('fact','reflection','skill')
+           ORDER BY id DESC LIMIT ?`,
+        )
+        .all(scope.name, since, until, REGION_MAX_RECORDS);
+}
+
+/** Legacy note ids served in the window: to the owner, or (a pool) to any member. */
+function servedIn(db: MarinaDB, scope: DreamScope, since: number, until: number): number[] {
+  const raw = db.memoryRepository().raw;
+  const ids =
+    scope.kind === "pool"
+      ? raw
+          .query<{ item_id: string }, [number, number, string, number]>(
+            `SELECT DISTINCT item_id FROM memory_served
+             WHERE served_at BETWEEN ? AND ?
+               AND item_id IN (SELECT CAST(id AS TEXT) FROM notes WHERE pool_id = ?)
+             LIMIT ?`,
+          )
+          .all(since, until, scope.poolId, REGION_MAX_RECORDS)
+          .map((r) => r.item_id)
+      : itemsServedTo(raw, scope.name, since, until, REGION_MAX_RECORDS).map((i) => i.itemId);
+  return ids.filter((id) => /^\d+$/.test(id)).map(Number);
+}
+
+/** Serve counts in the window and citation counts, per item, as the scope sees them. */
+function useEvidence(
+  db: MarinaDB,
+  scope: DreamScope,
+  since: number,
+  until: number,
+): { serves: Map<string, number>; cited: Map<string, number> } {
+  const raw = db.memoryRepository().raw;
+  const serves = new Map<string, number>();
+  const cited = new Map<string, number>();
+  if (scope.kind === "pool") {
+    for (const row of raw
+      .query<{ item_id: string; n: number }, [number, number, string]>(
+        `SELECT item_id, count(*) AS n FROM memory_served
+         WHERE served_at BETWEEN ? AND ?
+           AND item_id IN (SELECT CAST(id AS TEXT) FROM notes WHERE pool_id = ?)
+         GROUP BY item_id`,
+      )
+      .all(since, until, scope.poolId))
+      serves.set(row.item_id, row.n);
+    for (const row of raw
+      .query<{ item_id: string; n: number }, [string]>(
+        `SELECT item_id, count(*) AS n FROM memory_ratings
+         WHERE rater = 'citation'
+           AND item_id IN (SELECT CAST(id AS TEXT) FROM notes WHERE pool_id = ?)
+         GROUP BY item_id`,
+      )
+      .all(scope.poolId))
+      cited.set(row.item_id, row.n);
+    return { serves, cited };
+  }
+  for (const row of raw
+    .query<{ item_id: string; n: number }, [string, number, number]>(
+      `SELECT item_id, count(*) AS n FROM memory_served
+       WHERE entity_name = ? AND served_at BETWEEN ? AND ? GROUP BY item_id`,
+    )
+    .all(scope.name, since, until))
+    serves.set(row.item_id, row.n);
+  for (const row of raw
+    .query<{ item_id: string; n: number }, [string]>(
+      `SELECT item_id, count(*) AS n FROM memory_ratings
+       WHERE rater = 'citation' AND rater_entity = ? GROUP BY item_id`,
+    )
+    .all(scope.name))
+    cited.set(row.item_id, row.n);
+  return { serves, cited };
+}
+
 export function gatherRegion(
   db: MarinaDB,
   entityName: string,
   since: number,
   until = Date.now(),
 ): DreamRegion {
-  const raw = db.memoryRepository().raw;
-  const written = raw
-    .query<NoteRow, [string, number, number, number]>(
-      `SELECT * FROM numeric_notes
-       WHERE entity_name = ? AND pool_id IS NULL AND created_at BETWEEN ? AND ?
-         AND verification_status != 'superseded' AND tier IN ('fact','reflection','skill')
-       ORDER BY id DESC LIMIT ?`,
-    )
-    .all(entityName, since, until, REGION_MAX_RECORDS);
+  const scope = scopeOf(db, entityName);
+  const empty: DreamRegion = {
+    entityName,
+    since,
+    until,
+    records: [],
+    outcomes: { total: 0, succeeded: 0, failed: 0 },
+    newRecords: 0,
+    procedures: [],
+    hash: "",
+    bytes: 0,
+  };
+  if (!scope) return empty;
+  const written = writtenIn(db, scope, since, until);
   const newRecords = written.length;
   const byId = new Map<number, NoteRow>(written.map((n) => [n.id, n]));
-  // Served legacy notes (numeric item ids) that the owner wrote: part of the region too.
-  const served = itemsServedTo(raw, entityName, since, until, REGION_MAX_RECORDS);
-  for (const item of served) {
-    if (!/^\d+$/.test(item.itemId)) continue;
-    const id = Number(item.itemId);
+  // Served records of the scope: part of the region too.
+  for (const id of servedIn(db, scope, since, until)) {
     if (byId.has(id)) continue;
     const note = db.getNote(id);
-    if (
-      !note ||
-      note.entity_name !== entityName ||
-      note.pool_id != null ||
-      note.verification_status === "superseded" ||
-      !FACT_LIKE.includes(note.tier)
-    )
+    if (!liveFactLike(note)) continue;
+    if (scope.kind === "pool" ? note.pool_id !== scope.poolId : note.entity_name !== scope.name)
       continue;
+    if (scope.kind === "entity" && note.pool_id != null) continue;
     byId.set(id, note);
   }
   const ids = [...byId.keys()].sort((a, b) => b - a);
-  const serves = new Map<string, number>();
-  for (const row of raw
-    .query<{ item_id: string; n: number }, [string, number, number]>(
-      `SELECT item_id, count(*) AS n FROM memory_served
-       WHERE entity_name = ? AND served_at BETWEEN ? AND ? GROUP BY item_id`,
-    )
-    .all(entityName, since, until))
-    serves.set(row.item_id, row.n);
-  const cited = new Map<string, number>();
-  for (const row of raw
-    .query<{ item_id: string; n: number }, [string]>(
-      `SELECT item_id, count(*) AS n FROM memory_ratings
-       WHERE rater = 'citation' AND rater_entity = ? GROUP BY item_id`,
-    )
-    .all(entityName))
-    cited.set(row.item_id, row.n);
+  const { serves, cited } = useEvidence(db, scope, since, until);
   const posterior = usefulnessPosterior(
-    raw,
+    db.memoryRepository().raw,
     ids.map((id) => String(id)),
   );
 
@@ -110,8 +191,16 @@ export function gatherRegion(
       ratings: p?.n ?? 0,
     });
   }
-  const outcomes = db.listOutcomes({ owner: entityName, since, limit: 200 });
-  const succeeded = outcomes.filter((o) => o.succeeded === 1).length;
+  // Outcomes: the owner's, or every record author's (a pool).
+  const owners =
+    scope.kind === "pool" ? [...new Set(ids.map((id) => byId.get(id)!.entity_name))] : [scope.name];
+  let total = 0;
+  let succeeded = 0;
+  for (const owner of owners) {
+    const outcomes = db.listOutcomes({ owner, since, limit: 200 });
+    total += outcomes.length;
+    succeeded += outcomes.filter((o) => o.succeeded === 1).length;
+  }
   const hash = createHash("sha256")
     .update(JSON.stringify(records.map((r) => [r.id, r.createdAt])))
     .digest("hex")
@@ -121,9 +210,10 @@ export function gatherRegion(
     since,
     until,
     records,
-    outcomes: { total: outcomes.length, succeeded, failed: outcomes.length - succeeded },
+    outcomes: { total, succeeded, failed: total - succeeded },
     newRecords,
-    procedures: gatherProcedures(db, entityName, since, until),
+    procedures: scope.kind === "pool" ? [] : gatherProcedures(db, entityName, since, until),
+    ...(scope.kind === "pool" ? { pool: { id: scope.poolId, name: scope.name } } : {}),
     hash,
     bytes,
   };

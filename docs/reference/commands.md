@@ -7433,7 +7433,7 @@ Effect: execute.
 ## pool
 
 Shared memory pools for collaborative knowledge.
-Usage: pool create <name> [group <groupName>] | pool <name> add <text> [importance:N] | pool <name> recall|list|status|audit|ratify | pool list
+Usage: pool create <name> [group <groupName>] | pool <name> add <text> [importance:N] | pool <name> recall|list|status|audit|ratify|dream | pool list
   (importance also as trailing `importance N` or `!N`; `ls` = list)
 
 Examples:
@@ -7447,6 +7447,8 @@ Examples:
   pool guide ratify 42 importance 8 verified against the command registry
 
 Institutional pools (guide, orchestration:*, tradition:*): on a shared instance `add` files a proposal (importance capped at 4, unverified) until someone with standing >= 15 (rank 2), a sovereign, or the local operator runs `pool <name> ratify <noteId> [importance N] [rationale]` — which lifts the cap, marks it verified, and mirrors it into the institutional durable space.
+
+Dreaming over a pool: `pool <name> dream` is the consolidation pass over the pool's shared records (merges, links, decays); every op it proposes waits for a ratifier — standing >= 15, a sovereign, or the local operator, who wrote none of the notes it touches — `pool <name> dream proposals|ratify <id> [n]|dismiss|rollback <id>`.
 
 Category: Memory. Minimum rank: 0.
 Aliases: none.
@@ -7488,6 +7490,68 @@ Effect: write.
 Effect: read.
 
 - `field-0` (`name`): text, required.
+
+### `pool <name> dream`
+
+Effect: read.
+
+- `field-0` (`name`): text, required.
+
+### `pool <name> dream now`
+
+Effect: write.
+
+- `field-0` (`name`): text, required.
+
+### `pool <name> dream dry-run`
+
+Effect: read.
+
+- `field-0` (`name`): text, required.
+
+### `pool <name> dream log`
+
+Effect: read.
+
+- `field-0` (`name`): text, required.
+
+### `pool <name> dream show <id>`
+
+Effect: read.
+
+- `field-0` (`name`): text, required.
+- `field-1` (`id`): text, required.
+
+### `pool <name> dream proposals`
+
+Effect: read.
+
+- `field-0` (`name`): text, required.
+
+### `pool <name> dream ratify <id> [n]`
+
+Effect: write.
+
+- `field-0` (`name`): text, required.
+- `field-1` (`id`): text, required.
+- `field-2` (`n`): number, optional group `option-0`.
+- Group `option-0`: `n`.
+
+### `pool <name> dream dismiss <id> [n]`
+
+Effect: write.
+
+- `field-0` (`name`): text, required.
+- `field-1` (`id`): text, required.
+- `field-2` (`n`): number, optional group `option-0`.
+- Group `option-0`: `n`.
+
+### `pool <name> dream rollback <id>`
+
+Effect: write.
+
+- `field-0` (`name`): text, required.
+- `field-1` (`id`): text, required.
 
 ### `pool <name> status`
 
