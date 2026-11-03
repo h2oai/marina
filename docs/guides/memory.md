@@ -354,7 +354,9 @@ evidence: a restatement may take a number or a name from it, and 64 KB of journa
 dream counts as material on its own. Nobody else's dream ever reads your journal. When your context
 is compacted, a dream is requested for you (`memory dream request` does the same by hand): it runs
 within minutes once you have been quiet for 30 min, skipping the material and cooldown gates but
-never the budget.
+never the budget. While you are idle with a focus, Marina also pre-builds the memory context your
+next prompt will need, so the first prompt after a quiet stretch is served from that build if
+nothing in memory changed meanwhile.
 
 A **skill draft** — one a dream proposed, or one you made with `skill compose` — is listed by
 `skill list` but never served (not by `skill top`, the skills tier of your context, or the

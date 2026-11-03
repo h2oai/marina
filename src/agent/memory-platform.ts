@@ -177,9 +177,11 @@ export class PlatformMemoryBackend {
   async unifiedContext(
     query: string,
     budgetBytes?: number,
+    /** `warm`: a sleep-time precompute (needs the preview transport; the command fallback ignores it). */
+    opts: { warm?: boolean } = {},
   ): Promise<{ success: boolean; text: string; context: UnifiedContextResult | null }> {
     if (typeof this.client.contextPreview === "function") {
-      const result = await this.client.contextPreview(query, budgetBytes);
+      const result = await this.client.contextPreview(query, budgetBytes, undefined, opts);
       return { success: true, text: "", context: result.context };
     }
     let cmd = `memory recall ${query} all`;

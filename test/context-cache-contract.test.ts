@@ -50,8 +50,11 @@ test("cache metrics start empty; normalized reads share retrieval but never muta
     hits: 0,
     misses: 0,
     invalidations: 0,
+    precomputed: 0,
+    precomputedHits: 0,
     limit: 128,
     maxAgeMs: 5000,
+    precomputeMaxAgeMs: 6 * 60 * 60 * 1000,
   });
   const first = await read();
   first.degraded.push({ tier: "evidence", code: "caller", message: "caller mutation" });

@@ -1167,7 +1167,7 @@ export async function buildUnifiedContext(
   const valueMode = advisoryMode(env.MARINA_MEMORY_CONTEXT_VALUE);
   const valueOptions = { ...deps.valueOptions, env };
   // The cache key carries the EFFECTIVE settings (env included), never a provider object.
-  const { relevanceGate: _gate, surface: _surface, ...rest } = opts;
+  const { relevanceGate: _gate, surface: _surface, precompute, ...rest } = opts;
   const keyed: UnifiedContextOptions & { relevanceGateKey?: unknown; valueKey?: unknown } = {
     ...rest,
     search,
@@ -1182,8 +1182,14 @@ export async function buildUnifiedContext(
         }
       : {}),
   };
-  const result = await cachedContext(db, entityName, query, keyed, () =>
-    retrieveUnifiedContext(db, entityName, query, opts, search, gate, valueMode, valueOptions),
+  const result = await cachedContext(
+    db,
+    entityName,
+    query,
+    keyed,
+    () =>
+      retrieveUnifiedContext(db, entityName, query, opts, search, gate, valueMode, valueOptions),
+    { precompute: precompute === true },
   );
   if (result.valueDecision)
     persistDecisionReceipt(

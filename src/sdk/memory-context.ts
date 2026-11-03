@@ -112,6 +112,12 @@ export interface UnifiedContextOptions {
   /** Pay authors of cross-author reflection hits in the legacy tiers (default true). */
   creditReflections?: boolean;
   /**
+   * A sleep-time precompute: an idle agent pre-building its prompt context for
+   * its focus. The result is cached for hours (revision-checked on every hit)
+   * instead of seconds; never part of the cache key.
+   */
+  precompute?: boolean;
+  /**
    * Durable record search: `lexical` (FTS5) or `hybrid` (lexical + the vector
    * index; needs `MARINA_MEMORY_EMBEDDINGS`, degradation labelled). Default
    * `MARINA_MEMORY_CONTEXT_SEARCH`, else `lexical`.

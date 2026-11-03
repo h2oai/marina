@@ -696,6 +696,8 @@ export class MarinaClient {
     query: string,
     budgetBytes = 2048,
     signal?: AbortSignal,
+    /** `warm`: a sleep-time precompute — the server caches the build for the next prompt. */
+    opts: { warm?: boolean } = {},
   ): Promise<{ context: UnifiedContextResult; createdAt: number }> {
     if (!this.session) return Promise.reject(new Error("Not connected."));
     if (signal?.aborted) return Promise.reject(signal.reason);
@@ -732,7 +734,11 @@ export class MarinaClient {
       this.on("disconnect", disconnected);
       signal?.addEventListener("abort", disconnected, { once: true });
       try {
-        this.send({ type: "context_preview", request_id, options: { query, budgetBytes } });
+        this.send({
+          type: "context_preview",
+          request_id,
+          options: { query, budgetBytes, ...(opts.warm ? { warm: true } : {}) },
+        });
       } catch (error) {
         cleanup();
         reject(error);

@@ -3414,6 +3414,7 @@ export class LeanAgentAdapter implements AgentHandle {
         // event wakes the waiter; the long heartbeat still looks around.
         if (this.idleSkipReason()) {
           this.idleCycles++;
+          this.precomputeFocusContext();
           continue;
         }
 
@@ -4041,6 +4042,25 @@ export class LeanAgentAdapter implements AgentHandle {
    * same "nothing needs your attention" text replayed over the whole history.
    * Crew responders and bound coders are handled by their own paths.
    */
+  /**
+   * Sleep-time precompute (the dreaming plan §4.8): on the first idle cycle of
+   * a stretch, an agent with a standing focus — never a crew responder — asks
+   * the server to pre-build the prompt context it will need next (the same
+   * query and budget as the prompt build), cached for hours and revision-
+   * checked (src/memory/context-cache.ts). Fire-and-forget; a failure costs
+   * nothing but the warm.
+   */
+  private precomputeFocusContext(): void {
+    if (this.idleCycles !== 1 || !this.focus || this.crewResponderMode) return;
+    const query = this.focus.description;
+    const budget = relevantMemoryBudgetBytes(this.continuationBudgetBytes());
+    void this.platformMemory
+      .unifiedContext(query, budget, { warm: true })
+      .catch((error) =>
+        this.log.debug("agent", `Sleep-time precompute skipped: ${getErrorMessage(error)}`),
+      );
+  }
+
   private idleSkipReason(now = Date.now()): "idle" | "resting" | null {
     if (this.crewResponderMode || this.activeCodingTask) return null;
     if (this.outstandingRequests.size > 0) return null;

@@ -7,17 +7,29 @@ import type { UnifiedContextOptions, UnifiedContextResult } from "../sdk/memory-
 
 export const CONTEXT_CACHE_LIMIT = 128;
 export const CONTEXT_CACHE_TTL_MS = 5_000;
+/**
+ * Sleep-time precompute (the dreaming plan §4.8, Letta's predictable case):
+ * an idle agent with a standing focus pre-builds its prompt context once per
+ * idle stretch and the entry lives this long — served by the next prompt
+ * build while the memory revision is unchanged (every hit still rechecks the
+ * revision and the temporal bounds; a write to memory invalidates it as any
+ * entry). Measured by `contextCacheStats().precomputedHits`.
+ */
+export const CONTEXT_PRECOMPUTE_TTL_MS = 6 * 60 * 60 * 1000;
 interface Entry {
   revision: string;
   created: number;
   until: number;
   result: UnifiedContextResult;
+  precomputed?: true;
 }
 interface Cache {
   entries: Map<string, Entry>;
   hits: number;
   misses: number;
   invalidations: number;
+  precomputed: number;
+  precomputedHits: number;
 }
 const caches = new WeakMap<MarinaDB, Cache>();
 
@@ -28,8 +40,12 @@ export function contextCacheStats(db: MarinaDB) {
     hits: cache?.hits ?? 0,
     misses: cache?.misses ?? 0,
     invalidations: cache?.invalidations ?? 0,
+    /** Entries stored by a sleep-time precompute, and prompt builds they served. */
+    precomputed: cache?.precomputed ?? 0,
+    precomputedHits: cache?.precomputedHits ?? 0,
     limit: CONTEXT_CACHE_LIMIT,
     maxAgeMs: CONTEXT_CACHE_TTL_MS,
+    precomputeMaxAgeMs: CONTEXT_PRECOMPUTE_TTL_MS,
   };
 }
 
@@ -42,12 +58,21 @@ export async function cachedContext(
   query: string,
   options: UnifiedContextOptions,
   retrieve: () => Promise<UnifiedContextResult>,
+  /** `precompute`: store the result for CONTEXT_PRECOMPUTE_TTL_MS (an idle agent's sleep-time build). */
+  opts: { precompute?: boolean } = {},
 ): Promise<UnifiedContextResult> {
   const raw = db.memoryRepository().raw;
   if (raw.inTransaction) return retrieve();
   let cache = caches.get(db);
   if (!cache) {
-    cache = { entries: new Map(), hits: 0, misses: 0, invalidations: 0 };
+    cache = {
+      entries: new Map(),
+      hits: 0,
+      misses: 0,
+      invalidations: 0,
+      precomputed: 0,
+      precomputedHits: 0,
+    };
     caches.set(db, cache);
   }
   const { creditReflections: _credit, ...retrievalOptions } = options;
@@ -57,6 +82,16 @@ export async function cachedContext(
   const entry = cache.entries.get(key);
   if (entry && entry.revision === revision && now >= entry.created && now < entry.until) {
     cache.hits++;
+    if (entry.precomputed && !opts.precompute) cache.precomputedHits++;
+    // A warm over a fresh ordinary entry keeps it for the precompute's lifetime.
+    if (opts.precompute && !entry.precomputed) {
+      entry.precomputed = true;
+      entry.until = Math.min(
+        entry.created + CONTEXT_PRECOMPUTE_TTL_MS,
+        contextDeadline(raw, entry.created),
+      );
+      cache.precomputed++;
+    }
     cache.entries.delete(key);
     cache.entries.set(key, entry);
     return structuredClone(entry.result);
@@ -69,7 +104,8 @@ export async function cachedContext(
   for (let attempt = 0; attempt < 3; attempt++) {
     const before = contextRevision(raw);
     const created = Date.now();
-    const until = Math.min(created + CONTEXT_CACHE_TTL_MS, contextDeadline(raw, created));
+    const ttl = opts.precompute ? CONTEXT_PRECOMPUTE_TTL_MS : CONTEXT_CACHE_TTL_MS;
+    const until = Math.min(created + ttl, contextDeadline(raw, created));
     const result = await retrieve();
     // Only a write during retrieval invalidates the snapshot (retry it).
     if (before !== contextRevision(raw)) continue;
@@ -88,7 +124,14 @@ export async function cachedContext(
       // Expired/invalidated entries should not retain private content unnecessarily.
       for (const [id, cached] of cache.entries)
         if (cached.revision !== before || finished >= cached.until) cache.entries.delete(id);
-      cache.entries.set(key, { revision: before, created, until, result: structuredClone(result) });
+      cache.entries.set(key, {
+        revision: before,
+        created,
+        until,
+        result: structuredClone(result),
+        ...(opts.precompute ? { precomputed: true as const } : {}),
+      });
+      if (opts.precompute) cache.precomputed++;
       while (cache.entries.size > CONTEXT_CACHE_LIMIT)
         cache.entries.delete(cache.entries.keys().next().value!);
     }
