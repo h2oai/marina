@@ -24,10 +24,12 @@
  *     op for a ratifier (`pool <name> dream ratify`).
  *
  * Schedule gates (the `memory-dream` tick job): material (≥ DREAM_MIN_NEW own
- * records since the last dream), quiet (no tool call for DREAM_IDLE_MS),
- * cooldown (≥ DREAM_COOLDOWN_MS since the last dream), budget (the daily cap
- * not reached and under DREAM_WORLD_CAP_SHARE of it spent). `memory dream now`
- * skips material, quiet and cooldown; nothing ever skips budget.
+ * records OR ≥ DREAM_MIN_JOURNAL_BYTES journaled since the last dream), quiet
+ * (no tool call for DREAM_IDLE_MS), cooldown (≥ DREAM_COOLDOWN_MS since the
+ * last dream), budget (the daily cap not reached and under
+ * DREAM_WORLD_CAP_SHARE of it spent). `memory dream now` skips material, quiet
+ * and cooldown; a compaction request (`request.ts`, trigger `compaction`)
+ * waives material and cooldown; nothing ever skips budget.
  */
 
 import { createHash } from "node:crypto";
@@ -39,10 +41,12 @@ import type { MarinaDB } from "../../persistence/database";
 import { type ApplyResult, applyOps, fileProposals } from "./apply";
 import { checkOps, opIds } from "./check";
 import { guardTripped } from "./guard";
+import { DREAM_MIN_JOURNAL_BYTES, journalBytesSince } from "./journal";
 import { dreamJudgeApplies, recordDreamOpinions } from "./judge";
 import { probePlan } from "./probe";
 import { proposeOps } from "./propose";
 import { gatherRegion } from "./region";
+import { clearRequest, pendingRequest, pendingRequests } from "./request";
 import { poolScopeName, scopeOf } from "./scope";
 import type {
   DreamChecks,
@@ -164,12 +168,17 @@ export function scheduleGate(
   now = Date.now(),
 ): string | undefined {
   const last = db.lastDreamAt(entityName);
-  if (last !== undefined && now - last < DREAM_COOLDOWN_MS)
+  // A compaction request (request.ts) waives cooldown and material; quiet and budget stay.
+  const requested = pendingRequest(db, entityName, now) !== undefined;
+  if (!requested && last !== undefined && now - last < DREAM_COOLDOWN_MS)
     return `cooldown: last dream ${Math.round((now - last) / 60_000)} min ago`;
   const since = last ?? now - DREAM_FIRST_WINDOW_MS;
   const fresh = newRecordsSince(db, entityName, since);
-  if (fresh < DREAM_MIN_NEW)
-    return `material: ${fresh} new records since the last dream (needs ${DREAM_MIN_NEW})`;
+  if (!requested && fresh < DREAM_MIN_NEW) {
+    const journaled = journalBytesSince(db, entityName, since);
+    if (journaled < DREAM_MIN_JOURNAL_BYTES)
+      return `material: ${fresh} new records and ${Math.round(journaled / 1024)} KB journaled since the last dream (needs ${DREAM_MIN_NEW} or ${DREAM_MIN_JOURNAL_BYTES / 1024} KB)`;
+  }
   const active = lastActivityAt(db, entityName);
   if (active !== undefined && now - active < DREAM_IDLE_MS)
     return `quiet: last tool call ${Math.round((now - active) / 60_000)} min ago`;
@@ -245,7 +254,11 @@ export async function runDream(
   const last = db.lastDreamAt(entityName);
   const since = last ?? now - DREAM_FIRST_WINDOW_MS;
   const region = gatherRegion(db, entityName, since, now);
-  if (region.records.length === 0) return { ...base, skipped: "no records in the window" };
+  if (region.records.length === 0) {
+    // A request over an empty window is met: nothing to dream about.
+    if (trigger !== "dry-run") clearRequest(db, entityName);
+    return { ...base, skipped: "no records in the window" };
+  }
 
   let complete = deps.complete;
   let model = deps.model;
@@ -363,6 +376,7 @@ export async function runDream(
       spendUsd,
       createdAt: now,
     });
+    clearRequest(db, entityName);
     if (applied) {
       db.updateDream(id, { appliedAt: now });
       if (view)
@@ -387,6 +401,29 @@ export async function runDream(
   // One transaction around apply, record and proposals: a dream is either
   // wholly on disk or not at all. (A dry view rolls its savepoint back inside.)
   return commit ? db.transaction(finish) : finish();
+}
+
+/**
+ * Requested dreams (request.ts): every entity with a pending compaction
+ * request that has been quiet for DREAM_IDLE_MS, under the budget gate; the
+ * request waived material and cooldown. Runs every few minutes.
+ */
+export async function runRequestedDreams(
+  db: MarinaDB,
+  deps: DreamDeps = {},
+): Promise<DreamSummary[]> {
+  const env = deps.env ?? process.env;
+  if (dreamingMode(env) === "off") return [];
+  const now = deps.now ?? Date.now();
+  const out: DreamSummary[] = [];
+  for (const request of pendingRequests(db, now)) {
+    const active = lastActivityAt(db, request.entityName);
+    if (active !== undefined && now - active < DREAM_IDLE_MS) continue;
+    const summary = await runDream(db, request.entityName, "compaction", { ...deps, env, now });
+    out.push(summary);
+    if (summary.skipped?.startsWith("budget:")) break;
+  }
+  return out;
 }
 
 /** The scheduled pass: every candidate through its gates, one dream each at most. */

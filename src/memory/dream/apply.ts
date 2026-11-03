@@ -29,6 +29,7 @@ import { parseDreamJson } from "../../persistence/db-memory-dreams";
 import { shingleSimilarity } from "../near-duplicate";
 import { coversProcedure, skillContent, skillSlug } from "../skill-draft";
 import { faithfulTo, leavingIds, MERGE_MIN_OVERLAP, opIds, SUPERSEDE_MAX_CHARS } from "./check";
+import { gatherEpisodes } from "./journal";
 import { settleDreamOp, settleRolledBack } from "./judge";
 import type { ProbePlan } from "./probe";
 import { probeHit } from "./probe";
@@ -51,6 +52,8 @@ export const DECAY_STEP = 2;
 export const PROPOSAL_OWNER = "memory:dream";
 /** A proposal nobody adopted or dismissed is dropped after this long. */
 export const PROPOSAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** How far back an adoption re-reads the owner's journal for a restatement's sources (the first-dream window). */
+export const DREAM_WINDOW_FOR_ADOPT_MS = 7 * 24 * 60 * 60 * 1000;
 
 type PriorStatus = "unverified" | "disputed";
 
@@ -525,7 +528,18 @@ export function adoptProposal(
   }
   if (proposal.text.length > SUPERSEDE_MAX_CHARS)
     return { ok: false, reason: `text over ${SUPERSEDE_MAX_CHARS} characters` };
-  const sources = [target!, ...refs.map((r) => r!)].map((note) => note.content).join("\n");
+  // The same sources the dream had: the notes as they are now, and the
+  // owner's episodes of the dream's window (the journal is immutable).
+  const episodes = gatherEpisodes(
+    db,
+    entityName,
+    dream.created_at - DREAM_WINDOW_FOR_ADOPT_MS,
+    dream.created_at,
+  ).episodes;
+  const sources = [
+    ...[target!, ...refs.map((r) => r!)].map((note) => note.content),
+    ...episodes.map((e) => e.text),
+  ].join("\n");
   if (!faithfulTo(proposal.text, sources)) {
     dismissProposal(db, entityName, dreamId, n, "stale");
     return {

@@ -426,6 +426,7 @@ Each recipe auto-creates: memory pool, group (with channel + board), project wit
 > skill share 1 team-pool            Share a skill to a knowledge pool
 > skill compose 1 2 3                Compose a DRAFT skill from existing ones (not served until validated)
 > skill trial 4 role:scout           Validate a skill in a child world: role with it vs without; a win promotes a draft
+> memory dream request               Ask for a dream once you are quiet (material and cooldown waived; a compaction does this for you)
 > skill import ./path/to/SKILL.md    Import a markdown skill package
 > skill builtin [name]               Skills shipped with the server (quantitative-estimates, intake-triage,
                                      decompose-multihop, solve-math, answer-request, chronicling,

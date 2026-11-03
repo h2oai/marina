@@ -10,6 +10,7 @@
 
 import type { Complete } from "../../model/reply";
 import { extractJsonValue } from "../../repair/output-repair";
+import { renderEpisodes } from "./journal";
 import {
   DREAM_LINK_RELATIONS,
   type DreamLinkRelation,
@@ -32,6 +33,7 @@ export const DREAM_SYSTEM_PROMPT = [
   '  {"op":"link","from":N,"to":N,"relation":"related_to|supports|contradicts|derived_from|part_of","reason":"..."}',
   '  {"op":"decay","id":N,"reason":"..."} — served repeatedly, never used; only when the evidence says so.',
   '  {"op":"propose-skill","procedure":"<key>","name":"short-name","description":"when to use it, one sentence","reason":"..."} — ONLY over a procedure listed under Procedures (the same command sequence ran in two or more successful tasks and no skill covers it). You name and describe it; its steps are fixed.',
+  "Episodes, when shown, are the agent's own recent journal: a restatement may take a number or a name from them; they are never notes to merge, link or decay.",
   "Rules: prefer doing nothing over a doubtful change. Never merge notes that differ in a number, date, name or outcome — that difference is the point. Never touch verified notes. At most 32 ops. Reasons are one short sentence.",
 ].join("\n");
 
@@ -47,6 +49,7 @@ export function regionPrompt(region: DreamRegion): string {
       `#${r.id} [${r.tier}/${r.noteType} imp=${r.importance}${r.verified ? " verified" : ""} age=${age}h served=${r.serves} cited=${r.cited} mean=${r.mean.toFixed(2)}] ${r.content.replace(/\s+/g, " ")}`,
     );
   }
+  lines.push(...renderEpisodes(region.episodes));
   if (region.procedures.length) {
     lines.push(
       `Procedures (command sequences repeated across successful tasks, none covered by a skill; propose-skill names one by key):`,

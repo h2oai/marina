@@ -286,6 +286,39 @@ CREATE INDEX idx_memory_ratings_item ON memory_ratings(item_id, created_at);`,
 );
 CREATE INDEX idx_memory_dreams_entity ON memory_dreams(entity_name, created_at);`,
   },
+  // The compaction-event trigger (src/memory/dream/request.ts): a dream may
+  // be triggered by the agent's context compaction. SQLite cannot widen a
+  // CHECK in place, so the table is rebuilt with its rows and index.
+  {
+    version: 190,
+    sql: `CREATE TABLE memory_dreams_v2 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_name TEXT NOT NULL,
+  trigger TEXT NOT NULL CHECK(trigger IN ('schedule','command','dry-run','compaction')),
+  mode TEXT NOT NULL CHECK(mode IN ('off','observe','on')),
+  state TEXT NOT NULL CHECK(state IN ('observed','applied','rolled_back')),
+  region_hash TEXT NOT NULL,
+  region_count INTEGER NOT NULL,
+  region_new INTEGER NOT NULL,
+  region_bytes INTEGER NOT NULL,
+  ops_json TEXT NOT NULL,
+  rejected_json TEXT NOT NULL,
+  probes_json TEXT NOT NULL,
+  checks_json TEXT NOT NULL,
+  model TEXT,
+  spend_usd REAL NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  applied_at INTEGER,
+  rolled_back_at INTEGER
+);
+INSERT INTO memory_dreams_v2 SELECT id, entity_name, trigger, mode, state, region_hash, region_count,
+  region_new, region_bytes, ops_json, rejected_json, probes_json, checks_json, model, spend_usd,
+  created_at, applied_at, rolled_back_at FROM memory_dreams;
+DROP INDEX IF EXISTS idx_memory_dreams_entity;
+DROP TABLE memory_dreams;
+ALTER TABLE memory_dreams_v2 RENAME TO memory_dreams;
+CREATE INDEX idx_memory_dreams_entity ON memory_dreams(entity_name, created_at);`,
+  },
 ];
 
 /** Migration 172 body — self-contained so later edits elsewhere never change it. */

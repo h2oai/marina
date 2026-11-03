@@ -6378,6 +6378,13 @@ Effect: read.
 Effect: read.
 
 
+### `memory dream request [reason]`
+
+Effect: write.
+
+- `field-0` (`reason`): text, optional group `option-0`.
+- Group `option-0`: `reason`.
+
 ### `memory dream brief`
 
 Effect: read.
