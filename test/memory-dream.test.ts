@@ -115,7 +115,7 @@ describe("the dream pass (observe)", () => {
   const note = (i: number) => ids[i]!;
 
   it("gathers the owner's own live fact-like records with use evidence, never text in the hash", () => {
-    const region = gatherRegion(db, "Ada", now - 24 * HOUR, now + 1000);
+    const region = gatherRegion(db, "Ada", now - 24 * HOUR, now + HOUR);
     expect(region.records.map((r) => r.id).sort((a, b) => a - b)).toEqual(
       [...ids].sort((a, b) => a - b),
     );
@@ -128,7 +128,7 @@ describe("the dream pass (observe)", () => {
     const prompt = regionPrompt(region);
     expect(prompt).toContain(`#${note(0)}`);
     expect(prompt).toContain("served=5");
-    expect(gatherRegion(db, "Bea", now - 24 * HOUR, now + 1000).records).toEqual([]);
+    expect(gatherRegion(db, "Bea", now - 24 * HOUR, now + HOUR).records).toEqual([]);
   });
 
   it("parses ops and turns malformed ones into rejections", () => {
@@ -155,7 +155,7 @@ describe("the dream pass (observe)", () => {
   });
 
   it("checks: region, taint, coverage, faithfulness, evidence and preservation", () => {
-    const region = gatherRegion(db, "Ada", now - 24 * HOUR, now + 1000);
+    const region = gatherRegion(db, "Ada", now - 24 * HOUR, now + HOUR);
     const ops: DreamOp[] = [
       // two genuine near-duplicates: accepted
       { op: "merge", keep: note(0), into: [note(1)], reason: "same port note" },
@@ -325,7 +325,7 @@ describe("the dream pass (observe)", () => {
     const model = stubModel(JSON.stringify({ ops: [] }));
     {
       using _state = scopeProcessState({ env: { MARINA_DREAMING: undefined } });
-      const dry = await runDream(db, "Ada", "dry-run", { complete: model.complete, now });
+      const dry = await runDream(db, "Ada", "dry-run", { complete: model.complete, now: now + HOUR });
       expect(dry.state).toBe("dry-run");
       expect(dry.checks?.accepted).toBe(0);
       expect(db.listDreams("Ada")).toEqual([]);
@@ -336,10 +336,10 @@ describe("the dream pass (observe)", () => {
     {
       using _state = scopeProcessState({ env: { MARINA_DREAMING: "off" } });
       expect(dreamingMode()).toBe("off");
-      const off = await runDream(db, "Ada", "command", { complete: model.complete, now });
+      const off = await runDream(db, "Ada", "command", { complete: model.complete, now: now + HOUR });
       expect(off).toMatchObject({ state: "skipped", skipped: "MARINA_DREAMING=off" });
       expect(model.calls).toHaveLength(1);
-      expect(await runDreamSchedule(db, { complete: model.complete, now })).toEqual([]);
+      expect(await runDreamSchedule(db, { complete: model.complete, now: now + HOUR })).toEqual([]);
     }
   });
 
