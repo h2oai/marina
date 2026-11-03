@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import {
   CONTEXT_CACHE_LIMIT,
   CONTEXT_CACHE_TTL_MS,
+  CONTEXT_PRECOMPUTE_TTL_MS,
   cachedContext,
   contextCacheStats,
 } from "../src/memory/context-cache";
@@ -251,4 +252,50 @@ test("a racing retrieval that settles can return and cache its final snapshot", 
   expect(attempts).toBe(3);
   await read();
   expect(calls).toBe(0);
+});
+
+test("sleep-time precompute: a warm build lives for hours, counts the prompt builds it serves, and a warm over a fresh entry extends it", async () => {
+  const warm = () => cachedContext(db, "Ada", "port", {}, fresh, { precompute: true });
+  // Stored as a precompute: counted once, no hit yet.
+  await warm();
+  expect(calls).toBe(1);
+  expect(contextCacheStats(db).precomputed).toBe(1);
+  expect(contextCacheStats(db).precomputedHits).toBe(0);
+  // Another warm is a hit, not a served prompt build.
+  await warm();
+  expect(calls).toBe(1);
+  expect(contextCacheStats(db).precomputedHits).toBe(0);
+  expect(contextCacheStats(db).precomputed).toBe(1);
+  // Well past the ordinary TTL the prompt build is still served from it, and counted.
+  now += CONTEXT_CACHE_TTL_MS + 1;
+  await read();
+  expect(calls).toBe(1);
+  expect(contextCacheStats(db).precomputedHits).toBe(1);
+  // Past the precompute TTL it is gone: an ordinary rebuild, nothing precomputed about it.
+  now += CONTEXT_PRECOMPUTE_TTL_MS;
+  await read();
+  expect(calls).toBe(2);
+  expect(contextCacheStats(db).precomputed).toBe(1);
+  await read();
+  expect(calls).toBe(2);
+  expect(contextCacheStats(db).precomputedHits).toBe(1);
+  // A warm over that fresh ordinary entry extends it instead of rebuilding.
+  await warm();
+  expect(calls).toBe(2);
+  expect(contextCacheStats(db).precomputed).toBe(2);
+  expect(contextCacheStats(db).precomputedHits).toBe(1);
+  now += CONTEXT_CACHE_TTL_MS + 1;
+  await read();
+  expect(calls).toBe(2);
+  expect(contextCacheStats(db).precomputedHits).toBe(2);
+  now += CONTEXT_PRECOMPUTE_TTL_MS;
+  await read();
+  expect(calls).toBe(3);
+  // A memory write invalidates a precomputed entry like any other.
+  await warm();
+  expect(calls).toBe(3);
+  change();
+  await read();
+  expect(calls).toBe(4);
+  expect(contextCacheStats(db).precomputedHits).toBe(2);
 });
