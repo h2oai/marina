@@ -36,6 +36,8 @@ import type { Complete } from "../../model/reply";
 import type { MarinaDB } from "../../persistence/database";
 import { type ApplyResult, applyOps, fileProposals } from "./apply";
 import { checkOps, opIds } from "./check";
+import { guardTripped } from "./guard";
+import { dreamJudgeApplies, recordDreamOpinions } from "./judge";
 import { probePlan } from "./probe";
 import { proposeOps } from "./propose";
 import { gatherRegion } from "./region";
@@ -214,7 +216,11 @@ export async function runDream(
   const checked = checkOps(proposed.ops, region);
   const rejected = [...proposed.rejected, ...checked.rejected];
   const plan = probePlan(db, region, checked.accepted);
-  const commit = mode === "on" && trigger !== "dry-run";
+  // The utility-curve guard (guard.ts) holds a tripped agent at observe.
+  const guarded = mode === "on" && guardTripped(db, entityName);
+  const commit = mode === "on" && trigger !== "dry-run" && !guarded;
+  // An earned dreamer (judge.ts, MARINA_DREAM_JUDGE=on) applies restatements at once.
+  const applySupersedes = commit && dreamJudgeApplies(db, model, "supersede", env);
   let accepted = checked.accepted;
   let stored: StoredDreamOp[] = accepted.map(storedOp);
   let view: ApplyResult | undefined;
@@ -225,13 +231,19 @@ export async function runDream(
     // Apply (or dry-apply) the set and re-run the probes on the result. A set
     // that loses a probe is rejected whole — fail closed — whatever the mode.
     if (accepted.length) {
-      view = applyOps(db, entityName, accepted, stored, plan, { commit });
+      view = applyOps(db, entityName, accepted, stored, plan, { commit, applySupersedes });
       if (view.lost.length) {
         const lost = `probe-after: #${view.lost.join(", #")} no longer retrievable once the set is applied`;
         for (const op of accepted) rejected.push({ op: op.op, ids: opIds(op), reason: lost });
         accepted = [];
         stored = [];
-      } else stored = view.ops;
+      } else {
+        // What the store refused on contact leaves the accepted set with its reason.
+        const drop = new Set(view.skipped.map((s) => s.n));
+        for (const s of view.skipped) rejected.push(s.rejected);
+        accepted = accepted.filter((_, n) => !drop.has(n));
+        stored = view.ops.filter((_, n) => !drop.has(n));
+      }
     }
     const probes = view?.probes ?? plan.probes;
     const applied = commit && stored.some((o) => o.applied || (o.op === "supersede" && o.proposal));
@@ -284,6 +296,7 @@ export async function runDream(
     if (applied) {
       db.updateDream(id, { appliedAt: now });
       if (view) proposals = fileProposals(db, entityName, id, view.proposals, now);
+      recordDreamOpinions(db, id, model, stored, now);
     }
     const appliedCount = stored.filter((o) => o.applied).length;
     db.appendChronicle({
@@ -292,7 +305,7 @@ export async function runDream(
       title: "memory.dream",
       body: applied
         ? `${entityName}: ${appliedCount} op(s) applied over ${checks.regionSize} record(s), ${proposals} restatement(s) proposed, ${checks.rejected} rejected, ${checks.leaving} left the active set; memory dream rollback ${id} reverses it`
-        : `${entityName}: ${checks.accepted} op(s) proposed over ${checks.regionSize} record(s), ${checks.rejected} rejected, ${checks.leaving} would leave the active set; observed, nothing applied`,
+        : `${entityName}: ${checks.accepted} op(s) proposed over ${checks.regionSize} record(s), ${checks.rejected} rejected, ${checks.leaving} would leave the active set; observed, nothing applied${guarded ? " (guard: dreaming paused for this agent)" : ""}`,
       participants: [entityName],
       refs: [`dream:${id}`],
     });

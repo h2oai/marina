@@ -28,12 +28,12 @@ import { unknownSubcommand } from "../parse-input";
 export const JUDGE_USAGE = `Usage:
   judge stats [challenge|verify|attention|outcome|arbiter]`;
 
-const SURFACES = ["challenge", "verify", "attention", "outcome", "arbiter"] as const;
+const SURFACES = ["challenge", "verify", "attention", "outcome", "dream", "arbiter"] as const;
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
 function modeLine(env: NodeJS.ProcessEnv): string {
-  const parts = (["challenge", "verify", "attention", "outcome"] as const).map((s) => {
+  const parts = (["challenge", "verify", "attention", "outcome", "dream"] as const).map((s) => {
     const m = judgeModeFor(s, env);
     return `${s} ${m.mode}${m.variable ? ` (${m.variable})` : ""}`;
   });
@@ -41,7 +41,7 @@ function modeLine(env: NodeJS.ProcessEnv): string {
 }
 
 function standingLine(s: JudgeStanding): string {
-  const name = `${s.surface}${s.question && s.surface === "challenge" ? `/${s.question}` : ""}`;
+  const name = `${s.surface}${s.question && (s.surface === "challenge" || s.surface === "dream") ? `/${s.question}` : ""}`;
   const rate = s.compared ? pct(s.agreed / s.compared) : "n/a";
   const bound =
     s.rule === "arbiter-precision" ? `precision ${pct(s.lower)}` : `lower ${pct(s.lower)}`;
@@ -97,7 +97,7 @@ export function judgeCommand(deps: {
     name: "judge",
     aliases: [],
     minRank: 0,
-    help: `Every judge's record against ground truth, from the one judge ledger.\n${JUDGE_USAGE}\nMARINA_JUDGE=off|observe|on sets every judge surface; a surface's own variable (MARINA_CHALLENGE_JUDGE, MARINA_DECISION_VERIFY, MARINA_ATTENTION_JUDGE, MARINA_OUTCOME_JUDGE) overrides it. \`on\` lets only an earned judge act.`,
+    help: `Every judge's record against ground truth, from the one judge ledger.\n${JUDGE_USAGE}\nMARINA_JUDGE=off|observe|on sets every judge surface; a surface's own variable (MARINA_CHALLENGE_JUDGE, MARINA_DECISION_VERIFY, MARINA_ATTENTION_JUDGE, MARINA_OUTCOME_JUDGE, MARINA_DREAM_JUDGE) overrides it. \`on\` lets only an earned judge act.`,
     handler: async (ctx: RoomContext, input) => {
       const tokens = (input.args?.trim() ?? "").split(/\s+/).filter(Boolean);
       const sub = (tokens[0] ?? "stats").toLowerCase();

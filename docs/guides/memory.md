@@ -346,6 +346,14 @@ Dreams
 the last dream did and what awaits you. `memory consolidate` is the same command under its plain
 name. `MARINA_DREAMING=off` turns the pass off.
 
+Dreams are measured, not trusted. Every op an applied dream carried is a judged opinion settled by
+what you do next — adopt or keep it (a pass), dismiss or roll it back (a fail) — and `judge stats
+dream` shows the dreamer's record per op kind; a dreamer that has earned restatements may, with
+`MARINA_DREAM_JUDGE=on`, apply them at once instead of asking. A guard watches your work: if your
+task success falls after two dreams in a row, your dreams drop back to observe until an operator
+clears it (`memory dream guard`). `memory dream measure` reads task success after your dreams
+against before, split into discovery and holdout.
+
 ## Usefulness: What Memory Was Served
 
 Every time memory reaches you — the continuation prompt, `recall … all|evidence`, `context`, MCP,

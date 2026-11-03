@@ -10,7 +10,7 @@ import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
 import { proposeUpstreamModelSeeds } from "../learned/upstream-model-seeds";
 import { flushWorkLessons } from "../learning/work";
-import { runDreamSchedule } from "../memory/dream";
+import { assessDreams, runDreamSchedule, settleQuietDreams } from "../memory/dream";
 import { settleUnusedServes } from "../memory/usefulness";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model/model-api";
@@ -331,9 +331,9 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
 
   // Hourly (own phase): the dream pass (src/memory/dream). Per candidate
   // entity, the schedule gates — material, quiet, cooldown, budget — then one
-  // dream: gather, probe, propose on the cheap tier, check, record. In
-  // `observe` (default) nothing is applied; the record and one chronicle
-  // event are the output. Async model calls never block the tick.
+  // dream: gather, probe, propose on the cheap tier, check, apply on a dry
+  // view, probe again, record. In `observe` (default) nothing stays applied;
+  // in `on` the auto-tier ops do. Async model calls never block the tick.
   s.register({
     name: "memory-dream",
     every: NOTE_IMPORTANCE_INTERVAL,
@@ -341,6 +341,11 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     failureMessage: "Memory dream pass failed",
     run: async () => {
       if (!host.db) return;
+      // Last night's verdicts first: applied ops nobody rolled back settle
+      // as passes (judge.ts); dreams with enough work after them are
+      // assessed by the utility-curve guard (guard.ts).
+      settleQuietDreams(host.db);
+      assessDreams(host.db);
       const dreams = await runDreamSchedule(host.db);
       const ran = dreams.filter((d) => d.state !== "skipped");
       if (ran.length)

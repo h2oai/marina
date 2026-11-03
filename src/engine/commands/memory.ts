@@ -4,9 +4,14 @@
 import { memoryResult } from "../../memory/command-result";
 import {
   adoptProposal,
+  assessmentOf,
+  clearGuard,
   dismissProposal,
+  dreamEffect,
   dreamingMode,
+  guardState,
   pendingProposals,
+  renderDreamEffect,
   rollbackDream,
   runDream,
 } from "../../memory/dream";
@@ -28,6 +33,7 @@ import type { CommandDef, Entity, RoomContext } from "../../types";
 import { COMMAND_FAMILIES } from "../command-families";
 import { refuseCommand } from "../command-response";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
+import { rankFloorRefusal } from "../rank-floor";
 import { requiresPersistence } from "./command-messages";
 import { CONTEXT_USAGE } from "./context";
 import { DEBRIEF_USAGE } from "./debrief";
@@ -96,7 +102,7 @@ const USEFULNESS_MAX_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const USEFULNESS_USAGE =
   "Usage: memory usefulness [window]   e.g. memory usefulness 7d · memory usefulness 24h (default 7d, max 90d)";
 const DREAM_USAGE =
-  "Usage: memory dream [now|dry-run|log|show <id>|proposals|adopt <id> [n]|dismiss <id> [n]|rollback <id>]   now — run your consolidation pass (budget permitting; schedule gates skipped) · dry-run — same, recorded nowhere · log — your dreams · show <id> — one dream's ops, rejections and probes (ids and counts, never text) · proposals — restatements a dream filed for you · adopt/dismiss — take or drop one · rollback <id> — reverse an applied dream";
+  "Usage: memory dream [now|dry-run|log|show <id>|proposals|adopt <id> [n]|dismiss <id> [n]|rollback <id>|measure [all]|guard [clear <entity>]]   now — run your consolidation pass (budget permitting; schedule gates skipped) · dry-run — same, recorded nowhere · log — your dreams · show <id> — one dream's ops, rejections and probes (ids and counts, never text) · proposals — restatements a dream filed for you · adopt/dismiss — take or drop one · rollback <id> — reverse an applied dream · measure — task success after your dreams vs before (all: everyone's, operator) · guard — the utility-curve guard's state (clear <entity>: operator)";
 const VOTE_USAGE =
   "Usage: memory useful <note id|record id> · memory useless <note id|record id>   (an item served to you in the last 7 days; one vote per item per day)";
 
@@ -233,6 +239,9 @@ export function memoryCommand(deps: {
       { syntax: "memory dream adopt <id> [n]", effect: "write" },
       { syntax: "memory dream dismiss <id> [n]", effect: "write" },
       { syntax: "memory dream rollback <id>", effect: "write" },
+      { syntax: "memory dream measure [all]", effect: "read" },
+      { syntax: "memory dream guard", effect: "read" },
+      { syntax: "memory dream guard clear <entity>", effect: "write" },
       { syntax: "memory consolidate", effect: "read" },
       { syntax: "memory usefulness [window]", effect: "read" },
       { syntax: "memory useful <id>", effect: "write" },
@@ -253,7 +262,7 @@ export function memoryCommand(deps: {
       `${KV_USAGE}\n${MEMORY_FAMILY_HELP}\n` +
       "memory usefulness [window]  what memory was served to you (per surface, arm, tier; most-served items and the evidence on them)\n" +
       "memory useful <id> · memory useless <id>  rate an item you were served (half-weight evidence, once per item per day)\n" +
-      "memory dream [now|dry-run|log|show <id>|proposals|adopt|dismiss|rollback]  the consolidation pass over your own records: merges, links and decays it applied (or, in observe, would apply), restatements it proposed for you to adopt, every rejection's reason; rollback reverses an applied dream (alias: memory consolidate)\n\n" +
+      "memory dream [now|dry-run|log|show <id>|proposals|adopt|dismiss|rollback]  the consolidation pass over your own records: merges, links and decays it applied (or, in observe, would apply), restatements it proposed for you to adopt, every rejection's reason; rollback reverses an applied dream; measure reads task success after dreams vs before; guard shows the utility-curve guard (alias: memory consolidate)\n\n" +
       `${MEMORY_KV_HELP}\n\n` +
       `${MEMORY_WHICH_VERB}\n\n` +
       MEMORY_SERVICE_HELP +
@@ -391,6 +400,8 @@ async function runDreamCommand(
       "adopt",
       "dismiss",
       "rollback",
+      "measure",
+      "guard",
     ]) ?? "log";
   const mode = dreamingMode();
   const dreamId = () => {
@@ -494,6 +505,70 @@ async function runDreamCommand(
       entityId,
       `Adopted: note #${out.newId} supersedes #${out.oldId}. memory dream rollback ${row.id} reverses the whole dream.`,
     );
+    return;
+  }
+  if (verb === "measure") {
+    const all = tokens[1]?.toLowerCase() === "all";
+    if (all) {
+      const floor = rankFloorRefusal(
+        entity,
+        9,
+        "memory dream measure all is an operator's readout.",
+      );
+      if (floor) {
+        refuseCommand(ctx, entityId, floor);
+        return;
+      }
+    }
+    const effect = dreamEffect(db, all ? {} : { owner: entity.name });
+    ctx.send(
+      entityId,
+      [
+        header(all ? "Dream effect — everyone" : "Dream effect — your dreams"),
+        separator(),
+        ...renderDreamEffect(effect),
+        "",
+        dim(
+          "Applied dreams with K resolved outcomes on each side; older half = discovery, newer half = holdout; the verdict reads the holdout against the fishing margin.",
+        ),
+      ].join("\n"),
+    );
+    return;
+  }
+  if (verb === "guard") {
+    if (tokens[1]?.toLowerCase() === "clear") {
+      const target = tokens[2];
+      const floor = rankFloorRefusal(entity, 9, "memory dream guard clear is an operator's act.");
+      if (floor) {
+        refuseCommand(ctx, entityId, floor);
+        return;
+      }
+      if (!target) {
+        refuseCommand(ctx, entityId, "Usage: memory dream guard clear <entity>");
+        return;
+      }
+      if (!clearGuard(db, target)) {
+        refuseCommand(ctx, entityId, `The guard is not tripped for ${target}.`);
+        return;
+      }
+      ctx.send(entityId, `Guard cleared for ${target}: its dreams may apply again.`);
+      return;
+    }
+    const state = guardState(db, entity.name);
+    const lines = [header("Dream guard"), separator()];
+    lines.push(
+      state.tripped
+        ? `  tripped ${new Date(state.tripped.at).toISOString().slice(0, 16)} after ${state.consecutive} consecutive drop(s) (dreams #${state.tripped.dreams.join(", #")}): your dreams run in observe until an operator clears it`
+        : `  not tripped · ${state.consecutive} consecutive drop(s) so far`,
+    );
+    const last = state.lastAssessedDreamId
+      ? assessmentOf(db, state.lastAssessedDreamId)
+      : undefined;
+    if (last)
+      lines.push(
+        `  last assessed: dream #${last.dreamId} — ${Math.round(last.after.rate * 100)}% success over ${last.after.n} outcomes after vs ${Math.round(last.before.rate * 100)}% over ${last.before.n} before${last.drop ? " (drop)" : ""}`,
+      );
+    ctx.send(entityId, lines.join("\n"));
     return;
   }
   if (verb === "proposals") {
@@ -611,6 +686,8 @@ function probesLine(c: DreamChecks): string {
 export function dreamBriefLine(db: MarinaDB, entityName: string, now = Date.now()): string {
   const row = db.listDreams(entityName, 1)[0];
   const pending = pendingProposals(db, entityName, now);
+  if (guardState(db, entityName).tripped)
+    return `dreaming is paused for you (task success fell after two dreams; memory dream guard)${pending.length ? ` · ${pending.length} restatement(s) await you: memory dream proposals` : ""}`;
   if (!row || now - row.created_at > 24 * 60 * 60 * 1000) {
     return pending.length
       ? `${pending.length} restatement(s) await you: memory dream proposals`

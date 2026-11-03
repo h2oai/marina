@@ -5404,7 +5404,7 @@ Effect: write.
 Every judge's record against ground truth, from the one judge ledger.
 Usage:
   judge stats [challenge|verify|attention|outcome|arbiter]
-MARINA_JUDGE=off|observe|on sets every judge surface; a surface's own variable (MARINA_CHALLENGE_JUDGE, MARINA_DECISION_VERIFY, MARINA_ATTENTION_JUDGE, MARINA_OUTCOME_JUDGE) overrides it. `on` lets only an earned judge act.
+MARINA_JUDGE=off|observe|on sets every judge surface; a surface's own variable (MARINA_CHALLENGE_JUDGE, MARINA_DECISION_VERIFY, MARINA_ATTENTION_JUDGE, MARINA_OUTCOME_JUDGE, MARINA_DREAM_JUDGE) overrides it. `on` lets only an earned judge act.
 
 Category: System. Minimum rank: 0.
 Aliases: none.
@@ -5916,7 +5916,7 @@ Family: memory note <text> · memory recall <query> [evidence|all] · memory ref
 (bare note, recall, reflect, recap, debrief, context are aliases; `help memory full` lists every form)
 memory usefulness [window]  what memory was served to you (per surface, arm, tier; most-served items and the evidence on them)
 memory useful <id> · memory useless <id>  rate an item you were served (half-weight evidence, once per item per day)
-memory dream [now|dry-run|log|show <id>|proposals|adopt|dismiss|rollback]  the consolidation pass over your own records: merges, links and decays it applied (or, in observe, would apply), restatements it proposed for you to adopt, every rejection's reason; rollback reverses an applied dream (alias: memory consolidate)
+memory dream [now|dry-run|log|show <id>|proposals|adopt|dismiss|rollback]  the consolidation pass over your own records: merges, links and decays it applied (or, in observe, would apply), restatements it proposed for you to adopt, every rejection's reason; rollback reverses an applied dream; measure reads task success after dreams vs before; guard shows the utility-curve guard (alias: memory consolidate)
 
 Key-value beliefs (core memory — mutable, per-entity, NOT the durable record store):
   memory kv list                        your keys (bare `memory list` = same)
@@ -6404,6 +6404,23 @@ Effect: write.
 Effect: write.
 
 - `field-0` (`id`): text, required.
+
+### `memory dream measure [all]`
+
+Effect: read.
+
+- Group `option-0`: `all`.
+
+### `memory dream guard`
+
+Effect: read.
+
+
+### `memory dream guard clear <entity>`
+
+Effect: write.
+
+- `field-0` (`entity`): text, required.
 
 ### `memory consolidate`
 

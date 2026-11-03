@@ -13,6 +13,26 @@ export {
 } from "./apply";
 export { checkOps, leavingIds, opIds } from "./check";
 export {
+  assessDream,
+  assessDreams,
+  assessmentOf,
+  clearGuard,
+  GUARD_K,
+  GUARD_MARGIN,
+  GUARD_TRIP_AFTER,
+  guardState,
+  guardTripped,
+} from "./guard";
+export {
+  DREAM_SETTLE_MS,
+  dreamJudgeApplies,
+  dreamJudgeName,
+  recordDreamOpinions,
+  settleDreamOp,
+  settleQuietDreams,
+} from "./judge";
+export { dreamEffect, MEASURE_MIN, renderDreamEffect } from "./measure";
+export {
   budgetGate,
   DREAM_COOLDOWN_MS,
   DREAM_IDLE_MS,
