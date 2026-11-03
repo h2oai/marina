@@ -342,6 +342,17 @@ describe("continuation prompt clamps", () => {
     expect(correlationTagsIn(line)).toEqual(["[re:abc123]"]);
   });
 
+  it("a clamped direct message says how to read it whole", () => {
+    const line = clampPerceptionLine(`[message] Critic tells you: ${"z".repeat(3000)}`, true, 6568);
+    expect(line.length).toBeLessThan(PERCEPTION_DETAIL_MAX_CHARS + 80);
+    expect(line).toMatch(/\[…\+\d+ chars\] \[read it whole: tell read 6568\]$/);
+    // A line that fits carries no pointer; a line with no stored message carries none either.
+    expect(clampPerceptionLine("[message] Critic tells you: short", true, 6568)).toBe(
+      "[message] Critic tells you: short",
+    );
+    expect(clampPerceptionLine(`[message] ${"z".repeat(3000)}`, true)).not.toContain("tell read");
+  });
+
   it("gives model_request payloads the larger clamp so the question survives", () => {
     const payload = `[channel] ${JSON.stringify({ type: "model_request", id: "r1", content: "q".repeat(5000) })}`;
     const line = clampPerceptionLine(payload);

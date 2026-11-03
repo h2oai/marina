@@ -141,10 +141,11 @@ export function tellCommand(deps: TellDeps): CommandDef {
       { syntax: "tell ack <id>", effect: "write" },
       { syntax: "tell inbox", effect: "read" },
       { syntax: "tell status <id>", effect: "read" },
+      { syntax: "tell read <id>", effect: "read" },
     ],
     name: "tell",
     aliases: ["whisper", "msg"],
-    help: "Send durable private messages with delivery receipts. Usage: tell <entity> [ttl:30s] <message> | tell inbox | tell status <id> | tell ack <id>\n(ttl also accepts --ttl 30s / --ttl=30s; units 30s, 5m, 2h, 1d)",
+    help: "Send durable private messages with delivery receipts. Usage: tell <entity> [ttl:30s] <message> | tell inbox | tell read <id> | tell status <id> | tell ack <id>\n(ttl also accepts --ttl 30s / --ttl=30s; units 30s, 5m, 2h, 1d)",
     handler: (ctx: RoomContext, input) => {
       const sender = deps.getEntity(input.entity);
       if (!sender) return;
@@ -162,6 +163,30 @@ export function tellCommand(deps: TellDeps): CommandDef {
                     `#${row.id} ${row.status} from ${row.sender_name}: ${row.content.slice(0, 100)}`,
                 )
                 .join("\n"),
+        );
+        return;
+      }
+      if (sub === "read") {
+        // The whole stored message: a tell reaches its reader as a prompt
+        // line bounded to the perception budget, so a long handoff is cut;
+        // the line says so and names this command.
+        const id = Number(input.tokens[1]);
+        if (!Number.isInteger(id) || !deps.db) {
+          refuseCommand(ctx, input.entity, "Usage: tell read <id>");
+          return;
+        }
+        const row = deps.db.getDirectMessage(id);
+        if (!row) {
+          refuseCommand(ctx, input.entity, `Message #${id} not found.`);
+          return;
+        }
+        if (row.sender_id !== input.entity && row.target_id !== input.entity) {
+          refuseCommand(ctx, input.entity, `Message #${id} is private.`);
+          return;
+        }
+        ctx.send(
+          input.entity,
+          `#${row.id} from ${row.sender_name} to ${row.target_name} (${row.status}):\n${row.content}`,
         );
         return;
       }

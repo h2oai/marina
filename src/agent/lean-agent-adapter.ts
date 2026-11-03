@@ -682,7 +682,14 @@ export function runCapWarningAt(cap: number): number {
   return budgetSteerAt(cap);
 }
 
-export function clampPerceptionLine(text: string, addressed = false): string {
+/**
+ * One perception line, bounded for the prompt. A clamped line says how much
+ * was cut and, for a stored direct message, how to read it whole (`tell read
+ * <id>`): measured 2026-11-02, a reviewer's 1,800-character verdict reached
+ * its reader as 1,200 characters with no way to recover the rest, and the
+ * two then spent a cycle reconciling what each had seen.
+ */
+export function clampPerceptionLine(text: string, addressed = false, readRef?: number): string {
   const isModelRequest = text.includes('"type":"model_request"');
   const body = text.replace(/^\[(?:message|broadcast|movement)\]\s*/, "");
   const detailed = addressed || body.startsWith("{") || body.startsWith("[");
@@ -698,7 +705,8 @@ export function clampPerceptionLine(text: string, addressed = false): string {
   // A tellAndAwait tag rides at the END of the ask — keep it visible so the
   // responder can echo it even when the body was cut.
   const lost = correlationTagsIn(text).filter((tag) => !clamped.includes(tag));
-  return lost.length > 0 ? `${clamped} ${lost.join(" ")}` : clamped;
+  const withTags = lost.length > 0 ? `${clamped} ${lost.join(" ")}` : clamped;
+  return readRef !== undefined ? `${withTags} [read it whole: tell read ${readRef}]` : withTags;
 }
 
 /** Correlation tags present in a perception line, in order, deduped. */
@@ -1414,6 +1422,8 @@ export class LeanAgentAdapter implements AgentHandle {
     /** Monotonic per-adapter id — the key of `deliveredViaSteer`. */
     id?: number;
     requestId?: string;
+    /** The stored direct message behind a tell (`tell read <id>` returns it whole when the line is clamped). */
+    messageId?: number;
     text: string;
     priority: number;
     shouldRespond?: boolean;
@@ -2763,6 +2773,7 @@ export class LeanAgentAdapter implements AgentHandle {
             this.pendingPerceptions.push({
               id: perceptionId,
               requestId,
+              ...(typeof p.data?.messageId === "number" ? { messageId: p.data.messageId } : {}),
               text: `[${p.kind}] ${text}${decision.marker}`,
               priority,
               shouldRespond: respond,
@@ -4343,7 +4354,7 @@ export class LeanAgentAdapter implements AgentHandle {
       let firstOverflow = batch.length;
       for (let i = 0; i < batch.length; i++) {
         const event = batch[i]!;
-        const clamped = clampPerceptionLine(event.text, event.shouldRespond);
+        const clamped = clampPerceptionLine(event.text, event.shouldRespond, event.messageId);
         const cost = Buffer.byteLength(clamped, "utf8") + 5;
         if (topEvents.length >= this.perceptionBufferCap || eventBytes + cost > eventBudget) {
           // Always surface at least one event, even a huge one, so nothing
@@ -6125,9 +6136,12 @@ export class LeanAgentAdapter implements AgentHandle {
       }
       if (checkpoint.currentGoal) sections.push(`- Goal: ${checkpoint.currentGoal}`);
       if (checkpoint.location) sections.push(`- Location: ${checkpoint.location}`);
-      if (Array.isArray(checkpoint.recentActions) && checkpoint.recentActions.length > 0) {
-        sections.push(`- Recent: ${(checkpoint.recentActions as string[]).slice(-3).join(", ")}`);
-      }
+      // The checkpoint's last actions are deliberately NOT shown: a resumed
+      // agent told "Recent: memory get focus, memory get rest, …" re-enacts
+      // the routine instead of the state (measured 2026-11-02: three of four
+      // agents re-ran their last turn's reads on every restart). What it knows
+      // — focus, loop preferences, owed replies, the journal pointers above —
+      // is what it resumes from.
       return sections.join("\n");
     } catch {
       return "";
