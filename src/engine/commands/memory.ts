@@ -102,7 +102,7 @@ const USEFULNESS_MAX_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const USEFULNESS_USAGE =
   "Usage: memory usefulness [window]   e.g. memory usefulness 7d · memory usefulness 24h (default 7d, max 90d)";
 const DREAM_USAGE =
-  "Usage: memory dream [now|dry-run|log|show <id>|proposals|adopt <id> [n]|dismiss <id> [n]|rollback <id>|measure [all]|guard [clear <entity>]]   now — run your consolidation pass (budget permitting; schedule gates skipped) · dry-run — same, recorded nowhere · log — your dreams · show <id> — one dream's ops, rejections and probes (ids and counts, never text) · proposals — restatements a dream filed for you · adopt/dismiss — take or drop one · rollback <id> — reverse an applied dream · measure — task success after your dreams vs before (all: everyone's, operator) · guard — the utility-curve guard's state (clear <entity>: operator)";
+  "Usage: memory dream [now|dry-run|log|show <id>|proposals|adopt <id> [n]|dismiss <id> [n]|rollback <id>|measure [all]|guard [clear <entity>]]   now — run your consolidation pass (budget permitting; schedule gates skipped) · dry-run — same, recorded nowhere · log — your dreams · show <id> — one dream's ops, rejections and probes (ids and counts, never text) · proposals — restatements and skill drafts a dream filed for you · adopt/dismiss — take or drop one · rollback <id> — reverse an applied dream · measure — task success after your dreams vs before (all: everyone's, operator) · guard — the utility-curve guard's state (clear <entity>: operator)";
 const VOTE_USAGE =
   "Usage: memory useful <note id|record id> · memory useless <note id|record id>   (an item served to you in the last 7 days; one vote per item per day)";
 
@@ -262,7 +262,7 @@ export function memoryCommand(deps: {
       `${KV_USAGE}\n${MEMORY_FAMILY_HELP}\n` +
       "memory usefulness [window]  what memory was served to you (per surface, arm, tier; most-served items and the evidence on them)\n" +
       "memory useful <id> · memory useless <id>  rate an item you were served (half-weight evidence, once per item per day)\n" +
-      "memory dream [now|dry-run|log|show <id>|proposals|adopt|dismiss|rollback]  the consolidation pass over your own records: merges, links and decays it applied (or, in observe, would apply), restatements it proposed for you to adopt, every rejection's reason; rollback reverses an applied dream; measure reads task success after dreams vs before; guard shows the utility-curve guard (alias: memory consolidate)\n\n" +
+      "memory dream [now|dry-run|log|show <id>|proposals|adopt|dismiss|rollback]  the consolidation pass over your own records: merges, links and decays it applied (or, in observe, would apply), restatements and skill drafts it proposed for you to adopt, every rejection's reason; rollback reverses an applied dream; measure reads task success after dreams vs before; guard shows the utility-curve guard (alias: memory consolidate)\n\n" +
       `${MEMORY_KV_HELP}\n\n` +
       `${MEMORY_WHICH_VERB}\n\n` +
       MEMORY_SERVICE_HELP +
@@ -443,7 +443,7 @@ async function runDreamCommand(
         summary.state === "dry-run"
           ? "Nothing recorded, nothing applied."
           : summary.state === "applied"
-            ? `Applied in one transaction; memory dream rollback ${summary.id} reverses it.${summary.proposals ? ` ${summary.proposals} restatement(s) await you: memory dream proposals.` : ""}`
+            ? `Applied in one transaction; memory dream rollback ${summary.id} reverses it.${summary.proposals ? ` ${summary.proposals} proposal(s) await you: memory dream proposals.` : ""}`
             : "Observed: recorded and chronicled, applied nowhere (MARINA_DREAMING=on applies merges, links and decays and files restatements for you).",
       ),
     ];
@@ -503,7 +503,9 @@ async function runDreamCommand(
     }
     ctx.send(
       entityId,
-      `Adopted: note #${out.newId} supersedes #${out.oldId}. memory dream rollback ${row.id} reverses the whole dream.`,
+      out.kind === "skill"
+        ? `Adopted: skill draft #${out.newId} stored (skill list shows it). It is served once validated: skill trial ${out.newId} in a child world, or a person's skill verify ${out.newId}. memory dream rollback ${row.id} reverses the whole dream.`
+        : `Adopted: note #${out.newId} supersedes #${out.oldId}. memory dream rollback ${row.id} reverses the whole dream.`,
     );
     return;
   }
@@ -579,9 +581,17 @@ async function runDreamCommand(
     }
     const lines = [header("Dream proposals"), separator()];
     for (const p of pending) {
+      if (p.kind === "skill")
+        lines.push(
+          `  dream #${p.dreamId} proposal ${p.n} — skill draft "${p.name}" from ${p.steps.length} commands repeated in tasks #${p.tasks.join(", #")}: ${p.reason}`,
+          `    ${p.description} || Actions: ${p.steps.join(" ; ")}`,
+        );
+      else
+        lines.push(
+          `  dream #${p.dreamId} proposal ${p.n} — restate #${p.id}${p.refs.length ? ` (with #${p.refs.join(", #")})` : ""}: ${p.reason}`,
+          `    ${p.text}`,
+        );
       lines.push(
-        `  dream #${p.dreamId} proposal ${p.n} — restate #${p.id}${p.refs.length ? ` (with #${p.refs.join(", #")})` : ""}: ${p.reason}`,
-        `    ${p.text}`,
         dim(
           `    memory dream adopt ${p.dreamId} ${p.n} · memory dream dismiss ${p.dreamId} ${p.n}`,
         ),
@@ -604,7 +614,9 @@ async function runDreamCommand(
     const checks = parseChecks(row.checks_json);
     const probes = parseDreamJson<DreamProbe[]>(row.probes_json, []);
     const ops = parseDreamJson<StoredDreamOp[]>(row.ops_json, []);
-    const pending = ops.filter((o) => o.op === "supersede" && o.proposal === "pending").length;
+    const pending = ops.filter(
+      (o) => (o.op === "supersede" || o.op === "propose-skill") && o.proposal === "pending",
+    ).length;
     ctx.send(
       entityId,
       [
@@ -687,19 +699,17 @@ export function dreamBriefLine(db: MarinaDB, entityName: string, now = Date.now(
   const row = db.listDreams(entityName, 1)[0];
   const pending = pendingProposals(db, entityName, now);
   if (guardState(db, entityName).tripped)
-    return `dreaming is paused for you (task success fell after two dreams; memory dream guard)${pending.length ? ` · ${pending.length} restatement(s) await you: memory dream proposals` : ""}`;
+    return `dreaming is paused for you (task success fell after two dreams; memory dream guard)${pending.length ? ` · ${pending.length} proposal(s) await you: memory dream proposals` : ""}`;
   if (!row || now - row.created_at > 24 * 60 * 60 * 1000) {
-    return pending.length
-      ? `${pending.length} restatement(s) await you: memory dream proposals`
-      : "";
+    return pending.length ? `${pending.length} proposal(s) await you: memory dream proposals` : "";
   }
   const checks = parseChecks(row.checks_json);
   const ops = parseDreamJson<StoredDreamOp[]>(row.ops_json, []);
-  const counts = { merge: 0, link: 0, decay: 0 };
+  const counts = { merge: 0, link: 0, decay: 0, "propose-skill": 0 };
   for (const op of ops) if (op.applied && op.op !== "supersede") counts[op.op]++;
   const did = Object.entries(counts)
     .filter(([, n]) => n)
-    .map(([k, n]) => `${n} ${k}${n === 1 ? "" : "s"}`)
+    .map(([k, n]) => `${n} ${k === "propose-skill" ? "skill draft" : k}${n === 1 ? "" : "s"}`)
     .join(", ");
   const head =
     row.state === "applied"
@@ -708,7 +718,7 @@ export function dreamBriefLine(db: MarinaDB, entityName: string, now = Date.now(
         ? `dream #${row.id} was rolled back`
         : `dream #${row.id} observed: ${checks.accepted} op(s) would apply, ${checks.rejected} rejected (memory dream show ${row.id})`;
   return pending.length
-    ? `${head} · ${pending.length} restatement(s) await you: memory dream proposals`
+    ? `${head} · ${pending.length} proposal(s) await you: memory dream proposals`
     : head;
 }
 
@@ -730,6 +740,11 @@ function renderOps(ops: readonly StoredDreamOp[]): string[] {
         break;
       case "decay":
         lines.push(`  decay      #${op.id} — ${op.reason}`);
+        break;
+      case "propose-skill":
+        lines.push(
+          `  skill      draft over ${op.steps} commands repeated in tasks #${op.tasks.join(", #")} (${op.textLength} chars)${op.proposal ? ` · ${op.proposal}` : ""} — ${op.reason}`,
+        );
         break;
     }
   }

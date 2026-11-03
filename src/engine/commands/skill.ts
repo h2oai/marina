@@ -14,15 +14,24 @@ import {
 } from "../../agent/skill-import";
 import { memoryAccess } from "../../memory/access";
 import { memoryNoteResults, memoryResult } from "../../memory/command-result";
+import { isSkillDraft, skillContent, skillSlug, skillSteps } from "../../memory/skill-draft";
+import { promoteSkill } from "../../memory/skill-promotion";
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { refuseCommand } from "../command-response";
+import { tryLog } from "../errors";
 import { currentEvidenceCutoffMs } from "../evidence-fence";
-import { parseModifiers } from "../parse-input";
+import { beginTrial, endTrial, type TrialDeps } from "../evolution-trial";
+import { principalOf } from "../gate-context";
+import { Logger } from "../logger";
+import { type ModifierSpec, parseModifiers } from "../parse-input";
 import { rankFloorRefusal } from "../rank-floor";
+import { checkGateForExecution, recordGateExecution } from "../safety-gates";
+import { renderSkillTrial, runSkillTrial, storedSkillTrial } from "../skill-trial";
 import { isLocalUngated } from "../trust-profile";
 import { requiresPersistence } from "./command-messages";
+import { DEFAULT_TRIAL_BENCHMARK, type TrialOptions } from "./evolve";
 import {
   auditKnowledgeNotes,
   type CommandVocabulary,
@@ -42,11 +51,28 @@ export function clipBytes(text: string, max: number): string {
   return `${(at > cut.length / 2 ? cut.slice(0, at) : cut).trimEnd()} …`;
 }
 
+const SKILL_TRIAL_MODS: ModifierSpec = {
+  role: { type: "string" },
+  benchmark: { type: "string" },
+  limit: { type: "int" },
+  seed: { type: "int" },
+  model: { type: "string" },
+  timeout: { type: "duration" },
+};
+
+/** What a draft needs before it is served; said wherever a draft is made or met. */
+export const draftNotice = (id: number) =>
+  `A draft is not served until validated: skill trial ${id} (child or parallel world) or a person's skill verify ${id}.`;
+
 export function skillCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
   logEvent?: (event: EngineEvent) => void;
   getCommandVocabulary?: () => CommandVocabulary;
+  /** The parts a `skill trial` runs on (shared with `evolve trial`); undefined when the world lacks them. */
+  trialDeps?: (opts: TrialOptions) => TrialDeps | undefined;
+  benchmarkReady?: (name: string) => boolean;
+  trackBackground?: (work: Promise<unknown>) => void;
 }): CommandDef {
   return {
     category: "Memory",
@@ -64,10 +90,18 @@ export function skillCommand(deps: {
       { syntax: "skill store <name> | <desc> | <actions>", effect: "write" },
       { syntax: "skill store <name> | <description> | <action_sequence>", effect: "write" },
       { syntax: "skill verify <id>", effect: "write" },
+      {
+        syntax:
+          "skill trial <id> [role:<role>] [benchmark:<name>] [limit:<n>] [seed:<n>] [model:<m>] [timeout:<duration>]",
+        effect: "execute",
+        description:
+          "Validate a skill: the role with it against the role without it on a benchmark (child or parallel world only); a win promotes a draft.",
+      },
+      { syntax: "skill trial <id> result", effect: "read" },
     ],
     name: "skill",
     aliases: [],
-    help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd) | skill builtin [name] (skills shipped with the server, e.g. quantitative-estimates) | skill top <query> [bytes:<n>] (the one best skill — your own first, else a built-in — clipped to a budget). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.",
+    help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd) | skill builtin [name] (skills shipped with the server, e.g. quantitative-estimates) | skill top <query> [bytes:<n>] (the one best skill — your own first, else a built-in — clipped to a budget) | skill trial <id> [role:<role>] [benchmark:<name>] (validate a skill in a child world: the role with it vs without; a win promotes a draft). A composed skill, or one a dream drafted from your repeated procedures, is a DRAFT: listed, never served, until a trial wins or a person verifies it. Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve, memory dream.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -219,7 +253,9 @@ export function skillCommand(deps: {
               weightRecency: 0.2,
               weightRelevance: 0.4,
             })
-            .find((n) => fence === undefined || n.created_at <= fence);
+            .find(
+              (n) => !isSkillDraft(n.content) && (fence === undefined || n.created_at <= fence),
+            );
           if (own) {
             ctx.send(input.entity, clipBytes(`${own.content} (own skill #${own.id})`, budget));
             return;
@@ -274,6 +310,29 @@ export function skillCommand(deps: {
             refuseCommand(ctx, input.entity, `Skill #${id} not found.`);
             return;
           }
+          if (isSkillDraft(note.content)) {
+            // A draft is a derived skill nobody has checked: a PERSON's verify
+            // or a won trial makes it servable, never an agent's own say-so.
+            if (principalOf(entity.id) !== "person" && !isLocalUngated()) {
+              refuseCommand(
+                ctx,
+                input.entity,
+                `Skill #${id} is a draft: an agent cannot verify it. ${draftNotice(id)}`,
+              );
+              return;
+            }
+            const promoted = promoteSkill(db, entity.name, id, entity.name, "skill verify");
+            if (!promoted) {
+              refuseCommand(ctx, input.entity, `Skill #${id} could not be promoted.`);
+              return;
+            }
+            ctx.send(
+              input.entity,
+              `Skill draft #${id} verified as skill #${promoted.id}: it is served now (skill list).`,
+            );
+            return;
+          }
+          promoteSkill(db, entity.name, id, entity.name, "skill verify");
           // Add a supports self-link to indicate verification
           try {
             db.createNoteLink(id, id, "supports");
@@ -344,7 +403,10 @@ export function skillCommand(deps: {
                 (l) => l.relationship === "supports" && l.target_id === n.id,
               ).length;
               const verified = verifications > 0 ? ` [verified x${verifications}]` : "";
-              return `  #${n.id} (imp=${n.importance})${verified}: ${n.content.slice(0, 70)}`;
+              const draft = isSkillDraft(n.content)
+                ? " [draft — not served: skill trial / verify]"
+                : "";
+              return `  #${n.id} (imp=${n.importance})${verified}${draft}: ${n.content.slice(0, 70)}`;
             }),
           ];
           ctx.send(input.entity, lines.join("\n"));
@@ -416,24 +478,25 @@ export function skillCommand(deps: {
             return;
           }
 
-          // Extract action sequences and compose
-          const actionParts: string[] = [];
+          // Extract action sequences and compose. The result is a DRAFT: a
+          // composition nobody has run is a claim, served once validated.
+          const steps: string[] = [];
           const nameparts: string[] = [];
           for (const s of skills) {
-            // Parse out action sequence from "[Skill: name] desc || Actions: ..."
-            const actMatch = s.content.match(/Actions:\s*(.+)/);
-            if (actMatch?.[1]) {
-              actionParts.push(actMatch[1].trim());
-            }
-            const nameMatch = s.content.match(/\[Skill:\s*([^\]]+)\]/);
+            steps.push(...skillSteps(s.content));
+            const nameMatch = s.content.match(/\[Skill(?: draft)?:\s*([^\]]+)\]/);
             if (nameMatch?.[1]) {
               nameparts.push(nameMatch[1].trim());
             }
           }
 
-          const composedName = nameparts.join(" + ") || "composed_skill";
-          const composedActions = actionParts.join(" ; ");
-          const content = `[Skill: ${composedName}] Composed from skills ${ids.map((i) => `#${i}`).join(", ")} || Actions: ${composedActions}`;
+          const composedName = skillSlug(nameparts.join(" ")) || "composed-skill";
+          const content = skillContent(
+            composedName,
+            `Composed from skills ${ids.map((i) => `#${i}`).join(", ")}`,
+            steps,
+            { draft: true },
+          );
           const maxImp = Math.min(Math.max(...skills.map((s) => s.importance)) + 1, 10);
           const newId = db.createNote(entity.name, content, undefined, {
             importance: maxImp,
@@ -469,7 +532,125 @@ export function skillCommand(deps: {
 
           ctx.send(
             input.entity,
-            `Composed skill #${newId} "${composedName}" from ${skills.length} skills (importance=${maxImp}).`,
+            `Composed skill draft #${newId} "${composedName}" from ${skills.length} skills (importance=${maxImp}). ${draftNotice(newId)}`,
+          );
+          return;
+        }
+
+        case "trial": {
+          const id = Number.parseInt(input.tokens[1] ?? "", 10);
+          if (Number.isNaN(id)) {
+            refuseCommand(
+              ctx,
+              input.entity,
+              "Usage: skill trial <id> [role:<role>] [benchmark:<name>] [limit:<n>] [seed:<n>] [model:<m>] [timeout:<duration>] | skill trial <id> result",
+            );
+            return;
+          }
+          const note = db.getNote(id);
+          if (!access.write(note) || note.note_type !== "skill") {
+            refuseCommand(ctx, input.entity, `Skill #${id} not found.`);
+            return;
+          }
+          if (input.tokens[2]?.toLowerCase() === "result") {
+            const stored = storedSkillTrial(db, entity.name, id);
+            ctx.send(
+              input.entity,
+              stored
+                ? renderSkillTrial(stored)
+                : `No finished trial recorded for skill #${id} yet.`,
+            );
+            return;
+          }
+          if (
+            process.env.MARINA_COLLECTIVE_CHILD !== "1" &&
+            process.env.MARINA_EVOLVE_TRIALS !== "here"
+          ) {
+            ctx.send(
+              input.entity,
+              "Trials run in a child or parallel world, never this one. From here: `world run <child> skill trial …` (seed the role first with `world seed-role`). A dedicated parallel world can opt in with MARINA_EVOLVE_TRIALS=here.",
+            );
+            return;
+          }
+          const trialFloor = rankFloorRefusal(
+            entity,
+            4,
+            "skill trial needs rank 4 (builder): it spawns agents and runs benchmarks, which cost real tokens.",
+          );
+          if (trialFloor) {
+            ctx.send(input.entity, trialFloor);
+            return;
+          }
+          const mods = parseModifiers(input.tokens.slice(2), SKILL_TRIAL_MODS);
+          const role =
+            (mods.values.role as string | undefined) ?? db.getAgentConfig(entity.name)?.role;
+          if (!role) {
+            refuseCommand(
+              ctx,
+              input.entity,
+              "Say which role both arms run on: skill trial <id> role:<role>.",
+            );
+            return;
+          }
+          if (!db.getRole(role)) {
+            ctx.send(
+              input.entity,
+              `Role "${role}" does not exist in this world — seed it first (\`world seed-role\` from the parent).`,
+            );
+            return;
+          }
+          const benchmark =
+            (mods.values.benchmark as string | undefined) ??
+            (deps.benchmarkReady?.(DEFAULT_TRIAL_BENCHMARK) ? DEFAULT_TRIAL_BENCHMARK : "smoke");
+          const limit =
+            (mods.values.limit as number | undefined) ?? (benchmark === "smoke" ? undefined : 100);
+          const opts: TrialOptions = {
+            benchmark,
+            ...(benchmark === "smoke" ? {} : { partition: "holdout" as const }),
+            ...(limit ? { limit } : {}),
+            ...(mods.values.seed !== undefined ? { seed: mods.values.seed as number } : {}),
+            agentModel: (mods.values.model as string | undefined) ?? "marina/default",
+            callerId: entity.id,
+          };
+          const trialDeps = deps.trialDeps?.(opts);
+          if (!trialDeps) {
+            ctx.send(
+              input.entity,
+              "Trials need the agent runtime and the benchmark runner, which this world does not have.",
+            );
+            return;
+          }
+          const gate = checkGateForExecution(db, entity.id, "agent.spawn");
+          if (!gate.ok) {
+            ctx.send(input.entity, gate.reason ?? "agent.spawn refused");
+            return;
+          }
+          if (!beginTrial()) {
+            ctx.send(input.entity, "A trial is already running in this world — one at a time.");
+            return;
+          }
+          recordGateExecution(db, entity.id, "agent.spawn", gate, `skill trial ${id}`);
+          const timeoutMs = (mods.values.timeout as number | undefined) ?? 30 * 60_000;
+          ctx.send(
+            input.entity,
+            `Skill trial started for #${id}: role ${role} with the skill vs without, on ${benchmark}${limit && benchmark !== "smoke" ? ` (${limit} items, holdout split)` : ""}, deadline ${Math.round(timeoutMs / 60_000)} min. ${isSkillDraft(note.content) ? "A win promotes the draft; results follow here." : "Results follow here."}${benchmark === "smoke" ? " Note: smoke has 15 items — too few to separate a small gain from noise." : ""}`,
+          );
+          const say = (text: string) => ctx.send(input.entity, text);
+          const work = runSkillTrial(db, trialDeps, {
+            skillId: id,
+            entityName: entity.name,
+            incumbentRole: role,
+            createdBy: entity.name,
+            benchmark,
+            timeoutMs,
+          })
+            .then((result) => say(renderSkillTrial(result)))
+            .catch((err) =>
+              say(`Skill trial #${id} failed: ${err instanceof Error ? err.message : String(err)}`),
+            )
+            .finally(() => endTrial());
+          tryLog(new Logger(), "skill", "skill trial not tracked", () =>
+            deps.trackBackground?.(work),
           );
           return;
         }

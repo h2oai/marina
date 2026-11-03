@@ -101,6 +101,21 @@ export { differenceInterval };
 
 const JOIN_TIMEOUT_MS = 60_000;
 
+let trialRunning = false;
+/** One trial per world at a time (`evolve trial`, `skill trial`): they spawn agents and spend. */
+export function trialInProgress(): boolean {
+  return trialRunning;
+}
+/** Take the world's trial slot; false when a trial is already running. */
+export function beginTrial(): boolean {
+  if (trialRunning) return false;
+  trialRunning = true;
+  return true;
+}
+export function endTrial(): void {
+  trialRunning = false;
+}
+
 /**
  * Model calls a trial agent may spend. An agent takes several turns per item
  * (read the request, think, reply, sometimes a tool), so a fixed budget runs
@@ -113,15 +128,18 @@ export function trialCallBudget(items: number): number {
 
 export async function runTrial(
   deps: TrialDeps,
-  spec: { runId: number; arms: TrialArm[]; timeoutMs: number },
+  spec: { runId: number; arms: TrialArm[]; timeoutMs: number; tag?: string },
 ): Promise<TrialResult> {
   const results: TrialArmResult[] = [];
   const started: Array<{ agent: string; channel: string }> = [];
+  // Agent and channel names carry the tag (default: the run id) so trials of
+  // different kinds never collide on a number.
+  const key = spec.tag ?? String(spec.runId);
   try {
     // Spawn and wire every arm first, so both benchmarks run concurrently.
     for (const arm of spec.arms) {
-      const agent = `trial${spec.runId}${arm.label === "candidate" ? "c" : "i"}`;
-      const channel = `model-trial-${spec.runId}-${arm.label === "candidate" ? "cand" : "inc"}`;
+      const agent = `trial${key}${arm.label === "candidate" ? "c" : "i"}`;
+      const channel = `model-trial-${key}-${arm.label === "candidate" ? "cand" : "inc"}`;
       const r: TrialArmResult = { label: arm.label, role: arm.role, agent, status: "starting" };
       results.push(r);
       try {

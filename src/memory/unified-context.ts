@@ -107,6 +107,7 @@ import {
 } from "./relevance-gate";
 import { residentMemoryOperation } from "./resident-service";
 import { expandMemoryRecall } from "./retrieval";
+import { isSkillDraft } from "./skill-draft";
 import { queryTerms, termMatcher } from "./term-match";
 
 const logger = new Logger();
@@ -658,7 +659,7 @@ function fetchLegacy(
         weightRecency: 0.2,
         weightRelevance: 0.4,
       })
-      .filter(relevant);
+      .filter((n) => relevant(n) && !isSkillDraft(n.content));
     out.items.skill = skills.map((n) => noteItem("skill", n));
   } catch (error) {
     out.degraded.push({ tier: "skill", ...errorCode(error) });
@@ -705,7 +706,9 @@ function fetchLegacyAsOf(
   const relevant = (n: { content: string }) => relevantToQuery(n.content, terms);
   try {
     const skills = fencedNoteRecall(db, entityName, query, asOf, { noteType: "skill" });
-    out.items.skill = skills.filter(relevant).map((n) => noteItem("skill", n));
+    out.items.skill = skills
+      .filter((n) => relevant(n) && !isSkillDraft(n.content))
+      .map((n) => noteItem("skill", n));
   } catch (error) {
     out.degraded.push({ tier: "skill", ...errorCode(error) });
   }

@@ -27,6 +27,8 @@ import {
 } from "../evolution-qualification";
 import {
   armBreakdown,
+  beginTrial,
+  endTrial,
   runTrial,
   type TrialArm,
   type TrialDeps,
@@ -807,7 +809,6 @@ const TRIAL_MODS: ModifierSpec = {
   model: { type: "string" },
   timeout: { type: "duration" },
 };
-let trialRunning = false;
 /** Runs whose detached replication is still spawning (one at a time per run). */
 const replicating = new Set<number>();
 const TRIAL_NOTE_TYPE = "evolve_trial";
@@ -848,7 +849,7 @@ function storedTrial(
 
 /** Test hook: trials are single-flight per world. */
 export function resetEvolveTrialForTests(): void {
-  trialRunning = false;
+  endTrial();
   replicating.clear();
 }
 
@@ -944,11 +945,10 @@ function handleTrial(
     say(gate.reason ?? "agent.spawn refused");
     return;
   }
-  if (trialRunning) {
+  if (!beginTrial()) {
     say("A trial is already running in this world — one at a time.");
     return;
   }
-  trialRunning = true;
   recordGateExecution(db, entity.id, "agent.spawn", gate, `evolve trial run ${run.id}`);
   const arms: TrialArm[] = [
     { label: "candidate", role: candidate },
@@ -980,7 +980,7 @@ function handleTrial(
       say(`Trial for run ${run.id} failed: ${err instanceof Error ? err.message : String(err)}`),
     )
     .finally(() => {
-      trialRunning = false;
+      endTrial();
     });
   deps.trackBackground?.(trial);
 }

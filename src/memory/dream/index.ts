@@ -4,11 +4,13 @@
 export {
   adoptProposal,
   applyOps,
+  createSkillDraft,
   DECAY_STEP,
   dismissProposal,
   PROPOSAL_OWNER,
   PROPOSAL_TTL_MS,
   pendingProposals,
+  procedureCovered,
   rollbackDream,
 } from "./apply";
 export { checkOps, leavingIds, opIds } from "./check";
@@ -44,6 +46,15 @@ export {
   scheduleGate,
 } from "./pass";
 export { probePlan, probeQuery, probeSpan, probesBefore } from "./probe";
+export type { ProcedureCandidate } from "./procedures";
+export {
+  commandSequence,
+  gatherProcedures,
+  PROCEDURE_MAX_STEPS,
+  PROCEDURE_MIN_STEPS,
+  PROCEDURE_MIN_TASKS,
+  procedureKey,
+} from "./procedures";
 export { DREAM_SYSTEM_PROMPT, parseOps, proposeOps, regionPrompt } from "./propose";
 export { gatherRegion } from "./region";
 export type * from "./types";

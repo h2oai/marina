@@ -5916,7 +5916,7 @@ Family: memory note <text> · memory recall <query> [evidence|all] · memory ref
 (bare note, recall, reflect, recap, debrief, context are aliases; `help memory full` lists every form)
 memory usefulness [window]  what memory was served to you (per surface, arm, tier; most-served items and the evidence on them)
 memory useful <id> · memory useless <id>  rate an item you were served (half-weight evidence, once per item per day)
-memory dream [now|dry-run|log|show <id>|proposals|adopt|dismiss|rollback]  the consolidation pass over your own records: merges, links and decays it applied (or, in observe, would apply), restatements it proposed for you to adopt, every rejection's reason; rollback reverses an applied dream; measure reads task success after dreams vs before; guard shows the utility-curve guard (alias: memory consolidate)
+memory dream [now|dry-run|log|show <id>|proposals|adopt|dismiss|rollback]  the consolidation pass over your own records: merges, links and decays it applied (or, in observe, would apply), restatements and skill drafts it proposed for you to adopt, every rejection's reason; rollback reverses an applied dream; measure reads task success after dreams vs before; guard shows the utility-curve guard (alias: memory consolidate)
 
 Key-value beliefs (core memory — mutable, per-entity, NOT the durable record store):
   memory kv list                        your keys (bare `memory list` = same)
@@ -8959,7 +8959,7 @@ Effect: write.
 
 ## skill
 
-Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd) | skill builtin [name] (skills shipped with the server, e.g. quantitative-estimates) | skill top <query> [bytes:<n>] (the one best skill — your own first, else a built-in — clipped to a budget). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.
+Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd) | skill builtin [name] (skills shipped with the server, e.g. quantitative-estimates) | skill top <query> [bytes:<n>] (the one best skill — your own first, else a built-in — clipped to a budget) | skill trial <id> [role:<role>] [benchmark:<name>] (validate a skill in a child world: the role with it vs without; a win promotes a draft). A composed skill, or one a dream drafted from your repeated procedures, is a DRAFT: listed, never served, until a trial wins or a person verifies it. Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve, memory dream.
 
 Category: Memory. Minimum rank: 0.
 Aliases: none.
@@ -9049,6 +9049,30 @@ Effect: write.
 ### `skill verify <id>`
 
 Effect: write.
+
+- `field-0` (`id`): text, required.
+
+### `skill trial <id> [role:<role>] [benchmark:<name>] [limit:<n>] [seed:<n>] [model:<m>] [timeout:<duration>]`
+
+Effect: execute.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`role`): text, optional group `option-0`.
+- `field-2` (`benchmark`): text, optional group `option-1`.
+- `field-3` (`limit`): number, optional group `option-2`.
+- `field-4` (`seed`): number, optional group `option-3`.
+- `field-5` (`model`): text, optional group `option-4`.
+- `field-6` (`timeout`): text, optional group `option-5`.
+- Group `option-0`: `role:role`.
+- Group `option-1`: `benchmark:name`.
+- Group `option-2`: `limit:n`.
+- Group `option-3`: `seed:n`.
+- Group `option-4`: `model:m`.
+- Group `option-5`: `timeout:duration`.
+
+### `skill trial <id> result`
+
+Effect: read.
 
 - `field-0` (`id`): text, required.
 
