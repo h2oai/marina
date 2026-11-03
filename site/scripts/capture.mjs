@@ -12,6 +12,8 @@
  *   node site/scripts/capture.mjs render   # ffmpeg: hero mp4 + README gif
  *   node site/scripts/capture.mjs optimize # palette PNGs for every still
  *   node site/scripts/capture.mjs stills   # more pictures of the same world: the Admin and Library tabs
+ *   node site/scripts/capture.mjs demo     # film a walkthrough of the dashboard itself (tabs, map, playback, palette)
+ *   node site/scripts/capture.mjs render-demo  # cut it into one clip per feature (mp4 + gif)
  *   node site/scripts/capture.mjs down     # stop the server (--clean: delete the run dir)
  *
  * Needs MARINA_CAPTURE_ENV_FILE: an env file with ONE provider key (and,
@@ -299,6 +301,253 @@ async function stills() {
   }
 }
 
+/**
+ * Film the dashboard being used: the chat, the command palette, the map, the
+ * canvas, narrative playback, the entity inspector, streams, admin, and a
+ * resident's page. One continuous recording with a mark at each step;
+ * `render-demo` cuts it into a clip per feature.
+ */
+async function demo() {
+  await up();
+  const dir = join(RUN, "demo-video");
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const { chromium } = await import("playwright-core");
+  const browser = await chromium.launch({ headless: true, args: ["--disable-gpu"] });
+  const marks = [];
+  const mark = (label) => {
+    marks.push({ t: Date.now(), label });
+    console.log(`${new Date().toISOString()} ${label}`);
+  };
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      deviceScaleFactor: 1,
+      colorScheme: "dark",
+      recordVideo: { dir, size: { width: 1440, height: 900 } },
+    });
+    await context.addInitScript(() => localStorage.setItem("marina-theme", "h2o"));
+    const page = await context.newPage();
+    const wait = (ms) => page.waitForTimeout(ms);
+    const tab = async (name) => {
+      const t = page.getByRole("tab", { name }).or(page.getByRole("button", { name, exact: true }));
+      await t.first().click();
+    };
+    // A command's result may open a dialog (the task snapshot, for one); nothing later can be
+    // clicked through it, so every step begins with the dialogs closed.
+    const closeDialogs = async () => {
+      for (let i = 0; i < 3; i++) {
+        const close = page
+          .getByRole("dialog")
+          .getByRole("button", { name: /^close$/i })
+          .first();
+        if (!(await close.isVisible().catch(() => false))) break;
+        await close.click();
+        await wait(400);
+      }
+      await page.keyboard.press("Escape");
+      await wait(300);
+    };
+    const step = async (label, fn) => {
+      await closeDialogs();
+      mark(label);
+      try {
+        await fn();
+      } catch (e) {
+        console.log(`  ${label}: ${String(e).split("\n")[0]}`);
+      }
+    };
+    mark("video-start");
+    await page.goto(`${BASE}/dashboard`, { waitUntil: "networkidle", timeout: 30_000 });
+    const nameBox = page.getByPlaceholder("Enter your name...");
+    if (await nameBox.isVisible().catch(() => false)) {
+      await nameBox.fill(NAME);
+      await page.getByRole("button", { name: "Connect" }).click();
+    }
+    const box = page.getByPlaceholder("Type a command...");
+    await box.waitFor({ timeout: 15_000 });
+    const dismiss = page.getByRole("button", { name: "Dismiss getting-started guide" });
+    if (await dismiss.isVisible().catch(() => false)) await dismiss.click();
+    await wait(1500);
+    await step("chat", async () => {
+      for (const c of ["look", "who", "task list completed"]) {
+        await box.click();
+        await box.pressSequentially(c, { delay: 45 });
+        await wait(400);
+        await box.press("Enter");
+        await wait(2600);
+        await closeDialogs();
+      }
+    });
+    await step("palette", async () => {
+      await page.keyboard.press("Control+K");
+      await wait(900);
+      await page.keyboard.type("task", { delay: 90 });
+      await wait(2600);
+      await page.keyboard.press("Escape");
+      await wait(600);
+    });
+    await step("map", async () => {
+      await tab("Map");
+      await wait(2200);
+      // The room nodes are SVG groups; a hover may not resolve on them, so the click is forced
+      // at the group's centre and the zoom runs whatever happened.
+      try {
+        const node = page.getByLabel("World map").locator("g[data-room-id]").first();
+        await node.click({ force: true, timeout: 4000 });
+        await wait(2600);
+      } catch {
+        // no room node reachable; the zoom still shows the map in motion
+      }
+      const zoom = page.getByRole("button", { name: "Zoom in" });
+      await zoom.click({ timeout: 4000 });
+      await wait(800);
+      await zoom.click({ timeout: 4000 });
+      await wait(1200);
+      await page.getByRole("button", { name: "Pan left" }).click({ timeout: 4000 });
+      await wait(1800);
+    });
+    await step("canvas", async () => {
+      await tab("Canvas");
+      await wait(4500);
+    });
+    await step("observe", async () => {
+      await tab("Observe");
+      await wait(2200);
+      const prev = page.getByRole("button", { name: "Previous event" });
+      for (let i = 0; i < 8; i++) {
+        await prev.click();
+        await wait(350);
+      }
+      await wait(600);
+      const play = page.getByRole("button", { name: /^play/i }).first();
+      if (await play.isVisible().catch(() => false)) await play.click();
+      await wait(7000);
+    });
+    await step("inspect", async () => {
+      await tab("Work");
+      await wait(1200);
+      await page.getByRole("button", { name: "Builder" }).first().click();
+      await wait(3500);
+    });
+    await step("streams", async () => {
+      await tab("Streams");
+      await wait(3200);
+    });
+    await step("admin", async () => {
+      await tab("Admin");
+      await wait(3200);
+    });
+    await step("who", async () => {
+      await page.goto(`${BASE}/who/Builder`, { waitUntil: "networkidle", timeout: 30_000 });
+      await wait(2500);
+      await page.mouse.wheel(0, 500);
+      await wait(2500);
+    });
+    mark("end");
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+  const video = readdirSync(dir).find((f) => f.endsWith(".webm"));
+  if (video) renameSync(join(dir, video), join(RUN, "demo.webm"));
+  writeFileSync(join(RUN, "demo-marks.json"), JSON.stringify(marks, null, 2));
+  console.log(`filmed ${RUN}/demo.webm with ${marks.length} marks`);
+}
+
+/** Cut the dashboard walkthrough into one clip per feature: mp4 for the site, gif for GitHub. */
+function renderDemo() {
+  const marks = JSON.parse(readFileSync(join(RUN, "demo-marks.json"), "utf8"));
+  const t0 = marks[0].t;
+  const src = join(RUN, "demo.webm");
+  const run = (args) => {
+    const r = spawnSync("ffmpeg", ["-y", "-loglevel", "error", ...args], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(r.stderr);
+  };
+  mkdirSync(OUT, { recursive: true });
+  const steps = marks.filter((m) => !["video-start", "end"].includes(m.label));
+  for (let i = 0; i < steps.length; i++) {
+    const start = (steps[i].t - t0) / 1000;
+    const next = marks[marks.indexOf(steps[i]) + 1];
+    const length = Math.max(1, (next.t - steps[i].t) / 1000);
+    const name = `dashboard-demo-${steps[i].label}`;
+    run([
+      "-ss",
+      String(start),
+      "-t",
+      String(length),
+      "-i",
+      src,
+      "-vf",
+      "scale=1280:-2,fps=24",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "slow",
+      "-crf",
+      "28",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart",
+      "-an",
+      join(OUT, `${name}.mp4`),
+    ]);
+    const palette = join(RUN, `${name}-palette.png`);
+    const gifWidth = Number(flags.gifWidth ?? 760);
+    const gifFps = Number(flags.gifFps ?? 6);
+    run([
+      "-ss",
+      String(start),
+      "-t",
+      String(length),
+      "-i",
+      src,
+      "-vf",
+      `fps=${gifFps},scale=${gifWidth}:-1:flags=lanczos,palettegen=max_colors=96`,
+      palette,
+    ]);
+    run([
+      "-ss",
+      String(start),
+      "-t",
+      String(length),
+      "-i",
+      src,
+      "-i",
+      palette,
+      "-lavfi",
+      `fps=${gifFps},scale=${gifWidth}:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=none`,
+      join(OUT, `${name}.gif`),
+    ]);
+    console.log(`${name}: ${length.toFixed(1)}s`);
+  }
+  const whole = (marks[marks.length - 1].t - steps[0].t) / 1000;
+  run([
+    "-ss",
+    String((steps[0].t - t0) / 1000),
+    "-t",
+    String(whole),
+    "-i",
+    src,
+    "-vf",
+    "scale=1280:-2,fps=24",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "slow",
+    "-crf",
+    "28",
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart",
+    "-an",
+    join(OUT, "dashboard-demo.mp4"),
+  ]);
+  console.log(`dashboard-demo.mp4: ${whole.toFixed(1)}s`);
+}
+
 /** ffmpeg: a short hero clip from the brief onward (mp4 for the site), and a GIF for the README. */
 function render() {
   const marks = JSON.parse(readFileSync(join(RUN, "marks.json"), "utf8"));
@@ -306,6 +555,7 @@ function render() {
   const at = (label) => (marks.find((m) => m.label === label).t - t0) / 1000;
   const start = Math.max(0, at("arrived") - 1);
   const length = Number(flags.seconds ?? 45);
+  mkdirSync(OUT, { recursive: true });
   const src = join(RUN, "session.webm");
   const run = (args) => {
     const r = spawnSync("ffmpeg", ["-y", "-loglevel", "error", ...args], { encoding: "utf8" });
@@ -392,9 +642,9 @@ async function optimize() {
   }
 }
 
-const verbs = { record, stills, render, optimize, up, down };
+const verbs = { record, stills, demo, "render-demo": renderDemo, render, optimize, up, down };
 if (!verbs[verb]) {
-  console.error("usage: capture.mjs record|stills|render|optimize|up|down");
+  console.error("usage: capture.mjs record|stills|demo|render-demo|render|optimize|up|down");
   process.exit(2);
 }
 await verbs[verb]();

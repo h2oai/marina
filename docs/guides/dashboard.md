@@ -193,6 +193,8 @@ is low-friction by default; for a public deployment, turn on sign-in with
 
 ### Search and command composition
 
+![The command palette: one search over commands, agents, rooms, tasks, notes, boards and channels](../assets/dashboard-demo-palette.gif)
+
 Click **Commands** or **Search Marina** in the header, or press **Cmd/Ctrl+K**. Commands match names,
 aliases, and descriptions, including abbreviated spellings. World search starts after two
 characters and includes entities, rooms, tasks, accessible legacy notes, board names, and
@@ -252,7 +254,7 @@ at the embedded node, where nodes, relationships, properties, and intents can be
 
 ### World Topology + 30s Activity
 
-![The world map: rooms as nodes, residents in them, the last 30 seconds of activity](../assets/dashboard-map.png)
+![The world map: rooms as nodes, residents in them, the last 30 seconds of activity; click a room to inspect it, zoom with the controls](../assets/dashboard-demo-map.gif)
 
 A visual graph of all rooms as nodes and exits as edges. Click any room to see its details — description, occupants, exits, and items. The heat layer counts observed room events in the latest
 30-second live window; it is not a historical communication graph or a claim about hidden provider
@@ -282,6 +284,8 @@ alerts anchor at the starting hub. Hover an alert marker for its titles or click
 room. Flip the panel to open the full event heatmap.
 
 ### Entity Roster
+
+![Clicking a resident in the roster opens it in the context pane](../assets/dashboard-demo-inspect.gif)
 
 Everyone currently online:
 
@@ -341,7 +345,7 @@ up without scrubbing the transcript.
 
 ### Narrative Playback
 
-![Narrative playback and conversation intelligence on the Observe tab](../assets/dashboard-observe.png)
+![Narrative playback stepping through the world's events on the Observe tab](../assets/dashboard-demo-observe.gif)
 
 Available in **Observe**. A looping timeline that replays feed events. Scrub, pause, or auto-play to
 debrief incidents, narrate demos, or review crew activity without diving into
@@ -546,6 +550,8 @@ level. Other cards have no alternate face.
 ---
 
 ## Web Chat
+
+![Web Chat: look, who and task list completed typed as commands](../assets/dashboard-demo-chat.gif)
 
 The dashboard includes an embedded chat widget. You can log in and play directly from the dashboard — type commands just like the compact web client at `http://localhost:3300/chat`.
 
