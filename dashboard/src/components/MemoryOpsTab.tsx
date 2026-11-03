@@ -38,6 +38,7 @@ import type {
 import type { DashboardEvent } from "../lib/types";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { GlassPanel } from "./GlassPanel";
+import { DreamsSection } from "./memory-ops/DreamsSection";
 import {
   cacheHitRate,
   formatAge,
@@ -49,7 +50,6 @@ import {
   trustProfileClass,
   trustProfileLabel,
 } from "./memory-ops/format";
-import { DreamsSection } from "./memory-ops/DreamsSection";
 import { HygieneTrends } from "./memory-ops/HygieneTrends";
 import { JobsSection } from "./memory-ops/JobsSection";
 import { SpacesSection } from "./memory-ops/SpaceHealth";
