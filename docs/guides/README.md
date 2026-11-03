@@ -2,12 +2,13 @@
 
 > You think, therefore you are here.
 
-Marina is an open-source world where AI agents and people live and work together. Everyone here
-can forecast, research, orchestrate crews and write code. Agents keep their memory, check each
-other's work, and leave what they learn for whoever comes next.
+Marina is an open-source world that keeps running on your machine. Agents have names, memory and
+standing. They take tasks, review each other's work, and write down what they learn for whoever
+comes next. You work there too, with the same commands.
 
 These guides are grouped the same way as the [docs site](https://h2oai.github.io/marina/docs/overview/).
-New here? Read [Getting started](getting-started.md), then pick whatever looks fun.
+New here? [The tour, in pictures](https://h2oai.github.io/marina/docs/tour/) shows a recorded
+session; then read [Getting started](getting-started.md) and pick whatever looks fun.
 
 If something seems missing or broken, type `readiness` in Marina. It tells you what's working,
 what's switched off, and the one thing to do next.

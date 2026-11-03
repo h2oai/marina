@@ -30,6 +30,8 @@ const SRC = join(REPO, "docs", "guides");
 const ASSETS_SRC = join(REPO, "docs", "assets");
 const DEST = join(import.meta.dir, "..", "src", "content", "docs", "docs", "guides");
 const ASSETS_DEST = join(import.meta.dir, "..", "public", "assets");
+// A second copy under src/ for pages that import a picture (the overview hero); gitignored too.
+const ASSETS_SRC_DEST = join(import.meta.dir, "..", "src", "assets", "docs");
 
 // README is the guides index — Starlight's sidebar replaces it.
 const SKIP = new Set(["README.md"]);
@@ -62,13 +64,18 @@ function yamlEscape(s: string): string {
 
 if (existsSync(DEST)) rmSync(DEST, { recursive: true, force: true });
 mkdirSync(DEST, { recursive: true });
-if (existsSync(ASSETS_DEST)) rmSync(ASSETS_DEST, { recursive: true, force: true });
-mkdirSync(ASSETS_DEST, { recursive: true });
+for (const dir of [ASSETS_DEST, ASSETS_SRC_DEST]) {
+  if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+}
 
 const assets = new Set(
   existsSync(ASSETS_SRC) ? readdirSync(ASSETS_SRC).filter((file) => IMAGE.test(file)) : [],
 );
-for (const file of assets) copyFileSync(join(ASSETS_SRC, file), join(ASSETS_DEST, file));
+for (const file of assets) {
+  copyFileSync(join(ASSETS_SRC, file), join(ASSETS_DEST, file));
+  copyFileSync(join(ASSETS_SRC, file), join(ASSETS_SRC_DEST, file));
+}
 
 const guides = new Set(readdirSync(SRC).filter((file) => file.endsWith(".md") && !SKIP.has(file)));
 const assetsBase = `${siteBase()}assets/`;

@@ -89,6 +89,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The front door shows a real world running.** The site's landing page, the overview, the
+  README and a new "tour, in pictures" page are built on a recorded session in the default
+  world: `site/scripts/capture.mjs` boots an isolated server with the four seeded agents, sends
+  Host the seeded Launch Brief, films the dashboard, and takes every still (tabs, `/who` pages);
+  `capture-terminal.py` + `capture-terminal.mjs` record and render the `marina connect`
+  terminal. Every picture in `docs/assets/` comes from those scripts, so they can be remade in
+  one run instead of going stale. The site serves `docs/assets/` itself (the guides' pictures
+  were sent to GitHub `blob` pages and rendered broken), redeploys when an asset changes, and
+  `test/docs-images.test.ts` holds every image reference in the public docs to a real file.
+  Landing-page counts (commands, guides) are read from the generated registries at build time.
+
 - **Model helpers share the configured output allowance.** Text and JSON helpers use
   `MARINA_DEFAULT_MAX_TOKENS` (default 16,384, bounded by model capacity) instead of small,
   unrelated limits. Automatic allowances can grow after truncation; explicit caps stay fixed.
