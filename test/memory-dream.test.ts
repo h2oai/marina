@@ -325,7 +325,10 @@ describe("the dream pass (observe)", () => {
     const model = stubModel(JSON.stringify({ ops: [] }));
     {
       using _state = scopeProcessState({ env: { MARINA_DREAMING: undefined } });
-      const dry = await runDream(db, "Ada", "dry-run", { complete: model.complete, now: now + HOUR });
+      const dry = await runDream(db, "Ada", "dry-run", {
+        complete: model.complete,
+        now: now + HOUR,
+      });
       expect(dry.state).toBe("dry-run");
       expect(dry.checks?.accepted).toBe(0);
       expect(db.listDreams("Ada")).toEqual([]);
@@ -336,7 +339,10 @@ describe("the dream pass (observe)", () => {
     {
       using _state = scopeProcessState({ env: { MARINA_DREAMING: "off" } });
       expect(dreamingMode()).toBe("off");
-      const off = await runDream(db, "Ada", "command", { complete: model.complete, now: now + HOUR });
+      const off = await runDream(db, "Ada", "command", {
+        complete: model.complete,
+        now: now + HOUR,
+      });
       expect(off).toMatchObject({ state: "skipped", skipped: "MARINA_DREAMING=off" });
       expect(model.calls).toHaveLength(1);
       expect(await runDreamSchedule(db, { complete: model.complete, now: now + HOUR })).toEqual([]);
