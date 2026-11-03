@@ -7433,7 +7433,7 @@ Effect: execute.
 ## pool
 
 Shared memory pools for collaborative knowledge.
-Usage: pool create <name> [group <groupName>] | pool <name> add <text> [importance:N] | pool <name> recall|list|status|audit|ratify | pool list
+Usage: pool create <name> [group <groupName>] | pool <name> add <text> [importance:N] | pool <name> recall|list|status|audit|ratify | pool <name> show <id> | pool list
   (importance also as trailing `importance N` or `!N`; `ls` = list)
 
 Examples:
@@ -7441,6 +7441,7 @@ Examples:
   pool create crew-notes group project:Beta   (members-only pool; you must belong to the group)
   pool findings add The decode room responds to binary input importance:7
   pool findings recall binary
+  pool findings show 12          (the whole note; listings show the first 60 characters)
   pool findings list
   pool findings status
   pool findings audit
@@ -7488,6 +7489,13 @@ Effect: write.
 Effect: read.
 
 - `field-0` (`name`): text, required.
+
+### `pool <name> show <id>`
+
+Effect: read.
+
+- `field-0` (`name`): text, required.
+- `field-1` (`id`): text, required.
 
 ### `pool <name> status`
 
