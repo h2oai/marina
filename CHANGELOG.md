@@ -89,6 +89,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A pool listing points at the whole note.** `pool <name> list` and `pool <name> recall` show
+  the first 60 characters of each note; a longer note now ends in an ellipsis and names
+  `pool <name> show <id>`, a new read form that prints it whole. Seen in a recorded session: the
+  reviewer approved a submission "having read only the first ~60 chars" of the note it cited,
+  because the listing was all it had and nothing said there was more.
+
 - **The front door shows a real world running.** The site's landing page, the overview, the
   README and a new "tour, in pictures" page are built on a recorded session in the default
   world: `site/scripts/capture.mjs` boots an isolated server with the four seeded agents, sends

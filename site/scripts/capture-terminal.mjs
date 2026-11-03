@@ -9,10 +9,24 @@
  * is laid out as a grid of spans and screenshotted with Playwright.
  *
  *   node site/scripts/capture-terminal.mjs <in.raw> <out.png> [cols rows]
+ *   node site/scripts/capture-terminal.mjs <in.raw> <frames-dir> [cols rows] --frames --every=0.5
+ *
+ * With --frames, the recorder's timed stream (`<in.raw>.jsonl`) is replayed and
+ * one PNG per `every` seconds lands in the directory (frame-00001.png …), for
+ * ffmpeg to assemble: `ffmpeg -framerate 2 -i frame-%05d.png …`.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
-const [input, output = "terminal.png", colsArg = "108", rowsArg = "34"] = process.argv.slice(2);
+const positional = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const flags = Object.fromEntries(
+  process.argv
+    .slice(2)
+    .filter((a) => a.startsWith("--"))
+    .map((a) => a.slice(2).split("="))
+    .map(([k, v]) => [k, v ?? true]),
+);
+const [input, output = "terminal.png", colsArg = "108", rowsArg = "34"] = positional;
 const cols = Number(colsArg);
 const rows = Number(rowsArg);
 
@@ -51,6 +65,7 @@ let row = 0;
 let col = 0;
 let saved = [0, 0];
 let attr = blank();
+let pending = ""; // an escape sequence split across chunks waits for the rest
 
 function sgr(params) {
   const p = params.length ? params : [0];
@@ -168,103 +183,141 @@ function csi(final, params, priv) {
   void priv;
 }
 
-const text = readFileSync(input, "latin1");
-const bytes = Buffer.from(text, "latin1").toString("utf8");
-for (let i = 0; i < bytes.length; i++) {
-  const ch = bytes[i];
-  if (ch === "\x1b") {
-    const next = bytes[i + 1];
-    if (next === "[") {
-      let j = i + 2;
-      let priv = "";
-      if (bytes[j] === "?" || bytes[j] === ">" || bytes[j] === "=") priv = bytes[j++];
-      let s = "";
-      while (j < bytes.length && /[0-9;]/.test(bytes[j])) s += bytes[j++];
-      const final = bytes[j];
-      csi(final, s === "" ? [] : s.split(";").map((x) => (x === "" ? 0 : Number(x))), priv);
-      i = j;
-    } else if (next === "]") {
-      let j = i + 2;
-      while (
-        j < bytes.length &&
-        bytes[j] !== "\x07" &&
-        !(bytes[j] === "\x1b" && bytes[j + 1] === "\\")
-      )
-        j++;
-      i = bytes[j] === "\x07" ? j : j + 1;
-    } else if (next === "7") {
-      saved = [row, col];
-      i++;
-    } else if (next === "8") {
-      [row, col] = saved;
-      i++;
-    } else if (next === "(" || next === ")") i += 2;
-    else i++;
-    continue;
+/** Feed a chunk of terminal output (latin-1 text of the raw bytes) into the screen. */
+function feed(chunk) {
+  const bytes = Buffer.from(pending + chunk, "latin1").toString("utf8");
+  pending = "";
+  for (let i = 0; i < bytes.length; i++) {
+    const ch = bytes[i];
+    if (ch === "\x1b") {
+      const next = bytes[i + 1];
+      if (next === undefined) {
+        pending = Buffer.from(bytes.slice(i), "utf8").toString("latin1");
+        return;
+      }
+      if (next === "[") {
+        let j = i + 2;
+        let priv = "";
+        if (bytes[j] === "?" || bytes[j] === ">" || bytes[j] === "=") priv = bytes[j++];
+        let s = "";
+        while (j < bytes.length && /[0-9;]/.test(bytes[j])) s += bytes[j++];
+        const final = bytes[j];
+        if (final === undefined) {
+          pending = Buffer.from(bytes.slice(i), "utf8").toString("latin1");
+          return;
+        }
+        csi(final, s === "" ? [] : s.split(";").map((x) => (x === "" ? 0 : Number(x))), priv);
+        i = j;
+      } else if (next === "]") {
+        let j = i + 2;
+        while (
+          j < bytes.length &&
+          bytes[j] !== "\x07" &&
+          !(bytes[j] === "\x1b" && bytes[j + 1] === "\\")
+        )
+          j++;
+        i = bytes[j] === "\x07" ? j : j + 1;
+      } else if (next === "7") {
+        saved = [row, col];
+        i++;
+      } else if (next === "8") {
+        [row, col] = saved;
+        i++;
+      } else if (next === "(" || next === ")") i += 2;
+      else i++;
+      continue;
+    }
+    if (ch === "\r") col = 0;
+    else if (ch === "\n") {
+      col = 0;
+      lf();
+    } else if (ch === "\b") col = Math.max(0, col - 1);
+    else if (ch === "\t") col = Math.min(cols - 1, (Math.floor(col / 8) + 1) * 8);
+    else if (ch === "\x07" || ch < " " || ch === "\x7f") continue;
+    else put(ch);
   }
-  if (ch === "\r") col = 0;
-  else if (ch === "\n") {
-    col = 0;
-    lf();
-  } else if (ch === "\b") col = Math.max(0, col - 1);
-  else if (ch === "\t") col = Math.min(cols - 1, (Math.floor(col / 8) + 1) * 8);
-  else if (ch === "\x07" || ch < " " || ch === "\x7f") continue;
-  else put(ch);
 }
 
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const html = grid
-  .map((line) => {
-    let out = "";
-    let cur = null;
-    let run = "";
-    const flush = () => {
-      if (!cur) return;
-      const style = [
-        cur.fg ? `color:${cur.fg}` : "",
-        cur.bg ? `background:${cur.bg}` : "",
-        cur.b ? "font-weight:700" : "",
-        cur.d ? "opacity:.6" : "",
-        cur.i ? "font-style:italic" : "",
-        cur.u ? "text-decoration:underline" : "",
-      ]
-        .filter(Boolean)
-        .join(";");
-      out += style ? `<span style="${style}">${esc(run)}</span>` : esc(run);
-      run = "";
-    };
-    for (const c of line) {
-      const key = `${c.fg}|${c.bg}|${c.b}|${c.d}|${c.i}|${c.u}`;
-      if (!cur || key !== `${cur.fg}|${cur.bg}|${cur.b}|${cur.d}|${cur.i}|${cur.u}`) {
-        flush();
-        cur = c;
+/** The screen as HTML spans, one line per row. */
+function screenHtml() {
+  return grid
+    .map((line) => {
+      let out = "";
+      let cur = null;
+      let run = "";
+      const flush = () => {
+        if (!cur) return;
+        const style = [
+          cur.fg ? `color:${cur.fg}` : "",
+          cur.bg ? `background:${cur.bg}` : "",
+          cur.b ? "font-weight:700" : "",
+          cur.d ? "opacity:.6" : "",
+          cur.i ? "font-style:italic" : "",
+          cur.u ? "text-decoration:underline" : "",
+        ]
+          .filter(Boolean)
+          .join(";");
+        out += style ? `<span style="${style}">${esc(run)}</span>` : esc(run);
+        run = "";
+      };
+      for (const c of line) {
+        const key = `${c.fg}|${c.bg}|${c.b}|${c.d}|${c.i}|${c.u}`;
+        if (!cur || key !== `${cur.fg}|${cur.bg}|${cur.b}|${cur.d}|${cur.i}|${cur.u}`) {
+          flush();
+          cur = c;
+        }
+        run += c.ch;
       }
-      run += c.ch;
-    }
-    flush();
-    return out.replace(/\s+$/, "");
-  })
-  .join("\n");
+      flush();
+      return out.replace(/\s+$/, "");
+    })
+    .join("\n");
+}
 
-const page = `<!doctype html><html><head><meta charset="utf-8"><style>
+const pageFor = (html) => `<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;background:#0a0a0a}
 .win{display:inline-block;background:#0a0a0a;border:1px solid #3a3a3a;border-radius:12px;padding:14px 18px 18px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
 .bar{display:flex;gap:7px;margin-bottom:12px}.bar i{width:11px;height:11px;border-radius:50%;background:#2a2a2a;display:block}
-pre{margin:0;font:14px/1.42 "Geist Mono","JetBrains Mono","Cascadia Code",Menlo,monospace;color:#f0f0f0;white-space:pre}
+pre{margin:0;width:${cols}ch;height:calc(${rows} * 1.42 * 14px);font:14px/1.42 "Geist Mono","JetBrains Mono","Cascadia Code",Menlo,monospace;color:#f0f0f0;white-space:pre;overflow:hidden}
 </style></head><body><div class="win"><div class="bar"><i></i><i></i><i></i></div><pre>${html}</pre></div></body></html>`;
 
 const { chromium } = await import("playwright-core");
 const browser = await chromium.launch({ headless: true, args: ["--disable-gpu"] });
 try {
+  const scale = flags.frames ? 1 : 2;
   const pg = await browser.newPage({
     viewport: { width: cols * 9 + 80, height: rows * 20 + 80 },
-    deviceScaleFactor: 2,
+    deviceScaleFactor: scale,
   });
-  await pg.setContent(page);
-  await pg.waitForTimeout(300);
-  const el = pg.locator(".win");
-  await el.screenshot({ path: output, omitBackground: true });
-  console.log(`wrote ${output}`);
+  const shoot = async (path) => {
+    await pg.setContent(pageFor(screenHtml()));
+    await pg.locator(".win").screenshot({ path, omitBackground: true });
+  };
+  if (flags.frames) {
+    const stream = `${input}.jsonl`;
+    if (!existsSync(stream))
+      throw new Error(`no timed stream at ${stream}; record with capture-terminal.py`);
+    const chunks = readFileSync(stream, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    const every = Number(flags.every ?? 0.5);
+    mkdirSync(output, { recursive: true });
+    let frame = 0;
+    let k = 0;
+    const end = chunks[chunks.length - 1][0] + every;
+    for (let t = 0; t <= end; t += every) {
+      while (k < chunks.length && chunks[k][0] <= t) feed(chunks[k++][1]);
+      frame++;
+      await shoot(join(output, `frame-${String(frame).padStart(5, "0")}.png`));
+    }
+    console.log(`wrote ${frame} frames (every ${every}s, ${end.toFixed(1)}s) to ${output}`);
+  } else {
+    feed(readFileSync(input, "latin1"));
+    await shoot(output);
+    console.log(`wrote ${output}`);
+  }
 } finally {
   await browser.close();
 }

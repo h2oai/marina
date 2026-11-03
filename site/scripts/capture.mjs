@@ -11,6 +11,7 @@
  *   node site/scripts/capture.mjs record   # boot, film, stills, transcript
  *   node site/scripts/capture.mjs render   # ffmpeg: hero mp4 + README gif
  *   node site/scripts/capture.mjs optimize # palette PNGs for every still
+ *   node site/scripts/capture.mjs stills   # more pictures of the same world: the Admin and Library tabs
  *   node site/scripts/capture.mjs down     # stop the server (--clean: delete the run dir)
  *
  * Needs MARINA_CAPTURE_ENV_FILE: an env file with ONE provider key (and,
@@ -249,6 +250,55 @@ async function record() {
   );
 }
 
+/** More pictures of the world as it is now (the run dir keeps it): the Admin and Library tabs. */
+async function stills() {
+  await up();
+  mkdirSync(OUT, { recursive: true });
+  const { chromium } = await import("playwright-core");
+  const browser = await chromium.launch({ headless: true, args: ["--disable-gpu"] });
+  try {
+    const login = async (page) => {
+      await page.goto(`${BASE}/dashboard`, { waitUntil: "networkidle", timeout: 30_000 });
+      const nameBox = page.getByPlaceholder("Enter your name...");
+      if (await nameBox.isVisible().catch(() => false)) {
+        await nameBox.fill(NAME);
+        await page.getByRole("button", { name: "Connect" }).click();
+      }
+      await page.getByPlaceholder("Type a command...").waitFor({ timeout: 15_000 });
+      const dismiss = page.getByRole("button", { name: "Dismiss getting-started guide" });
+      if (await dismiss.isVisible().catch(() => false)) await dismiss.click();
+      await page.waitForTimeout(1500);
+    };
+    const desktop = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      deviceScaleFactor: 2,
+      colorScheme: "dark",
+    });
+    await desktop.addInitScript(() => localStorage.setItem("marina-theme", "h2o"));
+    const page = await desktop.newPage();
+    await login(page);
+    for (const tab of ["Admin", "Library"]) {
+      const t = page
+        .getByRole("tab", { name: tab })
+        .or(page.getByRole("button", { name: tab, exact: true }));
+      if (
+        !(await t
+          .first()
+          .isVisible()
+          .catch(() => false))
+      )
+        continue;
+      await t.first().click();
+      await page.waitForTimeout(3000);
+      await page.screenshot({ path: join(OUT, `dashboard-${tab.toLowerCase()}.png`) });
+    }
+    await desktop.close();
+    console.log(`stills in ${OUT}`);
+  } finally {
+    await browser.close();
+  }
+}
+
 /** ffmpeg: a short hero clip from the brief onward (mp4 for the site), and a GIF for the README. */
 function render() {
   const marks = JSON.parse(readFileSync(join(RUN, "marks.json"), "utf8"));
@@ -342,9 +392,9 @@ async function optimize() {
   }
 }
 
-const verbs = { record, render, optimize, up, down };
+const verbs = { record, stills, render, optimize, up, down };
 if (!verbs[verb]) {
-  console.error("usage: capture.mjs record|render|optimize|up|down");
+  console.error("usage: capture.mjs record|stills|render|optimize|up|down");
   process.exit(2);
 }
 await verbs[verb]();
