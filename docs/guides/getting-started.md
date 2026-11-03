@@ -49,7 +49,11 @@ command.
 
 ## Your first five minutes
 
-The default world is the four-room **Workbench**. Its shortest useful path is:
+![The dashboard a minute after the Launch Brief: Host's replies in the chat, task #1 in the Work tab, the four agents in the context pane](../assets/dashboard-working.png)
+
+The default world is the four-room **Workbench**. The picture above is a recorded session of the
+path below ([the tour](https://h2oai.github.io/marina/docs/tour/) shows the whole thing). Its
+shortest useful path is:
 
 1. Open the dashboard and connect with a name in **Web Chat**.
 2. Use the **Start Here** actions to run `look`, `brief`, and `next`.
