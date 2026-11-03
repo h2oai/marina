@@ -3,3 +3,5 @@ dist
 .astro
 # Generated from ../docs/guides at build time by scripts/sync-docs.ts
 src/content/docs/docs/guides/
+# Copied from ../docs/assets at build time by scripts/sync-docs.ts
+public/assets/
