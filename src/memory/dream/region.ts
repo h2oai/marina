@@ -5,7 +5,8 @@
  * The dream region (Auto-Dreamer's rule): what the agent WROTE in the window
  * ∪ what it was SERVED in the window, with the use evidence on each record,
  * plus the outcomes it resolved and the procedures repeated across its
- * successful tasks (`procedures.ts`). Own fact-like legacy notes only — never
+ * successful tasks (`procedures.ts`), and its newest journal episodes
+ * (`journal.ts`). Own fact-like legacy notes only — never
  * a pool, never another owner's space, never the process tier. Byte-capped,
  * newest first; what does not fit waits for the next dream.
  *
@@ -19,6 +20,7 @@
 import { createHash } from "node:crypto";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import { itemsServedTo, usefulnessPosterior } from "../../persistence/db-memory-usefulness";
+import { gatherEpisodes } from "./journal";
 import { gatherProcedures } from "./procedures";
 import { type DreamScope, scopeOf } from "./scope";
 import type { DreamRegion, RegionRecord } from "./types";
@@ -144,6 +146,8 @@ export function gatherRegion(
     outcomes: { total: 0, succeeded: 0, failed: 0 },
     newRecords: 0,
     procedures: [],
+    episodes: [],
+    journalBytes: 0,
     hash: "",
     bytes: 0,
   };
@@ -201,6 +205,11 @@ export function gatherRegion(
     total += outcomes.length;
     succeeded += outcomes.filter((o) => o.succeeded === 1).length;
   }
+  // The owner's own episodes (never a pool's members'): evidence for the model, never stored.
+  const journal =
+    scope.kind === "entity"
+      ? gatherEpisodes(db, entityName, since, until)
+      : { episodes: [], bytes: 0, parts: 0 };
   const hash = createHash("sha256")
     .update(JSON.stringify(records.map((r) => [r.id, r.createdAt])))
     .digest("hex")
@@ -213,6 +222,8 @@ export function gatherRegion(
     outcomes: { total, succeeded, failed: total - succeeded },
     newRecords,
     procedures: scope.kind === "pool" ? [] : gatherProcedures(db, entityName, since, until),
+    episodes: journal.episodes,
+    journalBytes: journal.bytes,
     ...(scope.kind === "pool" ? { pool: { id: scope.poolId, name: scope.name } } : {}),
     hash,
     bytes,

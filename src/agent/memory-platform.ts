@@ -4,6 +4,7 @@
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { type MemoryNoteResult, readMemoryResult } from "../memory/command-result";
+import { DREAM_COMPACTION_MIN_MESSAGES } from "../memory/dream/request";
 import { isUnifiedContextResult, type UnifiedContextResult } from "../memory/unified-context";
 import { stripAnsi } from "../net/ansi";
 import type { MarinaClient } from "../sdk/client";
@@ -306,6 +307,17 @@ export class PlatformMemoryBackend {
   ): Promise<void> {
     await this.durable.archive(messages, summary, signal);
     signal?.throwIfAborted();
+    // The compaction-event trigger (src/memory/dream/request.ts): the region
+    // leaving the window is what a dream should look at — once the agent is quiet.
+    if (messages.length >= DREAM_COMPACTION_MIN_MESSAGES) {
+      try {
+        await this.client.command(`memory dream request compaction of ${messages.length} messages`);
+      } catch (error) {
+        logger.warn("memory", "Dream request after compaction failed", {
+          error: getErrorMessage(error),
+        });
+      }
+    }
     if (compactionPool) {
       try {
         const shared = await this.share(

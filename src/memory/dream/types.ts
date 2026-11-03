@@ -8,10 +8,12 @@
  * ids, hashes and counts only.
  */
 
+import type { JournalEpisode } from "./journal";
 import type { ProcedureCandidate } from "./procedures";
 
 export type DreamMode = "off" | "observe" | "on";
-export type DreamTrigger = "schedule" | "command" | "dry-run";
+/** `compaction`: requested when the agent's context was compacted (`request.ts`). */
+export type DreamTrigger = "schedule" | "command" | "dry-run" | "compaction";
 
 /** Link relations a dream may propose. */
 export const DREAM_LINK_RELATIONS = [
@@ -90,6 +92,10 @@ export interface DreamRegion {
   procedures: ProcedureCandidate[];
   /** Set for a pool dream (`scope.ts`): the region is the pool's records, every member's. */
   pool?: { id: string; name: string };
+  /** The owner's newest journal episodes in the window (`journal.ts`; evidence, never stored). */
+  episodes: JournalEpisode[];
+  /** Bytes the owner journaled in the window. */
+  journalBytes: number;
   hash: string;
   bytes: number;
 }

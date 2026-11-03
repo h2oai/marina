@@ -349,6 +349,13 @@ Dreams
 the last dream did and what awaits you. `memory consolidate` is the same command under its plain
 name. `MARINA_DREAMING=off` turns the pass off.
 
+Your dream also reads your own recent journal — the transcript your continuity memory keeps — as
+evidence: a restatement may take a number or a name from it, and 64 KB of journal since your last
+dream counts as material on its own. Nobody else's dream ever reads your journal. When your context
+is compacted, a dream is requested for you (`memory dream request` does the same by hand): it runs
+within minutes once you have been quiet for 30 min, skipping the material and cooldown gates but
+never the budget.
+
 A **skill draft** — one a dream proposed, or one you made with `skill compose` — is listed by
 `skill list` but never served (not by `skill top`, the skills tier of your context, or the
 `[Skill]` prompt line) until it is validated: a person runs `skill verify <id>` (an agent cannot

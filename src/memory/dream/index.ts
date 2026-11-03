@@ -26,6 +26,16 @@ export {
   guardState,
   guardTripped,
 } from "./guard";
+export type { JournalEpisode } from "./journal";
+export {
+  DREAM_JOURNAL_MAX_BYTES,
+  DREAM_MIN_JOURNAL_BYTES,
+  gatherEpisodes,
+  journalBytesSince,
+  parseEpisode,
+  renderEpisodes,
+  residentSpaceIds,
+} from "./journal";
 export {
   DREAM_SETTLE_MS,
   dreamJudgeApplies,
@@ -45,6 +55,7 @@ export {
   poolDreamCandidates,
   runDream,
   runDreamSchedule,
+  runRequestedDreams,
   scheduleGate,
 } from "./pass";
 export { probePlan, probeQuery, probeSpan, probesBefore } from "./probe";
@@ -59,6 +70,15 @@ export {
 } from "./procedures";
 export { DREAM_SYSTEM_PROMPT, parseOps, proposeOps, regionPrompt } from "./propose";
 export { gatherRegion } from "./region";
+export type { DreamRequest } from "./request";
+export {
+  clearRequest,
+  DREAM_COMPACTION_MIN_MESSAGES,
+  pendingRequest,
+  pendingRequests,
+  REQUEST_TTL_MS,
+  requestDream,
+} from "./request";
 export type { DreamScope } from "./scope";
 export { inScope, isPoolScopeName, poolScopeName, scopeOf, scopeRecall } from "./scope";
 export type * from "./types";

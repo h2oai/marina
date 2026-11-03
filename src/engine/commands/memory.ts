@@ -13,6 +13,7 @@ import {
   guardState,
   pendingProposals,
   renderDreamEffect,
+  requestDream,
   rollbackDream,
   runDream,
 } from "../../memory/dream";
@@ -103,7 +104,7 @@ const USEFULNESS_MAX_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const USEFULNESS_USAGE =
   "Usage: memory usefulness [window]   e.g. memory usefulness 7d · memory usefulness 24h (default 7d, max 90d)";
 const DREAM_USAGE =
-  "Usage: memory dream [now|dry-run|log|show <id>|proposals|adopt <id> [n]|dismiss <id> [n]|rollback <id>|measure [all]|guard [clear <entity>]]   now — run your consolidation pass (budget permitting; schedule gates skipped) · dry-run — same, recorded nowhere · log — your dreams · show <id> — one dream's ops, rejections and probes (ids and counts, never text) · proposals — restatements and skill drafts a dream filed for you · adopt/dismiss — take or drop one · rollback <id> — reverse an applied dream · measure — task success after your dreams vs before (all: everyone's, operator) · guard — the utility-curve guard's state (clear <entity>: operator)";
+  "Usage: memory dream [now|dry-run|log|show <id>|proposals|adopt <id> [n]|dismiss <id> [n]|rollback <id>|request [reason]|measure [all]|guard [clear <entity>]]   now — run your consolidation pass (budget permitting; schedule gates skipped) · dry-run — same, recorded nowhere · log — your dreams · show <id> — one dream's ops, rejections and probes (ids and counts, never text) · proposals — restatements and skill drafts a dream filed for you · adopt/dismiss — take or drop one · rollback <id> — reverse an applied dream · request — ask for a dream once you are quiet (material and cooldown waived) · measure — task success after your dreams vs before (all: everyone's, operator) · guard — the utility-curve guard's state (clear <entity>: operator)";
 const VOTE_USAGE =
   "Usage: memory useful <note id|record id> · memory useless <note id|record id>   (an item served to you in the last 7 days; one vote per item per day)";
 
@@ -236,6 +237,7 @@ export function memoryCommand(deps: {
       { syntax: "memory dream log", effect: "read" },
       { syntax: "memory dream show <id>", effect: "read" },
       { syntax: "memory dream proposals", effect: "read" },
+      { syntax: "memory dream request [reason]", effect: "write" },
       { syntax: "memory dream brief", effect: "read" },
       { syntax: "memory dream adopt <id> [n]", effect: "write" },
       { syntax: "memory dream dismiss <id> [n]", effect: "write" },
@@ -398,6 +400,7 @@ async function runDreamCommand(
       "show",
       "proposals",
       "brief",
+      "request",
       "adopt",
       "dismiss",
       "rollback",
@@ -592,6 +595,18 @@ async function runDreamCommand(
       );
     }
     ctx.send(entityId, lines.join("\n"));
+    return;
+  }
+  if (verb === "request") {
+    if (mode === "off") {
+      refuseCommand(ctx, entityId, "Dreaming is off (MARINA_DREAMING=off); nothing to request.");
+      return;
+    }
+    const request = requestDream(db, entity.name, tokens.slice(1).join(" ") || "requested");
+    ctx.send(
+      entityId,
+      `Dream requested (${request.reason}): it runs within minutes once you have been quiet for 30 min, budget permitting — the material and cooldown gates are waived.`,
+    );
     return;
   }
   if (verb === "brief") {

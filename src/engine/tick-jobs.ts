@@ -10,7 +10,12 @@ import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
 import { proposeUpstreamModelSeeds } from "../learned/upstream-model-seeds";
 import { flushWorkLessons } from "../learning/work";
-import { assessDreams, runDreamSchedule, settleQuietDreams } from "../memory/dream";
+import {
+  assessDreams,
+  runDreamSchedule,
+  runRequestedDreams,
+  settleQuietDreams,
+} from "../memory/dream";
 import { settleUnusedServes } from "../memory/usefulness";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model/model-api";
@@ -353,6 +358,24 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
           dreamed: ran.map((d) => d.entityName),
           ops: ran.reduce((n, d) => n + (d.checks?.accepted ?? 0), 0),
           rejected: ran.reduce((n, d) => n + (d.checks?.rejected ?? 0), 0),
+        });
+    },
+  });
+
+  // ~5 min: dreams the agents' context compactions asked for (request.ts),
+  // run once each agent is quiet; material and cooldown are waived, budget is not.
+  s.register({
+    name: "memory-dream-requested",
+    every: OUTCOME_DELIVERY_INTERVAL,
+    phase: MEMORY_DREAM_REQUEST_PHASE,
+    failureMessage: "Requested memory dream failed",
+    run: async () => {
+      if (!host.db) return;
+      const dreams = await runRequestedDreams(host.db);
+      const ran = dreams.filter((d) => d.state !== "skipped");
+      if (ran.length)
+        host.engine.logger.info("memory", "requested dream pass", {
+          dreamed: ran.map((d) => d.entityName),
         });
     },
   });
@@ -700,6 +723,8 @@ export const OUTCOME_AUTORESOLVE_PHASE = 3450;
 export const USEFULNESS_SETTLE_PHASE = 3550;
 /** Hourly phase of `memory-dream`. */
 export const MEMORY_DREAM_PHASE = 3400;
+/** Requested (compaction-triggered) dreams: every 5 min, clear of outcome delivery's 150. */
+export const MEMORY_DREAM_REQUEST_PHASE = 225;
 
 /** Ticks between arena filing-watch passes (src/arena/filing-watch.ts). */
 export const ARENA_FILING_WATCH_INTERVAL = 600;

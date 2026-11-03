@@ -12,7 +12,8 @@
  * - coverage (merge): each duplicate shares ≥ MERGE_MIN_OVERLAP word shingles
  *   with the keeper — notes that differ in a number or a name stay apart.
  * - faithfulness (supersede): every number, name and identifier in the new
- *   text appears in the superseded note or the cited refs (`groundedIn`).
+ *   text appears in the superseded note, the cited refs, or the owner's own
+ *   journal episodes of the window (`journal.ts`).
  * - evidence (decay): served ≥ DECAY_MIN_SERVES times, never cited, and the
  *   usefulness mean below neutral — decay follows use evidence, never taste.
  * - preservation: at most PRESERVATION_MAX_LOSS of the region may leave the
@@ -158,7 +159,11 @@ export function checkOps(
         reject(op, `supersede: text over ${SUPERSEDE_MAX_CHARS} characters`);
         continue;
       }
-      const sources = [op.id, ...op.refs].map((id) => byId.get(id)!.content).join("\n");
+      // Its sources: the note, the refs — and the owner's own episodes (evidence).
+      const sources = [
+        ...[op.id, ...op.refs].map((id) => byId.get(id)!.content),
+        ...region.episodes.map((e) => e.text),
+      ].join("\n");
       if (!faithfulTo(op.text, sources)) {
         reject(
           op,
