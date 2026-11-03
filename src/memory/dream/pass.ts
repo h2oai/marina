@@ -326,6 +326,9 @@ export async function runDream(
         for (const s of view.skipped) rejected.push(s.rejected);
         accepted = accepted.filter((_, n) => !drop.has(n));
         stored = view.ops.filter((_, n) => !drop.has(n));
+        // A view that was rolled back (observe, dry-run) applied nothing: no
+        // footprint goes on the row, so nothing reads it as applied.
+        if (!commit) stored = stored.map(({ applied: _applied, ...rest }) => rest as StoredDreamOp);
       }
     }
     const probes = view?.probes ?? plan.probes;

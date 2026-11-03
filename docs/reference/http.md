@@ -683,21 +683,21 @@ Fields read here: `url.searchParams.get("refresh")`.
 
 ### `url.pathname === "/api/memory/overview"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L40)
+[Source](../../src/net/dashboard-api/memory.ts#L41)
 
 - Guard: `url.pathname === "/api/memory/overview" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/memory/hygiene"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L45)
+[Source](../../src/net/dashboard-api/memory.ts#L46)
 
 - Guard: `url.pathname === "/api/memory/hygiene" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/memory/hygiene/history"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L51)
+[Source](../../src/net/dashboard-api/memory.ts#L52)
 
 - Guard: `url.pathname === "/api/memory/hygiene/history" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -706,23 +706,32 @@ Fields read here: `Number.parseInt(url.searchParams.get("hours") ?? "", 10)`, `u
 
 ### `url.pathname === "/api/memory/hygiene/snapshot"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L57)
+[Source](../../src/net/dashboard-api/memory.ts#L58)
 
 - Guard: `url.pathname === "/api/memory/hygiene/snapshot" && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/memory/jobs"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L65)
+[Source](../../src/net/dashboard-api/memory.ts#L66)
 
 - Guard: `url.pathname === "/api/memory/jobs" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `json( listMemoryJobs(db, memoryObserverScope(engine, callerId), { state: stateParam === "all" ? "all" : "open", role: url.searchParams.get("role") ?? undefined, entity: url.searchParams.get("entity") ?? undefined, limit: Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 50, cursor: url.searchParams.get("cursor"), }), )`, `listMemoryJobs(db, memoryObserverScope(engine, callerId), { state: stateParam === "all" ? "all" : "open", role: url.searchParams.get("role") ?? undefined, entity: url.searchParams.get("entity") ?? undefined, limit: Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 50, cursor: url.searchParams.get("cursor"), })`, `url.searchParams.get("cursor")`, `url.searchParams.get("entity")`, `url.searchParams.get("limit")`, `url.searchParams.get("role")`, `url.searchParams.get("state")`.
 
+### `url.pathname === "/api/memory/dreams"`
+
+[Source](../../src/net/dashboard-api/memory.ts#L85)
+
+- Guard: `url.pathname === "/api/memory/dreams" && method === "GET" && db`
+- Guard: `method === "GET"`
+
+Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `json( listMemoryDreams(db, memoryObserverScope(engine, callerId), { limit: Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 30, entity: url.searchParams.get("entity") ?? undefined, }), )`, `listMemoryDreams(db, memoryObserverScope(engine, callerId), { limit: Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 30, entity: url.searchParams.get("entity") ?? undefined, })`, `url.searchParams.get("entity")`, `url.searchParams.get("limit")`.
+
 ### `url.pathname.match(/^\/api\/memory\/jobs\/([^/]+)(\/cancel)?$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L82)
+[Source](../../src/net/dashboard-api/memory.ts#L94)
 
 - Guard: `memoryJobMatch && db`
 - Guard: `method === "GET"`
@@ -730,7 +739,7 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `j
 
 ### `url.pathname === "/api/memory/graph"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L98)
+[Source](../../src/net/dashboard-api/memory.ts#L110)
 
 - Guard: `url.pathname === "/api/memory/graph" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -739,7 +748,7 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `b
 
 ### `url.pathname === "/api/memory/quality"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L108)
+[Source](../../src/net/dashboard-api/memory.ts#L120)
 
 - Guard: `url.pathname === "/api/memory/quality" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -748,7 +757,7 @@ Fields read here: `url.searchParams.get("entity")`.
 
 ### `url.pathname === "/api/memory/contradictions"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L118)
+[Source](../../src/net/dashboard-api/memory.ts#L130)
 
 - Guard: `url.pathname === "/api/memory/contradictions" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -757,7 +766,7 @@ Fields read here: `url.searchParams.get("status")`.
 
 ### `url.pathname.match( /^\/api\/memory\/contradictions\/(\d+)\/resolve$/, )`
 
-[Source](../../src/net/dashboard-api/memory.ts#L136)
+[Source](../../src/net/dashboard-api/memory.ts#L148)
 
 - Guard: `contradictionResolveMatch && method === "POST" && db`
 - Guard: `method === "POST"`
@@ -766,7 +775,7 @@ Fields read here: `rationale`.
 
 ### `url.pathname === "/api/graph"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L179)
+[Source](../../src/net/dashboard-api/memory.ts#L191)
 
 - Guard: `url.pathname === "/api/graph" && method === "GET" && db`
 - Guard: `method === "GET"`
@@ -775,33 +784,33 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `u
 
 ### `url.pathname.match(/^\/api\/memory\/graph\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L207)
+[Source](../../src/net/dashboard-api/memory.ts#L219)
 
 - Guard: `graphMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/memory\/notes\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L246)
+[Source](../../src/net/dashboard-api/memory.ts#L258)
 
 - Guard: `memNotesMatch && db`
 
 ### `url.pathname.match(/^\/api\/notes\/(\d+)$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L255)
+[Source](../../src/net/dashboard-api/memory.ts#L267)
 
 - Guard: `noteDetailMatch && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/memory\/core\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/memory.ts#L303)
+[Source](../../src/net/dashboard-api/memory.ts#L315)
 
 - Guard: `memCoreMatch && db`
 
 ### `url.pathname === "/api/memory/pools"`
 
-[Source](../../src/net/dashboard-api/memory.ts#L311)
+[Source](../../src/net/dashboard-api/memory.ts#L323)
 
 - Guard: `url.pathname === "/api/memory/pools" && db`
 

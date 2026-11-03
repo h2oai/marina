@@ -23,6 +23,8 @@
 
 export type {
   MemoryCreditView,
+  MemoryDreamsResponse,
+  MemoryDreamView,
   MemoryHygieneHistory,
   MemoryHygieneRatios,
   MemoryHygieneSample,

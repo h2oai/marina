@@ -29,6 +29,8 @@ import { FOCUS_SPACE_EVENT, sybilSignal } from "../components/memory-ops/SpaceHe
 import { sparklineStats } from "../components/memory-ops/Sparkline";
 import { useWorldState } from "../hooks/use-world-state";
 import type {
+  MemoryDreamsResponse,
+  MemoryDreamView,
   MemoryHygieneHistory,
   MemoryHygieneSample,
   MemoryJobsResponse,
@@ -313,6 +315,63 @@ const emptyOverview: MemoryOverview = {
   },
 };
 
+const dream = (overrides: Partial<MemoryDreamView> = {}): MemoryDreamView => ({
+  id: 7,
+  entity: "Ada",
+  pool: false,
+  trigger: "schedule",
+  mode: "on",
+  state: "applied",
+  createdAt: NOW - 2 * 3_600_000,
+  appliedAt: NOW - 2 * 3_600_000,
+  rolledBackAt: null,
+  region: { records: 14, newRecords: 12, bytes: 3200, hash: "abc" },
+  ops: {
+    accepted: 4,
+    rejected: 2,
+    leaving: 2,
+    applied: 3,
+    pendingProposals: 1,
+    byKind: { merge: 1, link: 1, decay: 1, supersede: 1 },
+  },
+  probes: { before: { pass: 2, fail: 0 }, after: { pass: 2, fail: 0 } },
+  rejectedByCheck: { taint: 1, coverage: 1 },
+  model: "marina/cheap",
+  spendUsd: 0.0012,
+  ...overrides,
+});
+
+let dreamsFixture: MemoryDreamsResponse = {
+  mode: "on",
+  dreams: [
+    dream(),
+    dream({
+      id: 8,
+      entity: "pool:team",
+      pool: true,
+      state: "observed",
+      ops: {
+        accepted: 2,
+        rejected: 0,
+        leaving: 1,
+        applied: 0,
+        pendingProposals: 2,
+        byKind: { merge: 1, decay: 1 },
+      },
+      probes: { before: { pass: 1, fail: 0 }, after: { pass: 1, fail: 0 } },
+      rejectedByCheck: {},
+    }),
+  ],
+  guarded: ["Bea"],
+  effect: {
+    verdict: "no change",
+    applied: 6,
+    measured: 4,
+    margin: 0.05,
+    holdout: { dreams: 2, before: 0.6, after: 0.65, interval: [-0.1, 0.2] },
+  },
+};
+
 function routeFetch(
   view: MemoryOverview,
   jobs: MemoryJobView[],
@@ -326,6 +385,7 @@ function routeFetch(
     if (path.startsWith("/api/memory/jobs/") && details) return Promise.resolve(details);
     if (path.startsWith("/api/memory/hygiene/history"))
       return trend instanceof Error ? Promise.reject(trend) : Promise.resolve(trend);
+    if (path.startsWith("/api/memory/dreams")) return Promise.resolve(dreamsFixture);
     return Promise.reject(new Error(`unexpected ${path}`));
   });
 }
@@ -344,13 +404,53 @@ afterEach(() => {
 });
 
 describe("MemoryOpsTab", () => {
-  it("renders all seven sections from the overview + jobs fixtures", async () => {
+  it("Dreams: lists the newest dreams with mode, guard and the held-out verdict — counts only", async () => {
+    routeFetch(overview, []);
+    renderWithProviders(<MemoryOpsTab />);
+    const section = screen.getByLabelText("Dreams");
+    await waitFor(() => expect(within(section).getByTestId("dreams-mode")).toHaveTextContent("on"));
+    expect(within(section).getByTestId("dreams-effect")).toHaveTextContent("holdout: no change");
+    expect(within(section).getByTestId("dreams-effect")).toHaveTextContent("4/6 measurable");
+    expect(within(section).getByTestId("dreams-guarded")).toHaveTextContent("Bea");
+    const row = within(section).getByTestId("dream-7");
+    expect(within(row).getByText("Ada")).toBeInTheDocument();
+    expect(within(row).getByTestId("dream-state-7")).toHaveTextContent("applied");
+    expect(
+      within(row).getByText(/4 accepted · 2 rejected · 3 applied · 1 awaiting the owner/),
+    ).toBeInTheDocument();
+    expect(within(row).getByText("1 merge · 1 restatement · 1 link · 1 decay")).toBeInTheDocument();
+    expect(within(row).getByText("probes 2/2 → 2/2")).toBeInTheDocument();
+    expect(within(row).getByText(/refused: taint 1, coverage 1/)).toBeInTheDocument();
+    const pool = within(section).getByTestId("dream-8");
+    expect(within(pool).getByText("pool team")).toBeInTheDocument();
+    expect(within(pool).getByText(/2 awaiting a ratifier/)).toBeInTheDocument();
+    expect(within(pool).getByTestId("dream-state-8")).toHaveTextContent("observed");
+    // Never note text: the fixture holds none and the section asks for none.
+    expect(
+      fetchApi.mock.calls.some(([path]) => String(path).startsWith("/api/memory/dreams")),
+    ).toBe(true);
+  });
+
+  it("Dreams: the empty state tells the operator how a dream is earned", async () => {
+    dreamsFixture = { mode: "observe", dreams: [], guarded: [] };
+    routeFetch(overview, []);
+    renderWithProviders(<MemoryOpsTab />);
+    const section = screen.getByLabelText("Dreams");
+    await waitFor(() =>
+      expect(within(section).getByTestId("dreams-mode")).toHaveTextContent("observe"),
+    );
+    expect(within(section).getByText(/No dreams yet/)).toBeInTheDocument();
+    expect(within(section).queryByTestId("dreams-effect")).toBeNull();
+  });
+
+  it("renders all sections from the overview + jobs fixtures", async () => {
     routeFetch(overview, [job()]);
     renderWithProviders(<MemoryOpsTab />);
 
     for (const title of [
       "Posture",
       "Jobs",
+      "Dreams",
       "Resolutions & ratifications",
       "Standing credits",
       "Receipts",

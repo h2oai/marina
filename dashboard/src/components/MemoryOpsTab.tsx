@@ -19,6 +19,7 @@ import {
   Gauge,
   Landmark,
   ListChecks,
+  Moon,
   Receipt,
   Scale,
   ShieldCheck,
@@ -48,6 +49,7 @@ import {
   trustProfileClass,
   trustProfileLabel,
 } from "./memory-ops/format";
+import { DreamsSection } from "./memory-ops/DreamsSection";
 import { HygieneTrends } from "./memory-ops/HygieneTrends";
 import { JobsSection } from "./memory-ops/JobsSection";
 import { SpacesSection } from "./memory-ops/SpaceHealth";
@@ -119,6 +121,10 @@ export function MemoryOpsTab({
 
       <Section title="Jobs" icon={<ListChecks size={12} />}>
         <JobsSection focusJobId={focusJobId} />
+      </Section>
+
+      <Section title="Dreams" icon={<Moon size={12} />}>
+        <DreamsSection />
       </Section>
 
       <Section title="Resolutions & ratifications" icon={<Scale size={12} />}>
