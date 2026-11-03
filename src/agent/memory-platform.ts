@@ -499,6 +499,14 @@ export class PlatformMemoryBackend {
     return { summary, earn };
   }
 
+  /**
+   * `memory dream brief`: one content-free line on the latest dream and the
+   * restatements awaiting adoption; empty when there is nothing to say.
+   */
+  async dreamBrief(): Promise<string> {
+    return extractText(await this.client.command("memory dream brief")).trim();
+  }
+
   async workInbox(): Promise<PlatformMemoryResult> {
     const perceptions = await this.client.command("work");
     const text = extractText(perceptions);

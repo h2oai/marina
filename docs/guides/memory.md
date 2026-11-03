@@ -319,19 +319,32 @@ what you wrote and were served recently, asks one cheap model call for typed ope
 duplicates, restate a note from its own sources, link, decay something served many times and never
 used), and checks every operation mechanically: verified notes are never touched, a merge needs real
 overlap, a restatement may not add a number or a name its sources lack, a decay needs use evidence,
-and at most a quarter of the region may leave in one pass. Today every dream is **observed**: it is
-recorded and chronicled, and nothing is applied.
+and at most a quarter of the region may leave in one pass. Then it applies the set on a trial view
+and checks that every note it would take out is still retrievable (through its keeper, for a
+merge); a set that loses that check is rejected whole.
+
+By default every dream is **observed**: the trial view is rolled back, the dream is recorded and
+chronicled, and nothing changes. With `MARINA_DREAMING=on`, merges, links and decays stay applied,
+and a restatement becomes a **proposal** you adopt or dismiss — a dream never rewrites a note's
+meaning on its own. Every applied dream can be reversed as a whole.
 
 ```
 > memory dream log
 Dreams
-  #3     2026-11-02T18:40  observed  2 ops · 1 rejected · 2/14 would leave · schedule
+  #3     2026-11-02T18:40  applied     3 ops · 1 rejected · 2/14 left · schedule
+1 proposal(s) await you: memory dream proposals
+> memory dream proposals      the restatements filed for you, with their text
+> memory dream adopt 3        take it (re-checked against your notes as they are now)
+> memory dream dismiss 3      drop it
+> memory dream rollback 3     reverse the whole dream: merged notes come back, decays and links undo
 > memory dream show 3
-> memory dream now        run one for yourself (budget permitting)
-> memory dream dry-run    the same, recorded nowhere
+> memory dream now            run one for yourself (budget permitting)
+> memory dream dry-run        the same, recorded nowhere
 ```
 
-`orient` shows your latest dream. `MARINA_DREAMING=off` turns the pass off.
+`orient` shows your latest dream, and a `[Dream]` line in your continuation prompt tells you what
+the last dream did and what awaits you. `memory consolidate` is the same command under its plain
+name. `MARINA_DREAMING=off` turns the pass off.
 
 ## Usefulness: What Memory Was Served
 

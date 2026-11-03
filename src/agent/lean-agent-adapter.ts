@@ -1731,6 +1731,7 @@ export class LeanAgentAdapter implements AgentHandle {
     current_focus: 30, // every cycle, but content stable
     stuck_detection: 15, // every cycle, must surface promptly
     priority_work: 20,
+    dream: 60, // cadence 20
   };
   private static readonly SECTION_TTL_DEFAULT = 30;
 
@@ -4776,6 +4777,21 @@ export class LeanAgentAdapter implements AgentHandle {
         }
       } catch {
         // best-effort; the agent works without the standing line
+      }
+    }
+
+    // ── 2g. Dream (every 20th cycle, offset 5) ──
+    // One content-free line: what the last dream applied to the agent's own
+    // notes (and how to reverse it), and restatements waiting for adoption.
+    // Not for crew responders or a bound coder.
+    if (cycle % 20 === 5 && !this.crewResponderMode && !this.activeCodingTask) {
+      try {
+        const content = await this.platformMemory.dreamBrief();
+        if (content && this.shouldIncludeSection("dream", content)) {
+          parts.push(`[Dream] ${content}`, 40, "dream");
+        }
+      } catch {
+        // best-effort; the agent works without the dream line
       }
     }
 

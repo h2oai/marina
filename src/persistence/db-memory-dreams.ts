@@ -88,6 +88,35 @@ export function recordDream(db: Database, input: DreamInsert): number {
   return Number(result.lastInsertRowid);
 }
 
+/** What apply and rollback change on a dream row: its state, stamps and the ops' footprint. */
+export interface DreamUpdate {
+  state?: DreamState;
+  ops?: StoredDreamOp[];
+  probes?: DreamProbe[];
+  checks?: DreamChecks;
+  appliedAt?: number;
+  rolledBackAt?: number;
+}
+
+/** The row is append-only as history; only its state, stamps and footprint columns move. */
+export function updateDream(db: Database, id: number, patch: DreamUpdate): boolean {
+  const sets: string[] = [];
+  const args: (string | number)[] = [];
+  const set = (column: string, value: string | number) => {
+    sets.push(`${column} = ?`);
+    args.push(value);
+  };
+  if (patch.state) set("state", patch.state);
+  if (patch.ops) set("ops_json", JSON.stringify(patch.ops));
+  if (patch.probes) set("probes_json", JSON.stringify(patch.probes));
+  if (patch.checks) set("checks_json", JSON.stringify(patch.checks));
+  if (patch.appliedAt !== undefined) set("applied_at", patch.appliedAt);
+  if (patch.rolledBackAt !== undefined) set("rolled_back_at", patch.rolledBackAt);
+  if (!sets.length) return false;
+  args.push(id);
+  return db.run(`UPDATE memory_dreams SET ${sets.join(", ")} WHERE id = ?`, args).changes > 0;
+}
+
 export function getDream(db: Database, id: number): DreamRow | undefined {
   return (
     (db.query("SELECT * FROM memory_dreams WHERE id = ?").get(id) as DreamRow | null) ?? undefined

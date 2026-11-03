@@ -169,8 +169,8 @@ export function orientCommand(deps: {
           : receipt.content.slice(ACCUMULATION_NOTE_PREFIX.length).trim();
         lines.push(`    Accumulation: ${summary} ${dim(relativeTime(receipt.created_at, now))}`);
       }
-      // Latest dream (src/memory/dream): what the consolidation pass would
-      // have done, observed. Counts only.
+      // Latest dream (src/memory/dream): what the consolidation pass did, or
+      // would have done when observed. Counts only.
       const dream = db.listDreams(entity.name, 1)[0];
       if (dream) {
         const checks = parseDreamJson<{ accepted: number; rejected: number; leaving: number }>(
@@ -178,7 +178,7 @@ export function orientCommand(deps: {
           { accepted: 0, rejected: 0, leaving: 0 },
         );
         lines.push(
-          `    Dream: #${dream.id} ${checks.accepted} op(s), ${checks.rejected} rejected, ${checks.leaving} would leave — ${dream.state} ${dim(relativeTime(dream.created_at, now))} (memory dream show ${dream.id})`,
+          `    Dream: #${dream.id} ${checks.accepted} op(s), ${checks.rejected} rejected, ${checks.leaving} ${dream.state === "observed" ? "would leave" : "left"} — ${dream.state} ${dim(relativeTime(dream.created_at, now))} (memory dream show ${dream.id})`,
         );
       }
       lines.push("");
