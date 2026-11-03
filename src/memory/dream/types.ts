@@ -88,6 +88,8 @@ export interface DreamRegion {
   newRecords: number;
   /** Command sequences repeated across the owner's successful tasks that no skill covers. */
   procedures: ProcedureCandidate[];
+  /** Set for a pool dream (`scope.ts`): the region is the pool's records, every member's. */
+  pool?: { id: string; name: string };
   hash: string;
   bytes: number;
 }
@@ -119,8 +121,9 @@ export type AppliedFootprint =
 /**
  * The ops' footprint, stored without text: the supersede text is a hash and a
  * length. `applied` is set when the op was applied (and `reverted` when a
- * rollback undid it); `proposal` is set when a supersede was filed for the
- * owner to adopt (its text waits in `core_memory` owner `memory:dream`).
+ * rollback undid it); `proposal` is set when the op was filed for the owner
+ * to adopt — or, in a pool dream, for a ratifier (what it needs waits in
+ * `core_memory` owner `memory:dream`).
  */
 export type StoredDreamOp = (
   | { op: "merge"; keep: number; into: number[]; reason: string }
@@ -131,7 +134,6 @@ export type StoredDreamOp = (
       textLength: number;
       refs: number[];
       reason: string;
-      proposal?: ProposalMark;
     }
   | { op: "link"; from: number; to: number; relation: DreamLinkRelation; reason: string }
   | { op: "decay"; id: number; reason: string }
@@ -145,9 +147,13 @@ export type StoredDreamOp = (
       textHash: string;
       textLength: number;
       reason: string;
-      proposal?: ProposalMark;
     }
-) & { applied?: AppliedFootprint; reverted?: true };
+) & {
+  applied?: AppliedFootprint;
+  reverted?: true;
+  /** Set on a propose-tier op (a restatement, a skill draft — and EVERY op of a pool dream). */
+  proposal?: ProposalMark;
+};
 
 export interface DreamChecks {
   proposed: number;

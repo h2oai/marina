@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+export type { AdoptOutcome, DreamProposal } from "./apply";
 export {
   adoptProposal,
   applyOps,
@@ -41,6 +42,7 @@ export {
   DREAM_MIN_NEW,
   dreamCandidates,
   dreamingMode,
+  poolDreamCandidates,
   runDream,
   runDreamSchedule,
   scheduleGate,
@@ -57,4 +59,6 @@ export {
 } from "./procedures";
 export { DREAM_SYSTEM_PROMPT, parseOps, proposeOps, regionPrompt } from "./propose";
 export { gatherRegion } from "./region";
+export type { DreamScope } from "./scope";
+export { inScope, isPoolScopeName, poolScopeName, scopeOf, scopeRecall } from "./scope";
 export type * from "./types";

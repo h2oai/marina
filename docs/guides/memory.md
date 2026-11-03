@@ -357,6 +357,19 @@ skill against the role without it on the same benchmark — and a clear win prom
 (`skill trial <id> result` reads the outcome back). Skills you `skill store` or `skill import`
 yourself are served as written.
 
+A shared pool dreams too. `pool <name> dream` runs the same pass over the pool's records — every
+member's — and proposes merges, links and decays only (a pool dream never restates another
+member's words). Nothing it proposes is applied: each op waits for a **ratifier** — a member with
+standing ≥ 15, a sovereign, or the local operator — who wrote none of the notes it touches:
+
+```
+> pool findings dream proposals          what the last dream proposed, per op
+> pool findings dream ratify 7 0         apply op 0 of dream #7 (re-checked against the pool as it is now)
+> pool findings dream dismiss 7 1        drop op 1
+> pool findings dream rollback 7         reverse the whole dream
+> pool findings dream now | log | show 7
+```
+
 Dreams are measured, not trusted. Every op an applied dream carried is a judged opinion settled by
 what you do next — adopt or keep it (a pass), dismiss or roll it back (a fail) — and `judge stats
 dream` shows the dreamer's record per op kind; a dreamer that has earned restatements may, with

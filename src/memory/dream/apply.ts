@@ -15,7 +15,10 @@
  * <dream> <n>` applies it — a restatement through `reviseNote` after the
  * faithfulness check is run again against the notes as they are THEN, a
  * skill as a DRAFT note (`src/memory/skill-draft.ts`) after the coverage
- * check is run again. Nothing a dream writes is ever final: the dream row keeps
+ * check is run again. A POOL dream (`scope.ts`) files EVERY op this way — the
+ * dry view still probes the set — and a ratifier applies one with
+ * `pool <name> dream ratify`, under the same re-checks. Nothing a dream
+ * writes is ever final: the dream row keeps
  * a footprint of every applied op (ids and prior values, never text) and
  * `memory dream rollback <id>` reverses the whole set in one transaction.
  */
@@ -23,16 +26,19 @@
 import type { MarinaDB } from "../../persistence/database";
 import type { DreamRow } from "../../persistence/db-memory-dreams";
 import { parseDreamJson } from "../../persistence/db-memory-dreams";
+import { shingleSimilarity } from "../near-duplicate";
 import { coversProcedure, skillContent, skillSlug } from "../skill-draft";
-import { faithfulTo, leavingIds, SUPERSEDE_MAX_CHARS } from "./check";
+import { faithfulTo, leavingIds, MERGE_MIN_OVERLAP, opIds, SUPERSEDE_MAX_CHARS } from "./check";
 import { settleDreamOp, settleRolledBack } from "./judge";
 import type { ProbePlan } from "./probe";
 import { probeHit } from "./probe";
 import type { ProcedureCandidate } from "./procedures";
+import { type DreamScope, inScope, scopeOf, scopeRecall } from "./scope";
 import type {
   AppliedFootprint,
   DreamChecks,
   DreamOp,
+  DreamOpKind,
   DreamProbe,
   ProposalMark,
   RejectedOp,
@@ -48,7 +54,7 @@ export const PROPOSAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type PriorStatus = "unverified" | "disputed";
 
-/** A propose-tier op waiting for the owner: a restatement, or a skill draft. */
+/** A propose-tier op waiting for the owner (or a pool's ratifier): a restatement, a skill draft, or — a pool — any record op. */
 export type DreamProposal = {
   entityName: string;
   dreamId: number;
@@ -65,7 +71,11 @@ export type DreamProposal = {
       steps: string[];
       tasks: number[];
     }
+  | { kind: "op"; op: Extract<DreamOp, { op: "merge" | "link" | "decay" }> }
 );
+
+/** Ops that are proposals in an ENTITY dream (a pool dream proposes everything). */
+const PROPOSE_TIER: ReadonlySet<DreamOpKind> = new Set(["supersede", "propose-skill"]);
 
 /** A skill draft note from a proposal: the library's content shape, importance 5, exact duplicates fold. */
 export function createSkillDraft(
@@ -92,9 +102,104 @@ function withProposal(
   mark: ProposalMark,
   applied?: AppliedFootprint,
 ): StoredDreamOp {
-  if (base.op !== "supersede" && base.op !== "propose-skill")
-    return applied ? { ...base, applied } : base;
   return applied ? { ...base, proposal: mark, applied } : { ...base, proposal: mark };
+}
+
+/** The author who may write to a note: a pool note's own author, else the dream's owner. */
+const authorOf = (db: MarinaDB, id: number, fallback: string) =>
+  db.getNote(id)?.entity_name ?? fallback;
+
+/**
+ * Apply ONE op to the store (inside the caller's transaction): the footprint
+ * when it applied, `proposal` when it is filed instead, `skipped` with the
+ * reason when the store refused it on contact. Shared by the dream's apply
+ * and by adoption/ratification.
+ */
+function applyOne(
+  db: MarinaDB,
+  entityName: string,
+  scope: DreamScope,
+  op: DreamOp,
+  ctx: {
+    plan?: ProbePlan;
+    applySupersedes?: boolean;
+    applySkills?: boolean;
+    procedures?: readonly ProcedureCandidate[];
+  },
+): { applied?: AppliedFootprint; skipped?: RejectedOp; proposal?: true } {
+  switch (op.op) {
+    case "merge": {
+      const prior: Record<string, PriorStatus> = {};
+      for (const id of op.into) prior[String(id)] = priorStatus(db, id);
+      const changed =
+        scope.kind === "pool"
+          ? db.consolidatePoolNotes(scope.poolId, op.keep, op.into)
+          : db.consolidateNotes(entityName, op.keep, op.into);
+      if (!changed)
+        return {
+          skipped: {
+            op: "merge",
+            ids: [op.keep, ...op.into],
+            reason: "merge: nothing to fold (the notes have moved on)",
+          },
+        };
+      return { applied: { kind: "merge", prior } };
+    }
+    case "link": {
+      const present = db
+        .getNoteLinks(op.from)
+        .some(
+          (l) => l.source_id === op.from && l.target_id === op.to && l.relationship === op.relation,
+        );
+      if (present)
+        return {
+          skipped: {
+            op: "link",
+            ids: [op.from, op.to],
+            reason: `link: #${op.from} ${op.relation} #${op.to} is already there`,
+          },
+        };
+      return { applied: { kind: "link", linkId: db.createNoteLink(op.from, op.to, op.relation) } };
+    }
+    case "decay": {
+      const note = db.getNote(op.id);
+      const priorImportance = note?.importance ?? 5;
+      db.setNoteImportance(
+        note?.entity_name ?? entityName,
+        op.id,
+        Math.max(1, priorImportance - DECAY_STEP),
+      );
+      return { applied: { kind: "decay", priorImportance } };
+    }
+    case "supersede": {
+      if (!ctx.applySupersedes) return { proposal: true };
+      // An earned dreamer applies the restatement at once — same path as an
+      // adoption, same footprint, same rollback.
+      const prior = priorStatus(db, op.id);
+      const newId = db.reviseNote(entityName, op.id, op.text);
+      if (!newId) return { proposal: true };
+      // The restatement carries the old note's span for its probe.
+      const q = ctx.plan?.queries.get(op.id);
+      if (q) q.successor = newId;
+      return { applied: { kind: "supersede", newId, prior } };
+    }
+    case "propose-skill": {
+      const candidate = ctx.procedures?.find((p) => p.key === op.procedure);
+      if (!candidate)
+        return {
+          skipped: {
+            op: "propose-skill",
+            ids: [],
+            reason: `procedure: ${op.procedure} is not in this dream's region`,
+          },
+        };
+      if (!ctx.applySkills) return { proposal: true };
+      // An earned dreamer stores the draft at once — still a draft: a
+      // validation run or a person's verify makes it servable.
+      const newId = createSkillDraft(db, entityName, op, candidate.steps);
+      return newId ? { applied: { kind: "propose-skill", newId } } : { proposal: true };
+    }
+  }
 }
 
 const proposalKey = (entityName: string, dreamId: number, n: number) =>
@@ -119,8 +224,8 @@ export interface ApplyResult {
   ops: StoredDreamOp[];
   probes: DreamProbe[];
   probesAfter: DreamChecks["probesAfter"];
-  /** Propose-tier ops, in op order, that `on` files as proposals. */
-  proposals: Array<{ n: number; op: Extract<DreamOp, { op: "supersede" | "propose-skill" }> }>;
+  /** Ops, in op order, that `on` files as proposals (propose-tier; every op of a pool dream). */
+  proposals: Array<{ n: number; op: DreamOp }>;
   /** Probe ids that passed before and fail on the applied view. */
   lost: number[];
   /** Accepted ops the store refused on contact (a link already present): rejected, by index. */
@@ -146,95 +251,49 @@ export function applyOps(
     applySkills?: boolean;
     /** The region's repeated procedures (a propose-skill's steps). */
     procedures?: readonly ProcedureCandidate[];
+    /** A pool dream: every op that applied on the view is filed as a proposal and the view is rolled back. */
+    proposeAll?: boolean;
   },
 ): ApplyResult {
+  const scope = scopeOf(db, entityName) ?? { kind: "entity" as const, name: entityName };
   const run = (): ApplyResult => {
     const ops: StoredDreamOp[] = [];
     const proposals: ApplyResult["proposals"] = [];
     const skipped: ApplyResult["skipped"] = [];
     accepted.forEach((op, n) => {
       const base = stored[n]!;
-      let applied: AppliedFootprint | undefined;
-      switch (op.op) {
-        case "merge": {
-          const prior: Record<string, PriorStatus> = {};
-          for (const id of op.into) prior[String(id)] = priorStatus(db, id);
-          db.consolidateNotes(entityName, op.keep, op.into);
-          applied = { kind: "merge", prior };
-          break;
-        }
-        case "link": {
-          const present = db
-            .getNoteLinks(op.from)
-            .some(
-              (l) =>
-                l.source_id === op.from && l.target_id === op.to && l.relationship === op.relation,
-            );
-          if (present) {
-            skipped.push({
-              n,
-              rejected: {
-                op: "link",
-                ids: [op.from, op.to],
-                reason: `link: #${op.from} ${op.relation} #${op.to} is already there`,
-              },
-            });
-            break;
-          }
-          const linkId = db.createNoteLink(op.from, op.to, op.relation);
-          applied = { kind: "link", linkId };
-          break;
-        }
-        case "decay": {
-          const priorImportance = db.getNote(op.id)?.importance ?? 5;
-          db.setNoteImportance(entityName, op.id, Math.max(1, priorImportance - DECAY_STEP));
-          applied = { kind: "decay", priorImportance };
-          break;
-        }
-        case "supersede": {
-          if (!opts.applySupersedes) {
-            proposals.push({ n, op });
-            break;
-          }
-          // An earned dreamer applies the restatement at once — same path as
-          // an adoption, same footprint, same rollback.
-          const prior = priorStatus(db, op.id);
-          const newId = db.reviseNote(entityName, op.id, op.text);
-          if (newId) {
-            applied = { kind: "supersede", newId, prior };
-            // The restatement carries the old note's span for its probe.
-            const q = plan.queries.get(op.id);
-            if (q) q.successor = newId;
-          } else proposals.push({ n, op });
-          break;
-        }
-        case "propose-skill": {
-          const candidate = opts.procedures?.find((p) => p.key === op.procedure);
-          if (!candidate) {
-            skipped.push({
-              n,
-              rejected: {
-                op: "propose-skill",
-                ids: [],
-                reason: `procedure: ${op.procedure} is not in this dream's region`,
-              },
-            });
-            break;
-          }
-          if (!opts.applySkills) {
-            proposals.push({ n, op });
-            break;
-          }
-          // An earned dreamer stores the draft at once — still a draft: a
-          // validation run or a person's verify makes it servable.
-          const newId = createSkillDraft(db, entityName, op, candidate.steps);
-          if (newId) applied = { kind: "propose-skill", newId };
-          else proposals.push({ n, op });
-          break;
-        }
+      const one = applyOne(db, entityName, scope, op, {
+        plan,
+        applySupersedes: opts.applySupersedes,
+        applySkills: opts.applySkills,
+        procedures: opts.procedures,
+      });
+      if (one.skipped) {
+        skipped.push({ n, rejected: one.skipped });
+        ops.push(base);
+        return;
       }
-      ops.push(applied ? withProposal(base, "earned", applied) : withProposal(base, "pending"));
+      if (one.proposal) {
+        proposals.push({ n, op });
+        ops.push(withProposal(base, "pending"));
+        return;
+      }
+      ops.push(
+        PROPOSE_TIER.has(base.op)
+          ? withProposal(base, "earned", one.applied)
+          : { ...base, applied: one.applied },
+      );
     });
+    if (opts.proposeAll) {
+      // The view showed what the set would do; now every applied op waits for a ratifier.
+      ops.forEach((o, n) => {
+        if (!o.applied) return;
+        proposals.push({ n, op: accepted[n]! });
+        const { applied: _applied, ...rest } = o;
+        ops[n] = withProposal(rest as StoredDreamOp, "pending");
+      });
+      proposals.sort((a, b) => a.n - b.n);
+    }
     const probes = probesAfter(db, entityName, plan);
     const lost = probes
       .filter((p) => p.before === "pass" && p.after === "fail")
@@ -253,7 +312,7 @@ export function applyOps(
       lost,
     };
     if (lost.length) throw new ProbeLoss(result);
-    if (!opts.commit) throw new DryView(result);
+    if (!opts.commit || opts.proposeAll) throw new DryView(result);
     return result;
   };
   try {
@@ -270,7 +329,7 @@ export function probesAfter(db: MarinaDB, entityName: string, plan: ProbePlan): 
   return plan.probes.map((probe) => {
     const q = plan.queries.get(probe.itemId);
     if (!q) return { ...probe, after: null };
-    const hits = q.query ? db.recallNotes(entityName, q.query) : [];
+    const hits = q.query ? scopeRecall(db, entityName, q.query) : [];
     return { ...probe, after: probeHit(hits, probe.itemId, q.successor) ? "pass" : "fail" };
   });
 }
@@ -291,6 +350,7 @@ export function fileProposals(
     let value: DreamProposal;
     if (op.op === "supersede")
       value = { ...base, kind: "supersede", id: op.id, text: op.text, refs: op.refs };
+    else if (op.op !== "propose-skill") value = { ...base, kind: "op", op };
     else {
       const candidate = procedures.find((p) => p.key === op.procedure);
       if (!candidate) continue;
@@ -362,7 +422,7 @@ function markProposal(
   if (!row) return;
   const ops = parseDreamJson<StoredDreamOp[]>(row.ops_json, []);
   const op = ops[proposal.n];
-  if (op?.op !== "supersede" && op?.op !== "propose-skill") return;
+  if (!op) return;
   ops[proposal.n] = withProposal(op, mark, applied);
   db.updateDream(row.id, { ops });
 }
@@ -370,6 +430,7 @@ function markProposal(
 export type AdoptOutcome =
   | { ok: true; kind: "supersede"; newId: number; oldId: number }
   | { ok: true; kind: "skill"; newId: number }
+  | { ok: true; kind: "op"; op: DreamOpKind }
   | { ok: false; reason: string; stale?: boolean };
 
 /**
@@ -395,6 +456,43 @@ export function adoptProposal(
   if (dream.state === "rolled_back") {
     dismissProposal(db, entityName, dreamId, n);
     return { ok: false, reason: `dream #${dreamId} was rolled back`, stale: true };
+  }
+  if (proposal.kind === "op") {
+    // A pool's record op, ratified: the notes must still be live in the
+    // scope, nothing it takes out may have been verified since, and a merge's
+    // duplicates must still say the same thing.
+    const scope = scopeOf(db, entityName);
+    if (!scope) return { ok: false, reason: "no such pool" };
+    const op = proposal.op;
+    const notes = opIds(op).map((id) => db.getNote(id));
+    if (notes.some((note) => !inScope(scope, note) || note!.verification_status === "superseded")) {
+      dismissProposal(db, entityName, dreamId, n, "stale");
+      return { ok: false, reason: "a note it touches has since changed", stale: true };
+    }
+    if (leavingIds(op).some((id) => db.getNote(id)!.verification_status === "verified")) {
+      dismissProposal(db, entityName, dreamId, n, "stale");
+      return { ok: false, reason: "a note it touches is verified now", stale: true };
+    }
+    if (op.op === "merge") {
+      const keep = db.getNote(op.keep)!;
+      const apart = op.into.some(
+        (id) => shingleSimilarity(keep.content, db.getNote(id)!.content) < MERGE_MIN_OVERLAP,
+      );
+      if (apart) {
+        dismissProposal(db, entityName, dreamId, n, "stale");
+        return { ok: false, reason: "the notes no longer say the same thing", stale: true };
+      }
+    }
+    const failed = db.transaction(() => {
+      const one = applyOne(db, entityName, scope, op, {});
+      if (!one.applied) return one.skipped?.reason ?? "the op could not be applied";
+      db.deleteCoreMemory(PROPOSAL_OWNER, proposalKey(entityName, dreamId, n));
+      markProposal(db, proposal, "adopted", one.applied);
+      return undefined;
+    });
+    if (failed) return { ok: false, reason: failed };
+    settleDreamOp(db, dreamId, n, true);
+    return { ok: true, kind: "op", op: op.op };
   }
   if (proposal.kind === "skill") {
     if (procedureCovered(db, entityName, proposal.steps)) {
@@ -491,7 +589,7 @@ export function rollbackDream(db: MarinaDB, row: DreamRow, now = Date.now()): Ro
   db.transaction(() => {
     for (let i = ops.length - 1; i >= 0; i--) {
       const op = ops[i]!;
-      if ((op.op === "supersede" || op.op === "propose-skill") && op.proposal === "pending") {
+      if (op.proposal === "pending") {
         if (dismissProposal(db, entityName, row.id, i)) dismissed++;
         ops[i] = { ...op, proposal: "dismissed" };
         continue;
@@ -505,7 +603,7 @@ export function rollbackDream(db: MarinaDB, row: DreamRow, now = Date.now()): Ro
             for (const id of op.into)
               done =
                 db.restoreSupersededNote(
-                  entityName,
+                  authorOf(db, id, entityName),
                   op.keep,
                   id,
                   applied.prior[String(id)] ?? "unverified",
@@ -513,7 +611,11 @@ export function rollbackDream(db: MarinaDB, row: DreamRow, now = Date.now()): Ro
           break;
         case "decay":
           if (op.op === "decay")
-            done = db.setNoteImportance(entityName, op.id, applied.priorImportance);
+            done = db.setNoteImportance(
+              authorOf(db, op.id, entityName),
+              op.id,
+              applied.priorImportance,
+            );
           break;
         case "link":
           if (op.op === "link") done = db.removeNoteLink(op.from, op.to, op.relation);

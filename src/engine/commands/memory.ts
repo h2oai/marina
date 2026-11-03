@@ -6,6 +6,7 @@ import {
   adoptProposal,
   assessmentOf,
   clearGuard,
+  type DreamProposal,
   dismissProposal,
   dreamEffect,
   dreamingMode,
@@ -436,8 +437,8 @@ async function runDreamCommand(
         `${c.accepted} accepted · ${c.rejected} rejected · ${c.leaving} of ${c.regionSize} ${summary.state === "applied" ? "left" : "would leave"} the active set`,
       ),
       label(bold("Probes"), probesLine(c)),
-      ...renderOps(summary.ops ?? []),
-      ...renderRejected(summary.rejected ?? []),
+      ...renderDreamOps(summary.ops ?? []),
+      ...renderDreamRejected(summary.rejected ?? []),
       "",
       dim(
         summary.state === "dry-run"
@@ -505,7 +506,9 @@ async function runDreamCommand(
       entityId,
       out.kind === "skill"
         ? `Adopted: skill draft #${out.newId} stored (skill list shows it). It is served once validated: skill trial ${out.newId} in a child world, or a person's skill verify ${out.newId}. memory dream rollback ${row.id} reverses the whole dream.`
-        : `Adopted: note #${out.newId} supersedes #${out.oldId}. memory dream rollback ${row.id} reverses the whole dream.`,
+        : out.kind === "op"
+          ? `Adopted: ${out.op} applied. memory dream rollback ${row.id} reverses the whole dream.`
+          : `Adopted: note #${out.newId} supersedes #${out.oldId}. memory dream rollback ${row.id} reverses the whole dream.`,
     );
     return;
   }
@@ -581,17 +584,8 @@ async function runDreamCommand(
     }
     const lines = [header("Dream proposals"), separator()];
     for (const p of pending) {
-      if (p.kind === "skill")
-        lines.push(
-          `  dream #${p.dreamId} proposal ${p.n} — skill draft "${p.name}" from ${p.steps.length} commands repeated in tasks #${p.tasks.join(", #")}: ${p.reason}`,
-          `    ${p.description} || Actions: ${p.steps.join(" ; ")}`,
-        );
-      else
-        lines.push(
-          `  dream #${p.dreamId} proposal ${p.n} — restate #${p.id}${p.refs.length ? ` (with #${p.refs.join(", #")})` : ""}: ${p.reason}`,
-          `    ${p.text}`,
-        );
       lines.push(
+        ...renderDreamProposal(p),
         dim(
           `    memory dream adopt ${p.dreamId} ${p.n} · memory dream dismiss ${p.dreamId} ${p.n}`,
         ),
@@ -611,7 +605,7 @@ async function runDreamCommand(
       ctx.send(entityId, `No dream #${tokens[1] ?? "?"} of yours. ${DREAM_USAGE}`);
       return;
     }
-    const checks = parseChecks(row.checks_json);
+    const checks = dreamChecksOf(row.checks_json);
     const probes = parseDreamJson<DreamProbe[]>(row.probes_json, []);
     const ops = parseDreamJson<StoredDreamOp[]>(row.ops_json, []);
     const pending = ops.filter(
@@ -634,8 +628,8 @@ async function runDreamCommand(
         ),
         label(bold("Probes"), `${probesLine(checks)} (${probes.length} probed)`),
         label(bold("Model"), `${row.model ?? "—"} · $${row.spend_usd.toFixed(4)}`),
-        ...renderOps(ops),
-        ...renderRejected(parseDreamJson<RejectedOp[]>(row.rejected_json, [])),
+        ...renderDreamOps(ops),
+        ...renderDreamRejected(parseDreamJson<RejectedOp[]>(row.rejected_json, [])),
         ...(row.state === "applied"
           ? [
               "",
@@ -658,7 +652,7 @@ async function runDreamCommand(
   }
   const lines = [header("Dreams"), separator()];
   for (const row of rows) {
-    const checks = parseChecks(row.checks_json);
+    const checks = dreamChecksOf(row.checks_json);
     lines.push(
       `  #${String(row.id).padEnd(5)} ${new Date(row.created_at).toISOString().slice(0, 16)}  ${row.state.padEnd(11)} ${checks.accepted} ops · ${checks.rejected} rejected · ${checks.leaving}/${checks.regionSize} ${row.state === "observed" ? "would leave" : "left"} · ${row.trigger}`,
     );
@@ -679,7 +673,7 @@ const EMPTY_CHECKS: DreamChecks = {
   probesAfter: null,
 };
 
-function parseChecks(json: string): DreamChecks {
+export function dreamChecksOf(json: string): DreamChecks {
   return { ...EMPTY_CHECKS, ...parseDreamJson<Partial<DreamChecks>>(json, {}) };
 }
 
@@ -703,7 +697,7 @@ export function dreamBriefLine(db: MarinaDB, entityName: string, now = Date.now(
   if (!row || now - row.created_at > 24 * 60 * 60 * 1000) {
     return pending.length ? `${pending.length} proposal(s) await you: memory dream proposals` : "";
   }
-  const checks = parseChecks(row.checks_json);
+  const checks = dreamChecksOf(row.checks_json);
   const ops = parseDreamJson<StoredDreamOp[]>(row.ops_json, []);
   const counts = { merge: 0, link: 0, decay: 0, "propose-skill": 0 };
   for (const op of ops) if (op.applied && op.op !== "supersede") counts[op.op]++;
@@ -722,7 +716,30 @@ export function dreamBriefLine(db: MarinaDB, entityName: string, now = Date.now(
     : head;
 }
 
-function renderOps(ops: readonly StoredDreamOp[]): string[] {
+/** One proposal's lines (shared with `pool <name> dream proposals`): what it would do, and its text. */
+export function renderDreamProposal(p: DreamProposal): string[] {
+  if (p.kind === "skill")
+    return [
+      `  dream #${p.dreamId} proposal ${p.n} — skill draft "${p.name}" from ${p.steps.length} commands repeated in tasks #${p.tasks.join(", #")}: ${p.reason}`,
+      `    ${p.description} || Actions: ${p.steps.join(" ; ")}`,
+    ];
+  if (p.kind === "op") {
+    const op = p.op;
+    const what =
+      op.op === "merge"
+        ? `merge #${op.into.join(", #")} into #${op.keep}`
+        : op.op === "link"
+          ? `link #${op.from} ${op.relation} #${op.to}`
+          : `decay #${op.id}`;
+    return [`  dream #${p.dreamId} proposal ${p.n} — ${what}: ${p.reason}`];
+  }
+  return [
+    `  dream #${p.dreamId} proposal ${p.n} — restate #${p.id}${p.refs.length ? ` (with #${p.refs.join(", #")})` : ""}: ${p.reason}`,
+    `    ${p.text}`,
+  ];
+}
+
+export function renderDreamOps(ops: readonly StoredDreamOp[]): string[] {
   if (!ops.length) return ["", bold("Accepted ops"), "  none"];
   const lines = ["", bold("Accepted ops")];
   for (const op of ops) {
@@ -751,7 +768,7 @@ function renderOps(ops: readonly StoredDreamOp[]): string[] {
   return lines;
 }
 
-function renderRejected(rejected: readonly RejectedOp[]): string[] {
+export function renderDreamRejected(rejected: readonly RejectedOp[]): string[] {
   if (!rejected.length) return [];
   const lines = ["", bold("Rejected")];
   for (const r of rejected.slice(0, 20))

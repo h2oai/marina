@@ -578,6 +578,7 @@ are visible envelopes: usage reports overruns without silently terminating auton
 > pool shared-knowledge recall query Search the pool and update recall telemetry
 > pool shared-knowledge audit        Check notes for duplicates, length, stale commands, unsupported claims, and stale notes
 > pool guide recall how do I move    Search the built-in guide pool
+> pool shared-knowledge dream proposals   Ops a pool dream proposed (merge/link/decay); ratify/dismiss/rollback by an independent ratifier
 > share shared-knowledge Finding     Drop a note into a shared pool (share <pool> <content>)
 ```
 

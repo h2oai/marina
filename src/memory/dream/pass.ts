@@ -20,7 +20,8 @@
  *     that passed before still passes after; a lost probe rejects the whole
  *     set. Supersedes and skill drafts are filed as proposals for the owner
  *     (`memory dream adopt`). `memory dream rollback <id>` reverses an
- *     applied dream.
+ *     applied dream. A POOL dream (`pool:<name>`, `scope.ts`) files EVERY
+ *     op for a ratifier (`pool <name> dream ratify`).
  *
  * Schedule gates (the `memory-dream` tick job): material (≥ DREAM_MIN_NEW own
  * records since the last dream), quiet (no tool call for DREAM_IDLE_MS),
@@ -42,6 +43,7 @@ import { dreamJudgeApplies, recordDreamOpinions } from "./judge";
 import { probePlan } from "./probe";
 import { proposeOps } from "./propose";
 import { gatherRegion } from "./region";
+import { poolScopeName, scopeOf } from "./scope";
 import type {
   DreamChecks,
   DreamMode,
@@ -110,30 +112,48 @@ function storedOp(op: DreamOp, region: DreamRegion): StoredDreamOp {
   return op;
 }
 
-const isProposal = (op: StoredDreamOp) =>
-  (op.op === "supersede" || op.op === "propose-skill") && op.proposal !== undefined;
+/** Filed for an owner or a ratifier (a propose-tier op; every op of a pool dream). */
+const isProposal = (op: StoredDreamOp) => op.proposal !== undefined;
 
-/** The agent's last tool call, from the usage ledger; undefined when it never acted. */
+/** The agent's last tool call, from the usage ledger (a pool: its last write); undefined when never. */
 export function lastActivityAt(db: MarinaDB, entityName: string): number | undefined {
-  const row = db
-    .memoryRepository()
-    .raw.query<{ at: number | null }, [string]>(
-      "SELECT max(created_at) AS at FROM primitive_usage WHERE actor_name = ?",
-    )
-    .get(entityName);
+  const scope = scopeOf(db, entityName);
+  const raw = db.memoryRepository().raw;
+  const row =
+    scope?.kind === "pool"
+      ? raw
+          .query<{ at: number | null }, [string]>(
+            "SELECT max(created_at) AS at FROM numeric_notes WHERE pool_id = ?",
+          )
+          .get(scope.poolId)
+      : raw
+          .query<{ at: number | null }, [string]>(
+            "SELECT max(created_at) AS at FROM primitive_usage WHERE actor_name = ?",
+          )
+          .get(entityName);
   return row?.at ?? undefined;
 }
 
-/** Own fact-like records written since `since`. */
+/** Fact-like records written since `since`: the owner's own, or the pool's. */
 export function newRecordsSince(db: MarinaDB, entityName: string, since: number): number {
-  const row = db
-    .memoryRepository()
-    .raw.query<{ n: number }, [string, number]>(
-      `SELECT count(*) AS n FROM numeric_notes
-       WHERE entity_name = ? AND pool_id IS NULL AND created_at > ?
-         AND verification_status != 'superseded' AND tier IN ('fact','reflection','skill')`,
-    )
-    .get(entityName, since);
+  const scope = scopeOf(db, entityName);
+  const raw = db.memoryRepository().raw;
+  const row =
+    scope?.kind === "pool"
+      ? raw
+          .query<{ n: number }, [string, number]>(
+            `SELECT count(*) AS n FROM numeric_notes
+             WHERE pool_id = ? AND created_at > ?
+               AND verification_status != 'superseded' AND tier IN ('fact','reflection','skill')`,
+          )
+          .get(scope.poolId, since)
+      : raw
+          .query<{ n: number }, [string, number]>(
+            `SELECT count(*) AS n FROM numeric_notes
+             WHERE entity_name = ? AND pool_id IS NULL AND created_at > ?
+               AND verification_status != 'superseded' AND tier IN ('fact','reflection','skill')`,
+          )
+          .get(entityName, since);
   return row?.n ?? 0;
 }
 
@@ -182,6 +202,21 @@ export function dreamCandidates(db: MarinaDB, now = Date.now()): string[] {
     .map((r) => r.entity_name);
 }
 
+/** Pools written to in the last day, as dream names (`pool:<name>`); the gates decide per pool. */
+export function poolDreamCandidates(db: MarinaDB, now = Date.now()): string[] {
+  return db
+    .memoryRepository()
+    .raw.query<{ pool_id: string }, [number, number]>(
+      `SELECT pool_id FROM numeric_notes
+       WHERE pool_id IS NOT NULL AND created_at > ?
+       GROUP BY pool_id ORDER BY max(created_at) DESC LIMIT ?`,
+    )
+    .all(now - 24 * HOUR_MS, DREAM_CANDIDATES_PER_RUN)
+    .map((r) => db.getMemoryPoolById(r.pool_id)?.name)
+    .filter((name): name is string => !!name)
+    .map(poolScopeName);
+}
+
 /**
  * One dream for one entity. `schedule` honours every gate; `command` skips the
  * schedule gates; `dry-run` also records nothing. Returns what happened —
@@ -205,6 +240,8 @@ export async function runDream(
   const budget = budgetGate(env, now);
   if (budget) return { ...base, skipped: budget };
 
+  const scope = scopeOf(db, entityName);
+  if (!scope) return { ...base, skipped: "no such pool" };
   const last = db.lastDreamAt(entityName);
   const since = last ?? now - DREAM_FIRST_WINDOW_MS;
   const region = gatherRegion(db, entityName, since, now);
@@ -240,12 +277,14 @@ export async function runDream(
   const rejected = [...proposed.rejected, ...checked.rejected];
   const plan = probePlan(db, region, checked.accepted);
   // The utility-curve guard (guard.ts) holds a tripped agent at observe.
-  const guarded = mode === "on" && guardTripped(db, entityName);
+  const guarded = mode === "on" && scope.kind === "entity" && guardTripped(db, entityName);
   const commit = mode === "on" && trigger !== "dry-run" && !guarded;
+  // A pool dream never applies: every op is filed for a ratifier (scope.ts).
+  const proposeAll = scope.kind === "pool";
   // An earned dreamer (judge.ts, MARINA_DREAM_JUDGE=on) applies restatements
   // at once, or stores skill drafts at once — per op kind.
-  const applySupersedes = commit && dreamJudgeApplies(db, model, "supersede", env);
-  const applySkills = commit && dreamJudgeApplies(db, model, "propose-skill", env);
+  const applySupersedes = commit && !proposeAll && dreamJudgeApplies(db, model, "supersede", env);
+  const applySkills = commit && !proposeAll && dreamJudgeApplies(db, model, "propose-skill", env);
   let accepted = checked.accepted;
   let stored: StoredDreamOp[] = accepted.map((op) => storedOp(op, region));
   let view: ApplyResult | undefined;
@@ -261,6 +300,7 @@ export async function runDream(
         applySupersedes,
         applySkills,
         procedures: region.procedures,
+        proposeAll,
       });
       if (view.lost.length) {
         const lost = `probe-after: #${view.lost.join(", #")} no longer retrievable once the set is applied`;
@@ -335,7 +375,9 @@ export async function runDream(
       source: "memory",
       title: "memory.dream",
       body: applied
-        ? `${entityName}: ${appliedCount} op(s) applied over ${checks.regionSize} record(s), ${proposals} proposal(s) filed, ${checks.rejected} rejected, ${checks.leaving} left the active set; memory dream rollback ${id} reverses it`
+        ? scope.kind === "pool"
+          ? `${entityName}: ${proposals} op(s) proposed over ${checks.regionSize} shared record(s), ${checks.rejected} rejected; nothing applied until ratified (pool ${scope.name} dream proposals)`
+          : `${entityName}: ${appliedCount} op(s) applied over ${checks.regionSize} record(s), ${proposals} proposal(s) filed, ${checks.rejected} rejected, ${checks.leaving} left the active set; memory dream rollback ${id} reverses it`
         : `${entityName}: ${checks.accepted} op(s) proposed over ${checks.regionSize} record(s), ${checks.rejected} rejected, ${checks.leaving} would leave the active set; observed, nothing applied${guarded ? " (guard: dreaming paused for this agent)" : ""}`,
       participants: [entityName],
       refs: [`dream:${id}`],
@@ -356,7 +398,7 @@ export async function runDreamSchedule(
   if (dreamingMode(env) === "off") return [];
   const now = deps.now ?? Date.now();
   const out: DreamSummary[] = [];
-  for (const entity of dreamCandidates(db, now)) {
+  for (const entity of [...dreamCandidates(db, now), ...poolDreamCandidates(db, now)]) {
     const summary = await runDream(db, entity, "schedule", { ...deps, env, now });
     out.push(summary);
     if (summary.skipped?.startsWith("budget:")) break;

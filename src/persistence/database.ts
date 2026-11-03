@@ -2062,6 +2062,9 @@ export class MarinaDB implements MarinaStores {
   consolidateNotes(entityName: string, keeperId: number, duplicateIds: number[]): number {
     return notesDb.consolidateNotes(this.db, entityName, keeperId, duplicateIds);
   }
+  consolidatePoolNotes(poolId: string, keeperId: number, duplicateIds: number[]): number {
+    return notesDb.consolidatePoolNotes(this.db, poolId, keeperId, duplicateIds);
+  }
   restoreSupersededNote(
     entityName: string,
     keeperId: number,

@@ -19,6 +19,8 @@
  *   active set in one dream (merge-into, supersede, decay).
  * - procedure (propose-skill): the key names one of the region's repeated
  *   procedures (`procedures.ts`), the name makes a slug, the description fits.
+ * - pool: a pool dream proposes merge, link and decay only — nothing that
+ *   writes new text over another member's words.
  */
 
 import { shingleSimilarity } from "../near-duplicate";
@@ -100,6 +102,13 @@ export function checkOps(
     rejected.push({ op: op.op, ids: opIds(op), reason });
 
   for (const op of ops) {
+    if (region.pool && (op.op === "supersede" || op.op === "propose-skill")) {
+      reject(
+        op,
+        "pool: a restatement or a skill over a shared pool is written by a member, not dreamed",
+      );
+      continue;
+    }
     if (op.op === "propose-skill") {
       if (!region.procedures.some((p) => p.key === op.procedure)) {
         reject(op, `procedure: ${op.procedure} is not a repeated procedure of this dream`);

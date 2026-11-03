@@ -36,9 +36,10 @@ import {
   type CommandVocabulary,
   renderKnowledgeHygieneReport,
 } from "./knowledge-hygiene";
+import { runPoolDreamCommand } from "./pool-dream";
 import { resolveProjectPrefix } from "./project";
 
-const POOL_ACTIONS = ["list", "status", "audit", "add", "ratify", "recall", "show"];
+const POOL_ACTIONS = ["list", "status", "audit", "add", "ratify", "recall", "show", "dream"];
 
 /** How much of a note a listing shows before it points at the whole note. */
 const EXCERPT_CHARS = 60;
@@ -183,13 +184,22 @@ export function poolCommand(deps: {
       { syntax: "pool <name> ratify <noteId> [importance:N] [rationale]", effect: "write" },
       { syntax: "pool <name> recall", effect: "read" },
       { syntax: "pool <name> show <id>", effect: "read" },
+      { syntax: "pool <name> dream", effect: "read" },
+      { syntax: "pool <name> dream now", effect: "write" },
+      { syntax: "pool <name> dream dry-run", effect: "read" },
+      { syntax: "pool <name> dream log", effect: "read" },
+      { syntax: "pool <name> dream show <id>", effect: "read" },
+      { syntax: "pool <name> dream proposals", effect: "read" },
+      { syntax: "pool <name> dream ratify <id> [n]", effect: "write" },
+      { syntax: "pool <name> dream dismiss <id> [n]", effect: "write" },
+      { syntax: "pool <name> dream rollback <id>", effect: "write" },
       { syntax: "pool <name> status", effect: "read" },
       { syntax: "pool create <name> [group <groupName>]", effect: "write" },
       { syntax: "pool list", effect: "read" },
     ],
     name: "pool",
     aliases: [],
-    help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> [group <groupName>] | pool <name> add <text> [importance:N] | pool <name> recall|list|status|audit|ratify | pool <name> show <id> | pool list\n  (importance also as trailing `importance N` or `!N`; `ls` = list)\n\nExamples:\n  pool create findings\n  pool create crew-notes group project:Beta   (members-only pool; you must belong to the group)\n  pool findings add The decode room responds to binary input importance:7\n  pool findings recall binary\n  pool findings show 12          (the whole note; listings show the first 60 characters)\n  pool findings list\n  pool findings status\n  pool findings audit\n  pool guide ratify 42 importance 8 verified against the command registry\n\nInstitutional pools (guide, orchestration:*, tradition:*): on a shared instance `add` files a proposal (importance capped at 4, unverified) until someone with standing >= 15 (rank 2), a sovereign, or the local operator runs `pool <name> ratify <noteId> [importance N] [rationale]` — which lifts the cap, marks it verified, and mirrors it into the institutional durable space.",
+    help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> [group <groupName>] | pool <name> add <text> [importance:N] | pool <name> recall|list|status|audit|ratify|dream | pool <name> show <id> | pool list\n  (importance also as trailing `importance N` or `!N`; `ls` = list)\n\nExamples:\n  pool create findings\n  pool create crew-notes group project:Beta   (members-only pool; you must belong to the group)\n  pool findings add The decode room responds to binary input importance:7\n  pool findings recall binary\n  pool findings show 12          (the whole note; listings show the first 60 characters)\n  pool findings list\n  pool findings status\n  pool findings audit\n  pool guide ratify 42 importance 8 verified against the command registry\n\nInstitutional pools (guide, orchestration:*, tradition:*): on a shared instance `add` files a proposal (importance capped at 4, unverified) until someone with standing >= 15 (rank 2), a sovereign, or the local operator runs `pool <name> ratify <noteId> [importance N] [rationale]` — which lifts the cap, marks it verified, and mirrors it into the institutional durable space.\n\nDreaming over a pool: `pool <name> dream` is the consolidation pass over the pool's shared records (merges, links, decays); every op it proposes waits for a ratifier — standing >= 15, a sovereign, or the local operator, who wrote none of the notes it touches — `pool <name> dream proposals|ratify <id> [n]|dismiss|rollback <id>`.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -571,6 +581,9 @@ export function poolCommand(deps: {
           );
           return;
         }
+
+        case "dream":
+          return runPoolDreamCommand(ctx, db, entity, input.entity, pool, tokens.slice(2));
 
         case "recall": {
           const query = tokens.slice(2).join(" ");
