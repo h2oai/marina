@@ -7,8 +7,8 @@
  * the one judge ledger (surface `dream`, question = the op kind, judge
  * `dream:<model>`, subject `dream:<id>:<n>`), settled mechanically:
  *
- *   - an adopted restatement        → pass (the owner agreed)
- *   - a dismissed restatement       → fail (the owner disagreed)
+ *   - an adopted proposal           → pass (the owner agreed: a restatement, a skill draft)
+ *   - a dismissed proposal          → fail (the owner disagreed)
  *   - a rolled-back dream           → fail for every op it applied
  *   - an applied op left standing   → pass after DREAM_SETTLE_MS (the owner
  *                                     kept it; the hourly job settles it)
@@ -48,7 +48,8 @@ export function recordDreamOpinions(
 ): number {
   let n = 0;
   ops.forEach((op, i) => {
-    if (!op.applied && !(op.op === "supersede" && op.proposal)) return;
+    const proposed = (op.op === "supersede" || op.op === "propose-skill") && op.proposal;
+    if (!op.applied && !proposed) return;
     recordJudgeOpinion(db, {
       surface: DREAM_JUDGE_SURFACE,
       question: op.op,

@@ -31,6 +31,7 @@ export const DREAM_SYSTEM_PROMPT = [
   '  {"op":"supersede","id":N,"text":"...","refs":[N,...],"reason":"..."} — one note restated more precisely. The text may contain ONLY facts, numbers and names present in note N or the refs. No new claims.',
   '  {"op":"link","from":N,"to":N,"relation":"related_to|supports|contradicts|derived_from|part_of","reason":"..."}',
   '  {"op":"decay","id":N,"reason":"..."} — served repeatedly, never used; only when the evidence says so.',
+  '  {"op":"propose-skill","procedure":"<key>","name":"short-name","description":"when to use it, one sentence","reason":"..."} — ONLY over a procedure listed under Procedures (the same command sequence ran in two or more successful tasks and no skill covers it). You name and describe it; its steps are fixed.',
   "Rules: prefer doing nothing over a doubtful change. Never merge notes that differ in a number, date, name or outcome — that difference is the point. Never touch verified notes. At most 32 ops. Reasons are one short sentence.",
 ].join("\n");
 
@@ -45,6 +46,13 @@ export function regionPrompt(region: DreamRegion): string {
     lines.push(
       `#${r.id} [${r.tier}/${r.noteType} imp=${r.importance}${r.verified ? " verified" : ""} age=${age}h served=${r.serves} cited=${r.cited} mean=${r.mean.toFixed(2)}] ${r.content.replace(/\s+/g, " ")}`,
     );
+  }
+  if (region.procedures.length) {
+    lines.push(
+      `Procedures (command sequences repeated across successful tasks, none covered by a skill; propose-skill names one by key):`,
+    );
+    for (const p of region.procedures)
+      lines.push(`${p.key} [tasks #${p.tasks.join(", #")}]: ${p.steps.join(" ; ")}`);
   }
   return lines.join("\n");
 }
@@ -120,6 +128,21 @@ export function parseOps(reply: string): { ops: DreamOp[]; rejected: RejectedOp[
           break;
         }
         ops.push({ op: "decay", id: o.id, reason });
+        break;
+      }
+      case "propose-skill": {
+        const procedure = str(o.procedure, 32);
+        const name = str(o.name, 80);
+        const description = str(o.description, 400);
+        if (!procedure || !name || !description) {
+          rejected.push({
+            op: "propose-skill",
+            ids: [],
+            reason: "propose-skill needs a procedure key, a name and a description",
+          });
+          break;
+        }
+        ops.push({ op: "propose-skill", procedure, name, description, reason });
         break;
       }
       default:

@@ -439,7 +439,7 @@ describe("the dream pass (observe)", () => {
     expect(event.body).toContain(`rollback ${summary.id}`);
     // The agent's line.
     expect(dreamBriefLine(db, "Ada", at)).toBe(
-      `dream #${summary.id} applied 1 merge, 1 link, 1 decay to your notes (memory dream rollback ${summary.id} reverses it) · 1 restatement(s) await you: memory dream proposals`,
+      `dream #${summary.id} applied 1 merge, 1 link, 1 decay to your notes (memory dream rollback ${summary.id} reverses it) · 1 proposal(s) await you: memory dream proposals`,
     );
 
     // Adopt the restatement: faithfulness is re-checked against the notes now; the old note is superseded.

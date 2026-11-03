@@ -4,14 +4,16 @@
 /**
  * The dream region (Auto-Dreamer's rule): what the agent WROTE in the window
  * ∪ what it was SERVED in the window, with the use evidence on each record,
- * plus the outcomes it resolved. Own fact-like legacy notes only — never a
- * pool, never another owner's space, never the process tier. Byte-capped,
+ * plus the outcomes it resolved and the procedures repeated across its
+ * successful tasks (`procedures.ts`). Own fact-like legacy notes only — never
+ * a pool, never another owner's space, never the process tier. Byte-capped,
  * newest first; what does not fit waits for the next dream.
  */
 
 import { createHash } from "node:crypto";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import { itemsServedTo, usefulnessPosterior } from "../../persistence/db-memory-usefulness";
+import { gatherProcedures } from "./procedures";
 import type { DreamRegion, RegionRecord } from "./types";
 
 /** Newest own records considered per dream. */
@@ -121,6 +123,7 @@ export function gatherRegion(
     records,
     outcomes: { total: outcomes.length, succeeded, failed: outcomes.length - succeeded },
     newRecords,
+    procedures: gatherProcedures(db, entityName, since, until),
     hash,
     bytes,
   };

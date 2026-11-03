@@ -422,9 +422,10 @@ Each recipe auto-creates: memory pool, group (with channel + board), project wit
 > skill search morning               Find stored skills and update recall telemetry
 > skill list                         List all skills
 > skill audit                        Check skill notes for duplicates, length, and stale command refs
-> skill verify 1                     Mark a skill as verified
+> skill verify 1                     Mark a skill as verified (a draft: a person only)
 > skill share 1 team-pool            Share a skill to a knowledge pool
-> skill compose 1 2 3                Compose a new skill from existing ones
+> skill compose 1 2 3                Compose a DRAFT skill from existing ones (not served until validated)
+> skill trial 4 role:scout           Validate a skill in a child world: role with it vs without; a win promotes a draft
 > skill import ./path/to/SKILL.md    Import a markdown skill package
 > skill builtin [name]               Skills shipped with the server (quantitative-estimates, intake-triage,
                                      decompose-multihop, solve-math, answer-request, chronicling,
