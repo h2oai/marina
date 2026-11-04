@@ -46,9 +46,12 @@ describe("skills from dreams", () => {
   let engine: Engine;
   let conn: MockConnection;
   let ada: EntityId;
-  const now = Date.now();
+  // Taken per test, before its notes are written: a file-level clock left the notes
+  // outside the dream window once a slow shard spent more than a second between them.
+  let now = 0;
 
   beforeEach(() => {
+    now = Date.now();
     cleanupDb(TEST_DB);
     db = new MarinaDB(TEST_DB);
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
