@@ -420,6 +420,113 @@ export async function runDream(
   return commit ? db.transaction(finish) : finish();
 }
 
+/** The schedule gates a skip is MEANT to report; anything else is a pass that never started. */
+const GATE_SKIPS = ["cooldown", "material", "quiet"];
+
+/**
+ * Skip reasons of a pass that are not schedule gates — `no model`, `model:`,
+ * `budget:`, `no records` — as counts by their first word(s). Empty when every
+ * skip was a gate. The jobs log this, so a pass that never starts is seen
+ * (seen live: a day of "no model" with nothing to show for it).
+ */
+export function silentSkips(dreams: readonly DreamSummary[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const d of dreams) {
+    if (d.state !== "skipped" || !d.skipped) continue;
+    const head = d.skipped.split(":")[0]!.trim();
+    if (GATE_SKIPS.includes(head)) continue;
+    out[head] = (out[head] ?? 0) + 1;
+  }
+  return out;
+}
+
+export interface DreamExplanation {
+  entityName: string;
+  mode: DreamMode;
+  /** `MARINA_DREAMING=off`, else the budget gate's reason, else undefined. */
+  blocked?: string;
+  /** The schedule gate's reason, or undefined when the next sweep would dream. */
+  gate?: string;
+  request?: { reason: string; requestedAt: number };
+  guardTripped: boolean;
+  lastDreamAt?: number;
+  newRecords: number;
+  model: { spec: string; key: "operator" | "internal" | "none"; error?: string };
+}
+
+/**
+ * Why the next sweep would — or would not — dream for an entity or a pool:
+ * every gate as it stands now, and whether the dreamer's model can be called.
+ * `memory dream why [entity]`, `pool <name> dream why`. Reads only.
+ */
+export async function explainDream(
+  db: MarinaDB,
+  entityName: string,
+  deps: { env?: NodeJS.ProcessEnv; now?: number } = {},
+): Promise<DreamExplanation> {
+  const env = deps.env ?? process.env;
+  const now = deps.now ?? Date.now();
+  const mode = dreamingMode(env);
+  const last = db.lastDreamAt(entityName);
+  const since = last ?? now - DREAM_FIRST_WINDOW_MS;
+  const choice = roleModel("dreamer", { env });
+  const model: DreamExplanation["model"] = { spec: choice.model, key: "none" };
+  if (modelApiKeySecrets(env).length) model.key = "operator";
+  else if (isLoopbackMarinaSpec(choice.model)) {
+    try {
+      await selfModelToken(env);
+      model.key = "internal";
+    } catch (err) {
+      model.error = (err as Error).message;
+    }
+  } else {
+    try {
+      modelComplete(choice.model, env, { purpose: "dream" });
+      model.key = "operator";
+    } catch (err) {
+      model.error = (err as Error).message;
+    }
+  }
+  return {
+    entityName,
+    mode,
+    ...(mode === "off"
+      ? { blocked: "MARINA_DREAMING=off" }
+      : (() => {
+          const budget = budgetGate(env, now);
+          return budget ? { blocked: budget } : {};
+        })()),
+    gate: scheduleGate(db, entityName, now),
+    ...(() => {
+      const r = pendingRequest(db, entityName, now);
+      return r ? { request: { reason: r.reason, requestedAt: r.requestedAt } } : {};
+    })(),
+    guardTripped: scopeOf(db, entityName)?.kind === "entity" ? guardTripped(db, entityName) : false,
+    ...(last !== undefined ? { lastDreamAt: last } : {}),
+    newRecords: newRecordsSince(db, entityName, since),
+    model,
+  };
+}
+
+export function renderDreamExplanation(e: DreamExplanation, now = Date.now()): string[] {
+  const ago = (t: number) => `${Math.round((now - t) / 60_000)} min ago`;
+  const lines = [
+    `  mode: ${e.mode}${e.blocked ? ` · blocked: ${e.blocked}` : ""}`,
+    `  last dream: ${e.lastDreamAt !== undefined ? ago(e.lastDreamAt) : "never"} · ${e.newRecords} new record(s) since`,
+    `  gates: ${e.gate ?? "pass — the next sweep (every 5 min) dreams"}`,
+  ];
+  if (e.request)
+    lines.push(
+      `  request: ${e.request.reason} (${ago(e.request.requestedAt)}; material and cooldown waived)`,
+    );
+  if (e.guardTripped)
+    lines.push("  guard: tripped — dreams run in observe until an operator clears it");
+  lines.push(
+    `  model: ${e.model.spec} · key: ${e.model.key === "operator" ? "operator (MODEL_API_KEYS)" : e.model.key === "internal" ? "this server's internal token" : `NONE${e.model.error ? ` — ${e.model.error}` : ""}`}`,
+  );
+  return lines;
+}
+
 /**
  * Requested dreams (request.ts): every entity with a pending compaction
  * request that has been quiet for DREAM_IDLE_MS, under the budget gate; the

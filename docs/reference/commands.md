@@ -6385,6 +6385,13 @@ Effect: write.
 - `field-0` (`reason`): text, optional group `option-0`.
 - Group `option-0`: `reason`.
 
+### `memory dream why [entity]`
+
+Effect: read.
+
+- `field-0` (`entity`): text, optional group `option-0`.
+- Group `option-0`: `entity`.
+
 ### `memory dream brief`
 
 Effect: read.
@@ -7567,6 +7574,12 @@ Effect: write.
 
 - `field-0` (`name`): text, required.
 - `field-1` (`id`): text, required.
+
+### `pool <name> dream why`
+
+Effect: read.
+
+- `field-0` (`name`): text, required.
 
 ### `pool <name> status`
 

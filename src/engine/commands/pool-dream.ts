@@ -17,9 +17,11 @@ import {
   type DreamProposal,
   dismissProposal,
   dreamingMode,
+  explainDream,
   opIds,
   pendingProposals,
   poolScopeName,
+  renderDreamExplanation,
   rollbackDream,
   runDream,
 } from "../../memory/dream";
@@ -33,7 +35,17 @@ import { refuseCommand } from "../command-response";
 import { canonicalSub } from "../parse-input";
 import { dreamChecksOf, renderDreamOps, renderDreamProposal, renderDreamRejected } from "./memory";
 
-const VERBS = ["now", "dry-run", "log", "show", "proposals", "ratify", "dismiss", "rollback"];
+const VERBS = [
+  "now",
+  "dry-run",
+  "log",
+  "show",
+  "proposals",
+  "ratify",
+  "dismiss",
+  "rollback",
+  "why",
+];
 
 export async function runPoolDreamCommand(
   ctx: RoomContext,
@@ -44,7 +56,7 @@ export async function runPoolDreamCommand(
   tokens: readonly string[],
 ): Promise<void> {
   const name = poolScopeName(pool.name);
-  const usage = `Usage: pool ${pool.name} dream [now|dry-run|log|show <id>|proposals|ratify <id> [n]|dismiss <id> [n]|rollback <id>]`;
+  const usage = `Usage: pool ${pool.name} dream [now|dry-run|log|show <id>|proposals|ratify <id> [n]|dismiss <id> [n]|rollback <id>|why]`;
   const verb = canonicalSub(tokens[0], VERBS) ?? "log";
   const dreamOf = () => {
     const id = Number.parseInt(tokens[1] ?? "", 10);
@@ -67,6 +79,18 @@ export async function runPoolDreamCommand(
     return !ids.some((id) => db.getNote(id)?.entity_name === entity.name);
   };
 
+  if (verb === "why") {
+    const explanation = await explainDream(db, name);
+    ctx.send(
+      entityId,
+      [
+        header(`Pool "${pool.name}" dream — why not yet`),
+        separator(),
+        ...renderDreamExplanation(explanation),
+      ].join("\n"),
+    );
+    return;
+  }
   if (verb === "now" || verb === "dry-run") {
     if (dreamingMode() === "off") {
       refuseCommand(ctx, entityId, "Dreaming is off (MARINA_DREAMING=off); nothing to run.");

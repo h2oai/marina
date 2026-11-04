@@ -87,14 +87,29 @@ export async function callCost(
  * and the transport is local (`resolveModel` builds it). Throws when a vendor
  * key is missing.
  */
+let loopbackKey: (() => string | undefined) | undefined;
+
+/**
+ * The serving process registers its internal model token here (main.ts), so
+ * an in-process library call to this Marina's own `/v1` — the cheap tier
+ * (`marina/cheap`), a judge on `marina/default` — needs no operator key.
+ * An operator key (MODEL_API_KEYS) still wins when set. Seen live: every
+ * dream skipped "no model" for a day on an install with no MODEL_API_KEYS.
+ */
+export function setLoopbackModelKey(provider: (() => string | undefined) | undefined): void {
+  loopbackKey = provider;
+}
+
 export function modelAccess(
   spec: string,
   env: NodeJS.ProcessEnv = process.env,
 ): { model: ResolvedModel; apiKey: string } {
   const provider = specProvider(spec);
   if (provider === "marina") {
-    // A Marina /v1 endpoint (this server, or `marina@<host>/…`): any key it accepts.
-    const apiKey = modelApiKeySecrets(env)[0];
+    // A Marina /v1 endpoint (this server, or `marina@<host>/…`): any key it
+    // accepts — an operator key, else this process's own internal token.
+    const apiKey =
+      modelApiKeySecrets(env)[0] ?? (isLoopbackMarinaSpec(spec) ? loopbackKey?.() : undefined);
     if (!apiKey) throw new Error("no key for marina/* (set MODEL_API_KEYS)");
     return { model: resolveModel(spec), apiKey };
   }

@@ -42,6 +42,7 @@ import { importBootstrapBundles } from "./learned/bootstrap";
 import { enableOutcomeLearning } from "./learning/service";
 import { parseEmbeddingEnv } from "./memory/embedding-config";
 import { closeWorldMemoryService, worldMemoryService } from "./memory/world-service";
+import { setLoopbackModelKey } from "./model/access";
 import { AdapterManager } from "./net/adapters/adapter-manager";
 import { bindSafetyRefusal, detectContainer } from "./net/bind-safety";
 import { DashboardBroadcaster } from "./net/dashboard-ws";
@@ -297,6 +298,9 @@ if (process.argv.includes("--check-config")) {
 // which the server treats as an outside caller (`marina/default` is then
 // refused in the default `agents` endpoint mode).
 markServingProcess();
+// The model library's own calls to this `/v1` (`marina/cheap`, a judge on
+// `marina/default`) carry the same internal token — never an operator key.
+setLoopbackModelKey(() => getInternalModelToken());
 const releaseDatabaseLease = acquireDatabaseLease(DB_PATH);
 const db = new MarinaDB(DB_PATH, { durability });
 // Operator-set decision settings (dashboard / `admin decisions`) survive a

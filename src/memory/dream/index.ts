@@ -45,6 +45,7 @@ export {
   settleQuietDreams,
 } from "./judge";
 export { dreamEffect, MEASURE_MIN, renderDreamEffect } from "./measure";
+export type { DreamExplanation } from "./pass";
 export {
   budgetGate,
   DREAM_COOLDOWN_MS,
@@ -52,11 +53,14 @@ export {
   DREAM_MIN_NEW,
   dreamCandidates,
   dreamingMode,
+  explainDream,
   poolDreamCandidates,
+  renderDreamExplanation,
   runDream,
   runDreamSchedule,
   runRequestedDreams,
   scheduleGate,
+  silentSkips,
 } from "./pass";
 export { probePlan, probeQuery, probeSpan, probesBefore } from "./probe";
 export type { ProcedureCandidate } from "./procedures";
