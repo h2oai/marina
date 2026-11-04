@@ -83,6 +83,7 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 | `test:canvas:browser` | Build the dashboard and run the Playwright canvas suite. |
 | `typecheck` / `lint` / `format` | `tsc --noEmit`, Biome check, Biome auto-format. |
 | `check:versions` / `check:overrides` | Every `package.json` matches the root version; audit root `overrides`. |
+| `plugin:sync [--check]` | Regenerate the Claude Code plugin's copied skills and version (`plugins/claude-code`) from their sources, or report drift. |
 | `prepack` | Dashboard and memory SDK build before packing. |
 
 ## Evaluate and qualify

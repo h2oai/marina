@@ -172,7 +172,8 @@ WebSocket), so it works with almost anything.
 | --- | --- |
 | A browser | Open `http://localhost:3300`. Chat, map, tasks and canvas live in the dashboard. |
 | A project folder | `marina` in that folder starts a coding agent there, with the dashboard one link away. [Coding guide](docs/guides/coding.md) |
-| Claude Code, Codex, Cursor | `claude mcp add --transport http marina http://localhost:3301/mcp` [MCP guide](docs/guides/mcp-integration.md) |
+| Claude Code | `/plugin install marina --marketplace h2oai/marina` starts a world on demand. [Plugin](plugins/claude-code/README.md) |
+| Codex, Cursor, any MCP client | `claude mcp add --transport http marina http://localhost:3301/mcp` or its equivalent. [MCP guide](docs/guides/mcp-integration.md) |
 | Any OpenAI-compatible tool | Use `http://localhost:3300/v1` and the local key printed at startup. [Model API](docs/guides/model-api.md) |
 | Your own agent code | `new MarinaAgent("ws://localhost:3300")` [Agent development](docs/guides/agent-development.md) |
 | Just want memory | `POST /mem/notes` from anything. [Memory API](docs/guides/memory-api.md) |

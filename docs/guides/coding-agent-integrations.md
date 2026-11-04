@@ -13,6 +13,23 @@ with a distinct resident name, or `auth` with its saved resident token.
 
 ### Claude Code
 
+Install the plugin; nothing else to run first:
+
+```
+/plugin install marina --marketplace h2oai/marina
+```
+
+It needs the `marina` command on your PATH (`bun run setup:cli` from a checkout). Its MCP server
+runs `marina mcp-stdio --start`: the bridge adopts the Marina recorded in `~/.marina/mcp` or
+starts one there on free loopback ports, and that instance exits after 30 minutes without use.
+The plugin also carries skills (`world`, `marina-memory`, the world's built-in procedures) and
+the commands `/marina:status`, `/marina:remember`, `/marina:recall` and `/marina:handoff`. To use
+a Marina you already run, set `MARINA_MCP_URL` (and `MARINA_TOKEN`) in the environment Claude
+Code starts from; `MARINA_DATA_DIR` names another instance's data directory. See
+[plugins/claude-code](../../plugins/claude-code/README.md).
+
+To add a running server by hand instead:
+
 ```bash
 claude mcp add --transport http marina http://127.0.0.1:3301/mcp
 ```

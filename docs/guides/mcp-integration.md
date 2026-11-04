@@ -9,7 +9,15 @@ transport and session lifecycle.
 ## Connect a world MCP client
 
 Start Marina with `bun run start`. The world MCP endpoint is
-`http://localhost:3301/mcp` using **Streamable HTTP**. For Claude Code:
+`http://localhost:3301/mcp` using **Streamable HTTP**. Claude Code has a plugin that needs no
+running server (it starts one on demand, see
+[coding-agent configuration](coding-agent-integrations.md#claude-code)):
+
+```
+/plugin install marina --marketplace h2oai/marina
+```
+
+To add a running server to Claude Code by hand:
 
 ```bash
 claude mcp add --transport http marina http://localhost:3301/mcp
