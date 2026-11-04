@@ -472,6 +472,31 @@ describe("Chronicle — canonical append-only record", () => {
       expect(db.queryChronicle({ kind: "narrative" })).toHaveLength(0);
     });
 
+    it("records the citation shapes the Chronicler writes", () => {
+      const chronId = makeChronicler();
+      engine.processCommand(
+        chronId,
+        "chronicle record Spaced list | Body. refs: task:3, note:10342 | participants Builder, Critic",
+      );
+      const [entry] = db.queryChronicle({ kind: "narrative" });
+      expect(entry?.refs).toEqual(["task:3", "note:10342"]);
+      expect(entry?.participants).toEqual(["Builder", "Critic"]);
+      expect(entry?.body).toBe("Body.");
+    });
+
+    it("tells a Chronicler how to cite when refs are missing", () => {
+      const c = new MockConnection("cite-conn");
+      engine.addConnection(c);
+      const result = engine.login("cite-conn", "Citer");
+      if ("error" in result) throw new Error(result.error);
+      const e = engine.entities.get(result.entityId);
+      if (e) e.properties.role = "chronicler";
+      c.clear();
+      engine.processCommand(result.entityId, "chronicle record A thing | Body");
+      expect(db.queryChronicle({ kind: "narrative" })).toHaveLength(0);
+      expect(stripAnsi(c.lastText())).toContain("refs feed:N,task:N");
+    });
+
     it("Chronicler can correct a prior narrative", () => {
       const chronId = makeChronicler();
       const priorId = db.appendChronicle({
@@ -528,6 +553,34 @@ describe("Chronicle — canonical append-only record", () => {
       const digests = db.queryChronicle({ kind: "digest" });
       expect(digests).toHaveLength(1);
       expect(digests[0]?.period).toMatch(/^week:\d{4}-W\d{2}$/);
+    });
+
+    it("correct and digest keep comma-space refs and pipe-set clauses", () => {
+      const chronId = makeChronicler();
+      const priorId = db.appendChronicle({
+        kind: "narrative",
+        source: "chronicler",
+        title: "Initial",
+        body: "First",
+        refs: ["feed:1"],
+      });
+      engine.processCommand(
+        chronId,
+        `chronicle correct ${priorId} Revised | New body. refs note:10892, note:10887`,
+      );
+      expect(db.queryChronicle({ kind: "correction" })[0]?.refs).toEqual([
+        "note:10892",
+        "note:10887",
+      ]);
+      engine.processCommand(
+        chronId,
+        "chronicle digest day Day | Summary. | refs note:1, chronicle:2 | period day:2026-11-03 | participants Builder, Host",
+      );
+      const [digest] = db.queryChronicle({ kind: "digest" });
+      expect(digest?.refs).toEqual(["note:1", "chronicle:2"]);
+      expect(digest?.period).toBe("day:2026-11-03");
+      expect(digest?.participants).toEqual(["Builder", "Host"]);
+      expect(digest?.body).toBe("Summary.");
     });
 
     it("digest accepts explicit period override", () => {
