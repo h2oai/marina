@@ -10,7 +10,7 @@
 // `<PROVIDER>_AUDIO_BASE_URL` server) and runs the `audio` command.
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, Type } from "typebox";
 import { DEFAULT_VIDEO_MODEL } from "../../engine/media/providers/video-util";
 import { execCommand, type ToolContext } from "./shared";
 

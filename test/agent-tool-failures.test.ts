@@ -11,7 +11,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { closingToolCall, RUN_CAP_CLOSING_GRACE } from "../src/agent/budget-terminal";
 import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
 import {

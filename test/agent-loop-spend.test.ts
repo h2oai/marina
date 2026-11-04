@@ -19,7 +19,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Agent } from "@earendil-works/pi-agent-core";
 import { type AssistantMessage, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import {
   DEFAULT_FOCUS_REVIEW_CYCLES,
   focusReviewCycles,

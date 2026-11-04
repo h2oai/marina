@@ -5,7 +5,7 @@
 // `PlatformMemoryBackend`; resident in every profile.
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, Type } from "typebox";
 import type { PlatformMemoryBackend } from "../memory-platform";
 import { plainErrorMessage } from "./shared";
 

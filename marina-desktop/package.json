@@ -15,10 +15,10 @@
     "build:dev": "bun run sync && bun run build:dashboard && bun scripts/electrobun.ts build --env=dev"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
+    "@tailwindcss/vite": "^4.3.4",
     "@types/bun": "^1.4.4",
-    "@vitejs/plugin-react": "^6.1.2",
-    "tailwindcss": "^4.3.3",
+    "@vitejs/plugin-react": "^6.2.1",
+    "tailwindcss": "^4.3.4",
     "typescript": "7.0.2",
     "vite": "^8.3.5",
     "electrobun": "2.0.5"

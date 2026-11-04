@@ -1,8 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, Type } from "typebox";
 import { MEMORY_OPERATIONS } from "../sdk/memory-operations";
 import { MEMORY_WORKFLOW_ACTIONS } from "../sdk/memory-workflows";
+
+/** Record keys as published since TypeBox 0.34 (`"^(.*)$"`); TypeBox 1.x would emit
+ * `"^.*$"`, and these wire schemas are held stable (test/memory-mcp-contracts.test.ts). */
+const RECORD_KEY = Type.String({ pattern: "^(.*)$" });
 
 /** Portable JSON Schemas for structured service payloads. These are not world-command
  * strings: nested claims, journals and graph operations retain their own contracts. */
@@ -11,7 +15,7 @@ const choice = <const T extends readonly string[]>(values: T) =>
 const integer = (minimum = Number.MIN_SAFE_INTEGER, maximum = Number.MAX_SAFE_INTEGER) =>
   Type.Integer({ minimum, maximum });
 const optional = Type.Optional;
-const unknownMap = () => Type.Record(Type.String(), Type.Unknown());
+const unknownMap = () => Type.Record(RECORD_KEY, Type.Unknown());
 const space = optional(
   Type.String({ description: "Space ID; omit to use your configured private space" }),
 );
@@ -46,7 +50,7 @@ export const MEMORY_TOOL_INPUTS = {
     next_action: optional(Type.String()),
     name: optional(Type.String()),
     input: optional(
-      Type.Record(Type.String(), Type.Unknown(), {
+      Type.Record(RECORD_KEY, Type.Unknown(), {
         description:
           "Advanced fields: retrieval options, recipe, rubric/result/explanation, ids, cursor, or id/version/task for use_recipe",
       }),
@@ -81,7 +85,7 @@ export const MEMORY_TOOL_INPUTS = {
       }),
     ),
     expansion: optional(
-      Type.Record(Type.String(), Type.Unknown(), {
+      Type.Record(RECORD_KEY, Type.Unknown(), {
         description: "Explicit lexical query alternatives; see memory guide",
       }),
     ),
@@ -136,7 +140,7 @@ export const MEMORY_TOOL_INPUTS = {
     depends_on: optional(Type.Array(Type.String())),
     dependency_versions: optional(
       Type.Record(
-        Type.String(),
+        RECORD_KEY,
         Type.Integer({ exclusiveMinimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
       ),
     ),

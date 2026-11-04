@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "bun:test";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import {
   computeContextBudget,
   createContextManager,

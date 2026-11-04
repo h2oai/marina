@@ -184,8 +184,8 @@
     "monitor": "bun run scripts/monitor.ts"
   },
   "devDependencies": {
-    "@babel/parser": "^8.0.8",
-    "@biomejs/biome": "2.6.4",
+    "@babel/parser": "^8.1.0",
+    "@biomejs/biome": "2.6.5",
     "@stryker-mutator/core": "10.1.1",
     "@types/bun": "^1.4.4",
     "fast-check": "^4.10.2",
@@ -195,16 +195,16 @@
     "@biomejs/biome"
   ],
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.312",
-    "@earendil-works/pi-agent-core": "^1.4.0",
-    "@earendil-works/pi-ai": "^1.4.0",
-    "@earendil-works/pi-tui": "1.4.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.318",
+    "@earendil-works/pi-agent-core": "^1.5.0",
+    "@earendil-works/pi-ai": "^1.5.0",
+    "@earendil-works/pi-tui": "1.5.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "@sinclair/typebox": "^0.34.52",
-    "discord.js": "^14.27.0",
+    "discord.js": "^14.28.1",
     "grammy": "^1.46.0",
     "mathjs": "^15.2.0",
     "mcporter": "^0.16.1",
+    "typebox": "1.4.4",
     "zod": "4.6.7"
   },
   "overrides": {
@@ -214,7 +214,7 @@
     "qs": "^6.16.1"
   },
   "optionalDependencies": {
-    "better-auth": "^1.7.14",
+    "better-auth": "^1.7.17",
     "playwright-core": "1.64.1",
     "sharp": "^0.35.5"
   },

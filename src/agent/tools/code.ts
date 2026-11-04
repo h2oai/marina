@@ -6,7 +6,7 @@
 // guards they share.
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, type TLiteral, Type } from "typebox";
 import { execCommand, plainErrorMessage, type ToolContext, wrap } from "./shared";
 
 const verificationMode = Type.Optional(
@@ -62,6 +62,9 @@ const codeWriteSchema = Type.Object({
   path: Type.String({ description: "Relative workspace file path" }),
   content: Type.String({ description: "For write: full file content, including newlines" }),
 });
+
+/** One `TLiteral` per entry of a readonly string tuple, as a tuple type. */
+type LiteralTuple<T extends readonly string[]> = { -readonly [K in keyof T]: TLiteral<T[K]> };
 
 /** Every `marina_code` action, in schema order; anything else is refused. */
 const CODE_ACTIONS = [
@@ -119,7 +122,11 @@ const codeSchema = Type.Object({
   ),
   scope: Type.Optional(Type.String({ description: "verify: auto, changed, full, changed+full" })),
   action: Type.Union(
-    CODE_ACTIONS.map((action) => Type.Literal(action)),
+    // A tuple type, so every schema reader (TypeBox's Static and pi-schema's)
+    // sees the union of actions rather than an array of literals.
+    CODE_ACTIONS.map((action) => Type.Literal(action)) as unknown as LiteralTuple<
+      typeof CODE_ACTIONS
+    >,
     {
       description:
         "Session action. edit: path/oldText/newText; write: path/content; patch proposes a diff for later apply.",
