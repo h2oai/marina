@@ -16,22 +16,27 @@ const MARINA = join(import.meta.dir, "..", "scripts", "marina.ts");
 interface FakeMcp {
   url: string;
   deletes: string[];
+  authorizations: (string | null)[];
   stop(): void;
 }
 
 /** A minimal Streamable HTTP MCP endpoint: answers `initialize` with a session id, records DELETEs. */
-function fakeMcp(): FakeMcp {
+function fakeMcp(rejectInitialization = false): FakeMcp {
   const deletes: string[] = [];
+  const authorizations: (string | null)[] = [];
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
     async fetch(req) {
+      authorizations.push(req.headers.get("authorization"));
       if (req.method === "DELETE") {
         deletes.push(req.headers.get("mcp-session-id") ?? "");
         return new Response(null, { status: 200 });
       }
       if (req.method === "GET") return new Response(null, { status: 405 });
       const body = (await req.json()) as { id?: number; method?: string };
+      if (rejectInitialization && body.method === "initialize")
+        return new Response("Unauthorized", { status: 401 });
       if (body.id === undefined) return new Response(null, { status: 202 });
       return Response.json(
         {
@@ -47,7 +52,12 @@ function fakeMcp(): FakeMcp {
       );
     },
   });
-  return { url: `http://127.0.0.1:${server.port}/mcp`, deletes, stop: () => server.stop(true) };
+  return {
+    url: `http://127.0.0.1:${server.port}/mcp`,
+    deletes,
+    authorizations,
+    stop: () => server.stop(true),
+  };
 }
 
 let fake: FakeMcp | undefined;
@@ -70,6 +80,31 @@ async function exitWithin(proc: Bun.Subprocess, ms: number): Promise<number | "t
 }
 
 describe("marina mcp-stdio lifetime", () => {
+  it("ends stdio promptly when the upstream rejects authentication", async () => {
+    fake = fakeMcp(true);
+    const proc = Bun.spawn(["bun", "--no-env-file", MARINA, "mcp-stdio", "--url", fake.url], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "test", version: "1" },
+        },
+      })}\n`,
+    );
+    await proc.stdin.flush();
+    expect(await exitWithin(proc, 2000)).toBe(1);
+    expect(await new Response(proc.stdout).text()).toBe("");
+    expect(await new Response(proc.stderr).text()).toContain("upstream send failed");
+  });
+
   it("exits promptly when stdin is closed before any message", async () => {
     fake = fakeMcp();
     const proc = Bun.spawn(["bun", "--no-env-file", MARINA, "mcp-stdio", "--url", fake.url], {
@@ -83,13 +118,17 @@ describe("marina mcp-stdio lifetime", () => {
     expect(fake.deletes).toEqual([]);
   });
 
-  it("ends the upstream session and exits on stdin EOF", async () => {
+  it("ends the upstream session on stdin EOF and honors an explicit empty bearer", async () => {
     fake = fakeMcp();
-    const proc = Bun.spawn(["bun", "--no-env-file", MARINA, "mcp-stdio", "--url", fake.url], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const proc = Bun.spawn(
+      ["bun", "--no-env-file", MARINA, "mcp-stdio", "--url", fake.url, "--token", ""],
+      {
+        env: { ...process.env, MARINA_TOKEN: "another-resident-token" },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
     proc.stdin.write(
       `${JSON.stringify({
         jsonrpc: "2.0",
@@ -116,6 +155,8 @@ describe("marina mcp-stdio lifetime", () => {
     proc.stdin.end();
     expect(await exitWithin(proc, 10_000)).toBe(0);
     expect(fake.deletes).toEqual(["sess-1"]);
+    expect(fake.authorizations.length).toBeGreaterThan(0);
+    expect(fake.authorizations.every((value) => value === null)).toBe(true);
   });
 });
 

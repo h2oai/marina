@@ -1,0 +1,20 @@
+{
+  "name": "marina",
+  "description": "Durable evidence, resumable work, and optional participation in a Marina world.",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "requires_local_executor": true,
+  "onboardingSkill": "./skills/marina-setup/SKILL.md",
+  "interface": {
+    "displayName": "Marina",
+    "shortDescription": "Remember evidence and resume work with Marina",
+    "developerName": "H2O.ai",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://h2oai.github.io/marina/",
+    "defaultPrompt": [
+      "Use Marina to find the decisions and evidence relevant to this task.",
+      "Save a Marina checkpoint so I can resume this work later."
+    ]
+  }
+}
