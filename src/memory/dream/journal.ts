@@ -129,6 +129,65 @@ export function gatherEpisodes(
   return { episodes: episodes.reverse(), bytes, parts: rows.length };
 }
 
+/** Parts scanned by an episode search, at most (newest first). */
+export const EPISODE_SEARCH_MAX_PARTS = 2000;
+export const EPISODE_SEARCH_LIMIT = 10;
+export const EPISODE_EXCERPT_CHARS = 240;
+
+export interface EpisodeHit extends JournalEpisode {
+  /** The text around the first matching term. */
+  excerpt: string;
+}
+
+/**
+ * `recall <query> episodes`: the OWNER's own journal, searched for every term
+ * of the query (case-insensitive, all terms), newest first. Evidence for the
+ * owner alone: never served into anyone's context, never another agent's
+ * journal. Under the as-of fence only parts captured by `asOf` are read.
+ */
+export function searchEpisodes(
+  db: MarinaDB,
+  entityName: string,
+  query: string,
+  opts: { limit?: number; asOf?: number; maxParts?: number } = {},
+): EpisodeHit[] {
+  const terms = query
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}#_-]+/u)
+    .filter((t) => t.length >= 2);
+  if (!terms.length) return [];
+  const spaces = residentSpaceIds(db, entityName);
+  if (!spaces.length) return [];
+  const until = opts.asOf ?? Number.MAX_SAFE_INTEGER;
+  const rows = db
+    .memoryRepository()
+    .raw.query<{ created_at: number; text: string }, [...string[], number, number]>(
+      `SELECT s.created_at, t.text FROM memory_sources s
+       JOIN memory_source_text t ON t.seq = s.seq
+       WHERE s.space_id IN (${spaceList(spaces)}) AND s.session_id LIKE '${JOURNAL_SESSION_PREFIX}%'
+         AND s.created_at <= ?
+       ORDER BY s.seq DESC LIMIT ?`,
+    )
+    .all(...spaces, until, opts.maxParts ?? EPISODE_SEARCH_MAX_PARTS);
+  const limit = opts.limit ?? EPISODE_SEARCH_LIMIT;
+  const hits: EpisodeHit[] = [];
+  for (const row of rows) {
+    const episode = parseEpisode(row.text, row.created_at);
+    if (!episode) continue;
+    const lower = episode.text.toLowerCase();
+    if (!terms.every((t) => lower.includes(t))) continue;
+    const at = Math.min(...terms.map((t) => lower.indexOf(t)).filter((i) => i >= 0));
+    const start = Math.max(0, at - Math.floor(EPISODE_EXCERPT_CHARS / 3));
+    const excerpt =
+      (start > 0 ? "…" : "") +
+      episode.text.slice(start, start + EPISODE_EXCERPT_CHARS).trim() +
+      (start + EPISODE_EXCERPT_CHARS < episode.text.length ? "…" : "");
+    hits.push({ ...episode, excerpt });
+    if (hits.length >= limit) break;
+  }
+  return hits;
+}
+
 export function renderEpisodes(episodes: readonly JournalEpisode[]): string[] {
   if (!episodes.length) return [];
   const lines = [

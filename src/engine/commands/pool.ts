@@ -193,6 +193,7 @@ export function poolCommand(deps: {
       { syntax: "pool <name> dream ratify <id> [n]", effect: "write" },
       { syntax: "pool <name> dream dismiss <id> [n]", effect: "write" },
       { syntax: "pool <name> dream rollback <id>", effect: "write" },
+      { syntax: "pool <name> dream restore <id> <n>", effect: "write" },
       { syntax: "pool <name> dream why", effect: "read" },
       { syntax: "pool <name> status", effect: "read" },
       { syntax: "pool create <name> [group <groupName>]", effect: "write" },

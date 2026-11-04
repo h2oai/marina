@@ -16,6 +16,7 @@ import {
   renderDreamEffect,
   renderDreamExplanation,
   requestDream,
+  restoreDreamOp,
   rollbackDream,
   runDream,
 } from "../../memory/dream";
@@ -106,7 +107,7 @@ const USEFULNESS_MAX_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const USEFULNESS_USAGE =
   "Usage: memory usefulness [window]   e.g. memory usefulness 7d · memory usefulness 24h (default 7d, max 90d)";
 const DREAM_USAGE =
-  "Usage: memory dream [now|dry-run|log|show <id>|proposals|adopt <id> [n]|dismiss <id> [n]|rollback <id>|request [reason]|why [entity]|measure [all]|guard [clear <entity>]]   now — run your consolidation pass (budget permitting; schedule gates skipped) · dry-run — same, recorded nowhere · log — your dreams · show <id> — one dream's ops, rejections and probes (ids and counts, never text) · proposals — restatements and skill drafts a dream filed for you · adopt/dismiss — take or drop one · rollback <id> — reverse an applied dream · request — ask for a dream once you are quiet (material and cooldown waived) · why [entity] — every gate as it stands and whether the dreamer can be called (another entity: operator) · measure — task success after your dreams vs before (all: everyone's, operator) · guard — the utility-curve guard's state (clear <entity>: operator)";
+  "Usage: memory dream [now|dry-run|log|show <id>|proposals|adopt <id> [n]|dismiss <id> [n]|rollback <id>|restore <id> <n>|request [reason]|why [entity]|measure [all]|guard [clear <entity>]]   now — run your consolidation pass (budget permitting; schedule gates skipped) · dry-run — same, recorded nowhere · log — your dreams · show <id> — one dream's ops, rejections and probes (ids and counts, never text) · proposals — restatements and skill drafts a dream filed for you · adopt/dismiss — take or drop one · rollback <id> — reverse an applied dream · restore <id> <n> — reverse ONE of its ops, the rest stands · request — ask for a dream once you are quiet (material and cooldown waived) · why [entity] — every gate as it stands and whether the dreamer can be called (another entity: operator) · measure — task success after your dreams vs before (all: everyone's, operator) · guard — the utility-curve guard's state (clear <entity>: operator)";
 const VOTE_USAGE =
   "Usage: memory useful <note id|record id> · memory useless <note id|record id>   (an item served to you in the last 7 days; one vote per item per day)";
 
@@ -245,6 +246,7 @@ export function memoryCommand(deps: {
       { syntax: "memory dream adopt <id> [n]", effect: "write" },
       { syntax: "memory dream dismiss <id> [n]", effect: "write" },
       { syntax: "memory dream rollback <id>", effect: "write" },
+      { syntax: "memory dream restore <id> <n>", effect: "write" },
       { syntax: "memory dream measure [all]", effect: "read" },
       { syntax: "memory dream guard", effect: "read" },
       { syntax: "memory dream guard clear <entity>", effect: "write" },
@@ -408,6 +410,7 @@ async function runDreamCommand(
       "adopt",
       "dismiss",
       "rollback",
+      "restore",
       "measure",
       "guard",
     ]) ?? "log";
@@ -456,6 +459,32 @@ async function runDreamCommand(
       ),
     ];
     ctx.send(entityId, lines.join("\n"));
+    return;
+  }
+  if (verb === "restore") {
+    const row = dreamId();
+    if (!row) {
+      refuseCommand(ctx, entityId, `No dream #${tokens[1] ?? "?"} of yours. ${DREAM_USAGE}`);
+      return;
+    }
+    const n = Number.parseInt(tokens[2] ?? "", 10);
+    if (!Number.isInteger(n) || n < 0) {
+      refuseCommand(
+        ctx,
+        entityId,
+        "Usage: memory dream restore <id> <n> (memory dream show <id> numbers the ops)",
+      );
+      return;
+    }
+    const out = restoreDreamOp(db, row, n);
+    if (!out.ok) {
+      refuseCommand(ctx, entityId, `Dream #${row.id} op ${n}: ${out.reason}.`);
+      return;
+    }
+    ctx.send(
+      entityId,
+      `Restored op ${n} (${out.op}) of dream #${row.id}; ${out.remaining} applied op(s) still stand${out.rolledBack ? " — none, so the dream is as rolled back" : ""}.`,
+    );
     return;
   }
   if (verb === "rollback") {

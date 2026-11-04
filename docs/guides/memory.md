@@ -340,6 +340,7 @@ Dreams
 > memory dream adopt 3        take it (a restatement is re-checked against your notes as they are now; a skill is stored as a draft)
 > memory dream dismiss 3      drop it
 > memory dream rollback 3     reverse the whole dream: merged notes come back, decays and links undo
+> memory dream restore 3 1    reverse op 1 of dream 3 only; the rest stands (memory dream show 3 numbers them)
 > memory dream show 3
 > memory dream now            run one for yourself (budget permitting)
 > memory dream dry-run        the same, recorded nowhere
@@ -348,6 +349,10 @@ Dreams
 `orient` shows your latest dream, and a `[Dream]` line in your continuation prompt tells you what
 the last dream did and what awaits you. `memory consolidate` is the same command under its plain
 name. `MARINA_DREAMING=off` turns the pass off.
+
+`recall <query> episodes` reads your own journal — what you said, were told and saw — newest
+first, for every word of the query. It is yours alone: nobody else is served it, and nothing in it
+is a note.
 
 Your dream also reads your own recent journal — the transcript your continuity memory keeps — as
 evidence: a restatement may take a number or a name from it, and 64 KB of journal since your last
