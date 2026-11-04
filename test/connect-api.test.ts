@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
+import { MCP_TOOL_CATEGORIES, registerConnectEndpoint } from "../src/net/api/connect-api";
 import { McpServerAdapter } from "../src/net/mcp/mcp-server";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
@@ -74,7 +77,9 @@ describe("Connect API", () => {
     expect(body.protocols.mcp.config.mcpServers.marina.url).toContain("/mcp");
     expect(body.protocols.websocket.url).toContain("/ws");
     expect(body.protocols.websocket.url).toContain(`:${wsPort}/ws`);
-    expect(body.protocols.telnet.port).toBe(4000);
+    // Telnet is off unless TELNET_PORT is set: no port is advertised.
+    expect(body.protocols.telnet.enabled).toBe(false);
+    expect(body.protocols.telnet.port).toBeUndefined();
     expect(body.skill).toBe("/api/skill");
     expect(body.health).toBe("/health");
     expect(body.dashboard).toBe("/dashboard");
@@ -110,7 +115,26 @@ describe("Connect API", () => {
     const body = await res.json();
     expect(body.protocols.mcp.url).toContain("marina.ai");
     expect(body.protocols.websocket.url).toContain("marina.ai");
-    expect(body.protocols.telnet.host).toBe("marina.ai");
+  });
+
+  it("advertises telnet only when a telnet port is registered", async () => {
+    registerConnectEndpoint(engine, "telnet", 4123);
+    using _hosts = scopeProcessState({ env: { MARINA_ALLOWED_HOSTS: "marina.ai" } });
+    const res = await fetch(`http://localhost:${wsPort}/api/connect`, {
+      headers: { Host: "marina.ai:3300" },
+    });
+    const body = await res.json();
+    expect(body.protocols.telnet).toMatchObject({ enabled: true, host: "marina.ai", port: 4123 });
+  });
+
+  it("lists every named MCP tool the server registers", async () => {
+    const reference = readFileSync(join(import.meta.dir, "..", "docs/reference/mcp.md"), "utf8");
+    const generated = [...reference.matchAll(/^## (\S+)$/gm)].map((m) => m[1] ?? "").sort();
+    const advertised: string[] = Object.values(MCP_TOOL_CATEGORIES).flat().sort();
+    expect(advertised).toEqual(generated);
+    const res = await fetch(`http://localhost:${wsPort}/api/connect`);
+    const body = await res.json();
+    expect(body.protocols.mcp.tools).toEqual(MCP_TOOL_CATEGORIES);
   });
 
   it("actively negotiates opportunistic runtime capability layers", async () => {

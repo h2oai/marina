@@ -58,7 +58,7 @@ discovery, context previews, correlated commands and explicit coding session/run
 The local host drains work before closing persistence. Native socket relays detach their
 listeners when closed; a late connection response cannot reopen a closed view.
 
-Desktop packaging uses **Electrobun 2.0.2** and Hutch's generated SDK. Marina retains its
+Desktop packaging uses **Electrobun 2.0.5** and Hutch's generated SDK. Marina retains its
 Bun main process and packages the exact `.bun-version` runtime through a verified pre-packaging
 hook. The v1 FFI patch is removed. Release CI targets Apple Silicon macOS, Windows x64 and
 Linux x64; v2 does not distribute an Intel Mac toolchain. On Intel Macs, use the web dashboard

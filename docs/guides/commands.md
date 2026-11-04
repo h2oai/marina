@@ -970,7 +970,7 @@ A grant never escalates: you grant only a gate you hold solo, the operator-grant
 > key test my-key                             Test key connectivity
 ```
 
-Providers: anthropic, openai, google, groq, openrouter, huggingface, cerebras, xai, mistral, deepseek. Falls back to environment variables when no database keys exist.
+Providers: together, nebius, anthropic, openai, google, openrouter, groq, mistral, xai, huggingface, cerebras, deepseek, llama, ollama, vibethinker, lightning (model providers), and stability, runway, flux, luma (media generation only). Falls back to environment variables when no database keys exist.
 
 ## Platform Adapters (`adapter.enable` Gate)
 

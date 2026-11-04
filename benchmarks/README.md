@@ -336,10 +336,23 @@ never overwritten. The reporting standard, arm definitions, and an explicit "wha
 | `--judge-endpoint` | Judge endpoint | `--endpoint` |
 | `--self-judge` | Allow the judge to be the target model; recorded with the run | off |
 | `-c, --concurrency` | Parallel requests | `5` |
-| `-s, --seed` | Deterministic subset | none |
-| `--compare` | Run comparison mode | none |
+| `-s, --seed` | Random seed for subset selection | none |
+| `--partition` | Run only one fixed split of the items: `holdout` (≈20%, where candidates are judged) or `tune` (the rest) | all items |
+| `--timeout` | Per-request timeout in milliseconds | `HARNESS_TIMEOUT_MS`, else `600000` |
+| `--ground` | `search` (short-answer only): give the model live search results first; the benchmark's own dataset and repository pages are barred | none |
+| `--compare` | Run comparison (e.g., `--compare passthrough`) | none |
+| `--file-to` | File the finished run into that Marina's benchmark ledger (`POST /v1/benchmarks/runs`; key: `MARINA_LEDGER_API_KEY`, else `--api-key` when it is the target endpoint) | none |
+| `--no-file` | Never file, even with `--file-to` | off |
+| `--target-kind` | Ledger target kind: `model`, `crew` or `population` | `model` |
+| `--target` | Ledger target (JSON or id) | `--model` |
+| `--label` | Ledger label for the run | none |
+| `--replicates` | Run the same target n times on the same items and judge; each run keeps its own result file and is filed into one replicate group; prints the pooled summary (not with `--compare`) | `1` |
+| `--group` | Ledger replicate group for the run(s) | with `--replicates` > 1: a fresh `rep:<label>:<time>` key |
+| `--lessons-mode` | `measure`: a Marina target never recalls lessons learned from this benchmark (`x-marina-eval`); `live`: every lesson | `measure` |
+| `--lessons` | Ask a plain passthru target to inject judged lessons (`x-marina-lessons: on`); served lesson ids are filed per item | off |
 | `--list` | Show available benchmarks | |
 | `--results` | Show past results | |
+| `-h, --help` | Show the help | |
 
 ## Web UI
 

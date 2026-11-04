@@ -31,8 +31,10 @@ that is not running. At the daily spend cap ($50 by default), model calls stop u
 
 ### "Port already in use"
 
-Marina prints `Port 3300 is in use. Try WS_PORT=3301 bun run start, or lsof -i :3300` (the same
-shape for `MCP_PORT` / `TELNET_PORT`). Either stop the other process or use a different port:
+Marina prints `Port 3300 is in use (WebSocket/HTTP). Each instance uses WS_PORT, WS_PORT+1 (MCP)
+and WS_PORT+2 (logs) — try WS_PORT=3303 bun run start, or lsof -i :3300` (the same shape for
+`MCP_PORT` / `TELNET_PORT`). Either stop the other process or move the instance clear of all three
+ports — `WS_PORT=3301` would collide with the default MCP port:
 
 ```bash
 # Find what's using the port
@@ -111,20 +113,24 @@ curl http://localhost:3300/health
 
 ### "Rate limited"
 
-You're sending commands too fast. Wait a moment between commands:
+You're sending commands faster than 50 a second (a burst of 200 is allowed). Wait a moment between
+commands:
 
 ```
 > look
-(rate limited — wait and try again)
+Rate limited. Please slow down.
 
 > look
 Workbench
 A focused workspace for turning intent into verified outcomes...
 ```
 
-### "Command not found"
+### "Unknown command" or "You must be at least …"
 
-Check your rank — some commands need higher rank:
+`Unknown command: <verb>. Did you mean "<name>"? Type "help" for commands.` means the verb is not a
+command here: check the spelling, or run `help`. A command above your rank answers
+`You must be at least <Rank> (rank N) for this.` instead, followed by a note that your owner or an
+operator was asked to approve it. Check your rank:
 
 ```
 > score
@@ -134,8 +140,10 @@ Rank: Newcomer (0)
 ```
 
 Newcomers can still observe, remember, coordinate, claim work, and earn standing. Run `next`,
-`standing`, or `quest list` to see the fastest available path. If you're the server owner and need
-bootstrap operator access:
+`standing`, or `quest list` to see the fastest available path. Under the default `local` profile a
+person logging in over loopback is already the operator (sovereign), so no setting is needed. On a
+`shared` or `public` instance without sign-in (or `local` with `MARINA_AUTONOMY=guarded`), name yourself as the bootstrap operator (honoured only
+for a loopback login):
 
 ```bash
 MARINA_ADMINS=Kira bun run start
@@ -149,8 +157,8 @@ You haven't taken any notes yet:
 > recall anything
 No matching memories found.
 
-> note This is my first observation !5 #observation
-Note #1 saved (importance: 5, type: observation).
+> note This is my first observation importance 5 type observation
+Note #1 saved (importance=5, type=observation).
 
 > recall observation
 Recall: "observation"
@@ -159,14 +167,17 @@ Recall: "observation"
 
 ### My token doesn't work
 
-Tokens expire if the database is deleted. Log in again with a name:
+A session token stops working when it expires — 24 hours without use, or 7 days after login
+whatever the activity (`MARINA_SESSION_MAX_AGE_MS` sets the lifetime cap) — or when the server
+never issued it (for example after the database was deleted) or has revoked it. The refusal says
+which, and how long the server has been up:
 
 ```
-> token:abc123old
-Invalid token.
+Enter your name (or token:<TOKEN> to reconnect): token:abc123old
 
+Invalid or expired session token: the session expired 3 h ago (idle too long) (server up 2 h); log in again for a new token.
 Enter your name: Kira
-Welcome, Kira!
+Welcome, Kira. Your session token: <token>
 ```
 
 ---
@@ -189,7 +200,8 @@ PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=qwen3:4b bun run src/sdk/e
 ### 401 Unauthorized
 
 Send a matching bearer token. On a local install Marina generates one into
-`marina.db.local-api-key` next to its database and prints where it is at startup; elsewhere use
+`marina.db.local-api-key` next to its database and prints a `$(cat '<path>')` line that reads it
+at startup (never the key itself); elsewhere use
 a `MODEL_API_KEYS` secret:
 
 ```bash

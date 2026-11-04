@@ -1,5 +1,10 @@
 # Embedding Marina
 
+> **Experimental.** The embedding lifecycle (`MARINA_DATA_DIR`, `MARINA_IDLE_SHUTDOWN`,
+> `MARINA_PARENT_PID`, `marina endpoint`) is experimental: built and tested, but no production
+> deployment uses it yet, and its interface may change. See
+> [feature status](../reference/feature-status.md).
+
 Run Marina from inside another application: the host starts it when needed (or keeps it running),
 finds it through one file, talks to it over the usual protocols, and lets it go when idle. The
 compiled `marina` binary and the source checkout behave the same way.

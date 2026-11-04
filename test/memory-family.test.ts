@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { savedReflection } from "../src/agent/idle-reflection";
 import { classifyCommandRisk } from "../src/agent/tool-policy";
 import {
   aliasNotice,
@@ -92,6 +93,20 @@ describe("memory family (engine)", () => {
     // A new session hears it again.
     const carol = world.login("Carol");
     expect((await run(carol, "note hello")).at(-1)).toBe("(alias: use `memory note …`)");
+  });
+
+  it("`memory note … type reflection` saves a reflection-tier note the idle turn recognises", async () => {
+    const erin = world.login("Erin");
+    const reply = (
+      await run(erin, "memory note my focus moved from parsing to retrieval type reflection")
+    ).join("\n");
+    // The idle turn asks for exactly this form (src/agent/idle-reflection.ts) and
+    // recognises the save by its reply.
+    expect(savedReflection(reply)).toBe(true);
+    const id = Number(/Note #(\d+) saved/.exec(reply)?.[1]);
+    const note = world.db.getNote(id);
+    expect(note?.tier).toBe("reflection");
+    expect(note?.content).toBe("my focus moved from parsing to retrieval");
   });
 
   it("legacy spellings still parse through both doors", async () => {

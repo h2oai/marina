@@ -324,4 +324,7 @@ Every connection method gives you a session token on login. Save it to reconnect
 | SDK | `session.token` after `connect()` |
 | MCP | Returned by the `login` tool |
 
-Tokens survive server restarts as long as the database is preserved.
+Tokens survive server restarts as long as the database is preserved. A token expires after 24
+hours without use, and 7 days after login whatever the activity (`MARINA_SESSION_MAX_AGE_MS` sets
+that lifetime cap); a refused reconnect says whether the token expired or was never issued, and
+you log in again with your name for a new one.

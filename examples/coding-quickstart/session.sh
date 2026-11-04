@@ -4,8 +4,11 @@
 
 # Coding Quickstart — a narrated tour of Marina's coding loop.
 #
-# Pipes a sequence of `code` commands to the `marina` CLI (scripts/connect.ts) so
-# you can watch a full session scroll by: start -> orient -> checkpoint -> summary -> done.
+# Pipes a sequence of `code` commands to `marina connect` so you can watch a full
+# session scroll by: start -> doctor -> orient (files, read, search, diff) ->
+# checkpoint -> summary -> done. It runs the CLI from this checkout
+# (`bun --no-env-file scripts/marina.ts connect`), so it works without
+# `bun run setup:cli`; with the `marina` bin on PATH the same is `marina connect <name>`.
 # Read-mostly and fast; the only writes are session records + a checkpoint artifact.
 #
 # Usage:
@@ -25,7 +28,7 @@ echo "▶ Running the Marina coding quickstart as '${NAME}' against ${MARINA_URL
 echo
 
 # Pipe mode: each line is sent as one command, in order.
-bun run scripts/connect.ts "$NAME" <<'EOF'
+bun --no-env-file scripts/marina.ts connect "$NAME" <<'EOF'
 code start Quickstart Tour
 code doctor
 code files

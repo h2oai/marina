@@ -13,7 +13,7 @@ matches how you use Marina:
 
 | You use | Do this | It applies to |
 |---------|---------|---------------|
-| `marina` in a folder, or `marina start` | `marina init`: choose a provider and paste its key, or choose `local` and pick a model your Ollama, llama.cpp, LM Studio or vLLM server already serves | every folder and every `marina start` (it writes `~/.marina/.env`) |
+| `marina` in a folder, or `marina start` | `marina init`: choose a provider and paste its key, or choose `local` and pick a model your Ollama, llama.cpp, LM Studio or vLLM server already serves | every folder and every `marina start` (it writes `~/.marina/.env`; inside a source checkout, the checkout's `.env`, which `marina` also reads in every folder) |
 | The dashboard | **Admin → Keys**: paste, save, **Test** | that server's world (stored in its database, no restart) |
 | The desktop app | **Connect an AI provider** on first launch, or **Admin → Keys** | the app's world |
 | A source checkout, Docker or a service | a variable such as `ANTHROPIC_API_KEY=…` in the environment or the instance's `.env` | that process |
@@ -187,7 +187,7 @@ Work that names no model runs on one of two **model tiers**
 
 | Tier | Runs | Unset |
 |------|------|-------|
-| `cheap` — `MARINA_MODEL_TIER_CHEAP` | residents spawned without a model, room agents, boot-seeded crews (the Workbench, answerer and orchestration crews, the Chronicler), memory helpers | `MARINA_DEFAULT_MODEL` or a runtime default when one is set; else the cheapest adequate tool-capable model for your keys (`openrouter/deepseek/deepseek-v4.1-flash-1017` with an OpenRouter key; `anthropic/claude-haiku-5-5`, `openai/gpt-6-luna`, … otherwise); else `marina/default` |
+| `cheap` — `MARINA_MODEL_TIER_CHEAP` | residents spawned without a model, room agents, boot-seeded crews (the Workbench, answerer and orchestration crews, the Chronicler), memory helpers, the memory dream pass | `MARINA_DEFAULT_MODEL` or a runtime default when one is set; else the cheapest adequate tool-capable model for your keys (`openrouter/deepseek/deepseek-v4.1-flash-1017` with an OpenRouter key; `anthropic/claude-haiku-5-5`, `openai/gpt-6-luna`, … otherwise); else `marina/default` |
 | `strong` — `MARINA_MODEL_TIER_STRONG` | what grades or overrules: the benchmark judge, outcome extractor, lesson writer and judge, decision classifier, the Arbiter | `marina/default`, exactly as before — judging never turns cheap by accident |
 
 One line moves a tier; one entry moves a single role:
@@ -198,8 +198,8 @@ MARINA_MODEL_TIER_STRONG=openrouter/anthropic/claude-opus-5.5     # every judge 
 MARINA_AGENT_MODELS=role:crew=anthropic/claude-sonnet-5-5,Host=openai/gpt-6.1-sol
 ```
 
-Roles are `resident`, `room`, `crew`, `helper`, `judge`, `outcome-judge`,
-`lessons-judge`, `decisions` and `arbiter`. Older specific variables still win
+Roles are `resident`, `room`, `crew`, `helper`, `dreamer` (cheap tier), `judge`,
+`outcome-judge`, `lessons-judge`, `decisions` and `arbiter`. Older specific variables still win
 over the tier (`MARINA_CREW_MODEL`, `MARINA_WORKBENCH_MODEL`,
 `MARINA_BENCHMARK_JUDGE_MODEL`, `MARINA_DECISION_MODEL`, …), and so do a
 model named on `agent spawn`, `agent config <name> model …`, and a per-agent
@@ -362,10 +362,19 @@ TELEGRAM_TOKEN=123:ABC...
 
 ```bash
 docker build -t marina .
-docker run -p 3300:3300 -p 3301:3301 \
-  -e MARINA_WORLD=default \
+docker run -d --name marina \
+  -p 127.0.0.1:3300:3300 \
+  -v marina-data:/app/data \
+  --env-file .env \
+  -e MARINA_PUBLISHED_HOST=127.0.0.1 \
   marina
 ```
+
+The image binds `0.0.0.0` inside the container, so boot needs `MARINA_PUBLISHED_HOST` to know the
+host publish address; without it the wildcard bind counts as network exposure and boot stops
+with a FATAL error while passwordless login is in effect. Keep the `127.0.0.1:` publish prefix and `MARINA_PUBLISHED_HOST` in step (add
+`-p 127.0.0.1:3301:3301` for MCP the same way). Docker Compose, the local overlay and wider exposure
+are covered in [Deployment](deployment.md#without-compose).
 
 ---
 

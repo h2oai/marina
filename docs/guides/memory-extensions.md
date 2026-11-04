@@ -99,7 +99,9 @@ Relations require both entities to exist. Each mutation batch is atomic.
 
 The bounded profile differs from a full server replacement:
 
-- It supports the nine tools, without resource subscriptions or reference JSONL persistence.
+- It supports the nine tools and one subscribable resource, `memory://knowledge-graph` (the
+  bridge polls the space generation about once a second and sends a resource-updated
+  notification when it changes), without reference JSONL persistence.
 - Each space has at most 2,000 profile records and a 1 MiB graph/result limit. Each entity,
   observation and relation uses a record. Names/types are nonempty and at most 256 characters;
   observations are nonempty and at most 8,192 characters. Owner quotas also apply.

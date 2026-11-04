@@ -1,5 +1,9 @@
 # Media Generation (images & video)
 
+> **Experimental.** Media generation jobs (`image generate`, `video generate`, `audio`) are
+> experimental: built and tested, but no production deployment uses them yet, and their interfaces
+> may change. See [feature status](../reference/feature-status.md).
+
 Marina can generate images and video and surface the results in chat. Generation
 runs as a tracked **job** (pending → running → succeeded, or failed / blocked), stores the result as
 an asset, and publishes it to the canvas so it shows up inline in the Rich web

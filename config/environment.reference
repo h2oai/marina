@@ -1313,7 +1313,7 @@
 # Model that writes a lesson's rule. Unset: `role:lessons-judge=`, then MARINA_MODEL_TIER_STRONG, then `marina/default`, which asks this Marina's own /v1, i.e. whatever model the operator runs, local included; a provider/model id uses that vendor (falling back to marina/default when its key is missing); `none` keeps mechanical lessons only. No vendor key is ever required.
 # MARINA_LESSONS_WRITER=marina/default
 
-# The judge when no decision backend is configured (unset: `role:lessons-judge=`, then MARINA_MODEL_TIER_STRONG, then marina/default): a chat-classifier on this model through this Marina's /v1, uncalibrated (one cut at 0.5) and labelled as such on every lesson it passes. With no model reachable, lessons are recorded unverified and never promoted.
+# The judge when no decision backend is configured (unset: `role:lessons-judge=`, then MARINA_MODEL_TIER_STRONG, then marina/default): a chat-classifier on this model through this Marina's /v1, held to the same bars as a calibrated judge (src/learning/outcomes.ts, LESSON_JUDGE_POLICY) and labelled uncalibrated on every lesson it passes. With no model reachable, lessons are recorded unverified and never promoted.
 # MARINA_LESSONS_JUDGE_MODEL=marina/default
 
 # Outcomes processed per hour (writer + judge calls are bounded by it); excess outcomes are dropped and counted.

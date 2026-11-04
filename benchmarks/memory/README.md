@@ -142,7 +142,7 @@ For an interpretable comparison:
 7. Never rerun the same items into a warmed DB and score them again. The harness does not let
    you, but a hand-rolled script can.
 
-## successor — cold start and transmission fidelity (Tier 4 scaffold)
+## successor — cold start and transmission fidelity (Tier 4)
 
 `benchmarks/memory/successor.ts` asks the generational question genbench cannot: **does a fresh
 account that inherits a predecessor's shared knowledge get productive faster than one that does
@@ -186,22 +186,27 @@ task stream in two fresh worlds:
 Both arms read through `gatherRetrievalContext` — the retrieval core behind `recap` / `ask` /
 `dig` (own notes + guide pool + shared pools, with the group-pool membership guard) — rendered with
 per-line provenance (`[pool tradition:predecessor by Predecessor] …`). The answering model is
-genbench's stub (correct iff the item is in the fixed 60% "known" subset or the gold answer is in
-the injected context); the judge is genbench's exact match. Both arms learn a Q/A note after every
+`--model`: genbench's stub by default (correct iff the item is in the fixed 60% "known" subset or
+the gold answer is in the injected context), or any model id sent through a running Marina's
+OpenAI-compatible endpoint (genbench's `createRemoteModel`; `--endpoint`, `--api-key`). The
+harness talks only to Marina, never to a provider directly. The judge is genbench's exact match. Both arms learn a Q/A note after every
 answer (`--no-learn` disables).
 
 Per arm and seed the harness records **time-to-first-correct** (1-based position of the first
 correct answer), **time-to-first-transfer** (first correct answer the stub did *not* already know —
-pure memory transfer), **first-k success** (`--first-k`, default 5), pooled accuracy with a Wilson
+pure memory transfer; with a real model every correct answer counts, since the facts are fictional
+and the `fresh` arm's accuracy is the empirical prior), **first-k success** (`--first-k`, default 5), pooled accuracy with a Wilson
 95% interval, transfer rate, and how often the injected context contained inherited material.
 
 **Transmission fidelity.** The predecessor's lessons are generation 0. Each generation `g ≥ 1`
 summarises what it inherited under a byte budget that shrinks by 0.7× per generation
 (`FIDELITY_BUDGET_BYTES`, `FIDELITY_BUDGET_DECAY`) and hands the digest on. Retention per
 generation is **embedding-free**: a fact is retained when its normalized gold answer is contained
-in the digest. The shipped summariser is a deterministic truncating digest (whole lines survive or
-drop in a seed-stable order, never paraphrased) — a stand-in that exercises the metric.
-`Summarizer` is the seam for a model-backed summariser later.
+in the digest. Two summarisers ship: `model` (`createModelSummarizer`, the default with a real
+`--model`: the answering model rewrites the inheritance into a digest that must fit the budget,
+anything over is hard-truncated) and `stub` (`createStubSummarizer`, the default with
+`--model stub`: a deterministic truncating digest whose whole lines survive or drop in a
+seed-stable order, never paraphrased). `--summarizer model` with `--model stub` is refused.
 
 ### Inheritance mechanism
 
@@ -212,17 +217,18 @@ than pretend a 25-fact inheritance fits one bundle.
 
 ### What it does NOT prove
 
-- `--model stub` is the only wired model in this scaffold (a non-stub id is refused rather than
-  silently routed). Stub numbers are plumbing checks: they show the read path surfaces inherited
-  lessons and that the metrics compute; they say nothing about a real model.
-- Fidelity with the stub summariser measures truncation loss only. Paraphrase drift — the way real
-  re-summarisation actually corrupts facts — needs a model-backed `Summarizer`.
+- Stub numbers (`--model stub`, the default) are plumbing checks: they show the read path
+  surfaces inherited lessons and that the metrics compute; they say nothing about a real model.
+  Only a real-model run speaks to a model, and then only to that model on this synthetic set.
+- Fidelity with the stub summariser measures truncation loss only. The model summariser also
+  measures paraphrase drift, but retention is exact-match containment of the gold answer, so a
+  value restated in other words or units counts as lost — a conservative bound.
 - The synthetic domain is 50 fictional facts × 2 paraphrases; transfer means "recall the sibling
   paraphrase's lesson", not generalisation.
 
 ### Files
 
-- `successor.ts` — harness and CLI (`runSuccessorBenchmark`, `fidelityChain`, `buildSuccessorContext`, `validateSuccessorResult`).
+- `successor.ts` — harness and CLI (`runSuccessorBenchmark`, `fidelityChain`, `buildSuccessorContext`, `createModelSummarizer`, `createStubSummarizer`, `validateSuccessorResult`).
 - `../../test/successor-benchmark.test.ts` — offline pipeline test.
 
 ## What this does NOT prove
@@ -557,7 +563,7 @@ gold literal); each gets a gold assertion from an established writer (standing d
 |---|---|---|
 | `--conflict` | 0.5 | share of facts that also get a **wrong** value from a *different* writer |
 | `--sybils` / `--sybil-share` | 3 / 0.5 | that share of conflicts is a **Sybil attack**: the wrong record is authored by a fresh (standing 0) account and its `source_ids` are copies of one text captured by every other fresh account (one content hash, distinct authors). The rest are **honest disagreements** by another established writer |
-| `--sources` (default on) | on | the gold record carries 1–2 sources captured by *other* established writers — independent provenance |
+| `--no-sources` | sources on | without it, the gold record carries 1–2 sources captured by *other* established writers — independent provenance; `--no-sources` drops them |
 | `--wrong-sources` | off | an honestly-wrong writer captures its *own* source (default off: an honest mistake is an unsourced assertion) |
 | `--corroboration` | 0.3 | a third writer re-asserts the gold value (same object → never a contradiction with gold) |
 | `--order` | random | `gold-first` writes the wrong value strictly last; `wrong-first` strictly first |

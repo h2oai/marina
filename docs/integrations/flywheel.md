@@ -3,8 +3,8 @@
 Marina can drive a separately deployed Flywheel through the dependency-free
 Connect/JSON client in `src/integrations/flywheel.ts`. This is an additive
 fleet/execution integration; it does not change Marina's default local coding
-runtime. When `FLYWHEEL_TOKEN` is set, Marina registers the identity-scoped
-`flywheel` MCP tool.
+runtime. The world MCP server always lists the identity-scoped `flywheel` tool; its actions are
+ordinary Code Mode commands, so they do work only once `FLYWHEEL_TOKEN` is set.
 
 ## Preview setup from a clean machine
 
@@ -102,18 +102,21 @@ RAM or processes, and requires a `keepAlive` sandbox.
 
 ## MCP lifecycle
 
-Call `flywheel` after `login` with one of these actions:
+Call `flywheel` after `login` with an `action`. Each action runs one engine command, so rank
+and the `code.exec` gate apply exactly as for any other client:
 
-- `create` — optional `image` and `keep_alive` (defaults true)
-- `exec` — `command`, optional `args` and `cwd`; returns streamed process output
-- `publish` — `port`; returns the public URL
-- `status` — reports the current entity binding without contacting Flywheel
-- `hibernate` / `resume` — VM backends only
-- `stop` — tears down the sandbox and removes the entity binding
+| Action | Parameters | Runs |
+|--------|------------|------|
+| `create` | optional `image` | `code sandbox start [image]` |
+| `exec` | `command`, optional `args` | `code run <command> [args…]` |
+| `publish` | `service` | `code service publish <service>` (a declared `code service`) |
+| `status` | — | `code sandbox status` |
+| `hibernate` / `resume` | — | `code sandbox hibernate` / `code sandbox resume` (VM backends only) |
+| `stop` | — | `code sandbox stop confirm` |
 
-The MCP tool is the low-level control-plane surface. Its `stop` action does not run Code Mode's
-dirty-project/export check; use `code sandbox stop confirm` (or `discard confirm`) for coding
-workspaces unless destructive teardown is intentionally being handled by the caller.
+`stop` runs Code Mode's export check: with unexported project work it refuses and names
+`code sandbox stop discard confirm`, which a caller must send through the `command` tool to accept
+the data loss.
 
 The MCP lifecycle plus durable reconciliation is the shipped control-plane
 baseline. Code Mode routing and project materialization follow the canonical

@@ -29,7 +29,7 @@ The runtime provides the following capabilities:
 - **Governed autonomy.** Standing and per-operation competence gates apply to consequential
   actions; approvals are the proof (a held run a person approves → one demonstration → solo use)
   so any participant earns capability in-world, and the operator's `MARINA_AUTONOMY` posture dial
-  (guarded / earned / open) sets the ceiling. The dial is env-only, so no agent can loosen its own
+  (guarded / earned / open / sovereign, the last turning every gate off) sets the ceiling. The dial is env-only, so no agent can loosen its own
   limits from inside the world — gates constrain capabilities rather than prescribing every agent decision.
 - **Multiple lenses over one state.** Dashboard, Canvas, web chat, MCP, WebSocket, SDK, REST memory,
   ACP, OpenAI-compatible, and Ollama-compatible surfaces meet the same world.

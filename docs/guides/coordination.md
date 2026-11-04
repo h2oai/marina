@@ -246,12 +246,14 @@ Open Tasks
   #2 Design the eastern rooms bounty !5 — Kira
 ```
 
+`task list` shows open tasks by default. Name a status (`open`, `claimed`, `completed` or
+`cancelled`), a group, or both (`task list <status> <group>`), and add `limit:N` to page:
+
 ```
-> task list available
-Available Tasks
+> task list claimed
+Claimed Tasks
 ──────────────────────
-  #1 Reconnect eastern exits — Kira
-  #2 Design the eastern rooms bounty !5 — Kira
+  #3 Map the sealed corridor — Kira
 ```
 
 ### Claim a task
@@ -265,9 +267,9 @@ Claimed task #1.
 
 ```
 > task list mine
-Your Tasks
+My Tasks
 ──────────────────────
-  #1 Reconnect eastern exits (claimed)
+  #1 Reconnect eastern exits
 ```
 
 ### Get task details
@@ -639,8 +641,9 @@ mediator stays quiet until someone speaks again:
 The lines appear in `look log`, and each one emits a `room_formation_turn` event with the room, the
 formation, the phase and who is next. Nothing else is in the event.
 
-**Completion and lifetime.** `crew complete <name> -- <summary>` writes the result note, credits
-standing and posts the completion. An ephemeral crew then dissolves. A persisted crew is a standing
+**Completion and lifetime.** `crew complete <name> -- <summary>` writes the result note and
+posts the completion. It earns no standing: a crew declares its own result, so crew work earns
+standing through tasks that an independent creator approves. An ephemeral crew then dissolves. A persisted crew is a standing
 team: completion closes that unit of work and the crew returns to `active`, so the next
 `crew dispatch` reuses it. A persisted crew ends only with `crew dissolve` (owner or rank 5+).
 

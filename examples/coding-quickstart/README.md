@@ -1,8 +1,9 @@
 # Coding Quickstart — a narrated session
 
-A runnable tour of Marina's coding loop. It opens a coding session, looks around the workspace,
-runs the review-grade loop, and closes with a durable summary — all from the `marina` CLI in pipe
-mode, so you can watch the whole thing scroll by.
+A runnable tour of Marina's coding loop. It opens a coding session, checks workspace readiness,
+looks around the workspace, stores a checkpoint, and closes with a durable summary — all from
+`marina connect` in pipe mode, so you can watch the whole thing scroll by. It runs no tests and
+requests no review; [Take it further](#take-it-further) shows those steps.
 
 Pairs with the guide: [docs/guides/coding.md](../../docs/guides/coding.md).
 
@@ -35,7 +36,8 @@ bun run start
 MARINA_URL=ws://my-host:3300 ./examples/coding-quickstart/session.sh
 ```
 
-The script pipes a sequence of commands to `scripts/connect.ts` (the `marina` CLI). It's
+The script pipes a sequence of commands to `marina connect <name>`, run from this checkout as
+`bun --no-env-file scripts/marina.ts connect <name>` so it works without `bun run setup:cli`. It's
 read-mostly and fast — the only things it writes are session records and a checkpoint artifact, so
 it's safe to run against any repo Marina is pointed at.
 
