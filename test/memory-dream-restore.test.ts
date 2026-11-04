@@ -26,7 +26,9 @@ describe("episodes recall and per-op restore", () => {
   let conn: MockConnection;
   let ada: EntityId;
   let ids: number[];
-  const now = Date.now();
+  // Taken per test, before its notes are written: a file-level clock left the notes
+  // outside the dream window once a slow shard spent more than a second between them.
+  let now = 0;
 
   const message = (role: string, text: string) =>
     `,${JSON.stringify({ role, content: [{ type: "text", text }] })}`;
@@ -48,6 +50,7 @@ describe("episodes recall and per-op restore", () => {
   };
 
   beforeEach(() => {
+    now = Date.now();
     cleanupDb(TEST_DB);
     db = new MarinaDB(TEST_DB);
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });

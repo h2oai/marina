@@ -6,6 +6,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { EmbeddingProvider } from "../../src/memory/embeddings";
 import { MemoryError } from "../../src/memory/service-types";
+import { disableOnnxTelemetry } from "./telemetry";
 
 export const LOCAL_EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
 export const LOCAL_EMBEDDING_REVISION = "751bff37182d3f1213fa05d7196b954e230abad9";
@@ -69,6 +70,8 @@ export async function localEmbeddings(
   cacheDirectory: string,
   localOnly = false,
 ): Promise<EmbeddingProvider> {
+  // Before the runtime loads: ONNX Runtime reads its telemetry switch at init.
+  disableOnnxTelemetry();
   const [{ Tokenizer }, ort] = await Promise.all([
     import("@huggingface/tokenizers"),
     import("onnxruntime-node"),
@@ -88,7 +91,7 @@ export async function localEmbeddings(
     interOpNumThreads: 1,
   });
   return {
-    id: `${LOCAL_EMBEDDING_MODEL}@${LOCAL_EMBEDDING_REVISION}:onnx1.27-tokenizers0.2-q8-mean-chunks500-v2`,
+    id: `${LOCAL_EMBEDDING_MODEL}@${LOCAL_EMBEDDING_REVISION}:onnx1.31-tokenizers0.2-q8-mean-chunks500-v2`,
     async embed(text) {
       if (Buffer.byteLength(text) > 65536)
         throw new MemoryError(413, "embedding_capacity", "Local embedding input exceeds 64 KiB");

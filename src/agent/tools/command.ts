@@ -6,7 +6,7 @@
 // through `./tools`.
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, Type } from "typebox";
 import { unsplitChainNote } from "../../sdk/command-chain";
 import { COMMAND_ROSTER, ECOLOGY_ROSTER } from "../prompts/lean-system";
 import { execCommand, type ToolContext } from "./shared";

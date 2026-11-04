@@ -6,10 +6,14 @@
 // schema is capped at 2 KB by test/tools-deferred.test.ts.
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import type { MarinaClient } from "../../sdk/client";
 import { MEMORY_OPERATIONS } from "../../sdk/memory-operations";
 import type { ToolContext } from "./shared";
+
+/** Record keys as published since TypeBox 0.34 (`"^(.*)$"`); TypeBox 1.x would emit
+ * `"^.*$"`, and these wire schemas are held stable (test/memory-mcp-contracts.test.ts). */
+const RECORD_KEY = Type.String({ pattern: "^(.*)$" });
 
 const memoryServiceSchema = Type.Object({
   // A plain `enum` (not a 60-literal anyOf) keeps this schema ~700 B smaller;
@@ -26,7 +30,7 @@ const memoryServiceSchema = Type.Object({
     }),
   ),
   input: Type.Optional(
-    Type.Record(Type.String(), Type.Unknown(), {
+    Type.Record(RECORD_KEY, Type.Unknown(), {
       description:
         "Payload: retrieve {task}; search {query}; remember {content, claim?}; assist_create {role, task, worker_id}; assist_read/finish {lease_token, request?, completion?}",
     }),

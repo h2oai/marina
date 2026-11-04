@@ -306,7 +306,14 @@ jobs:
           git fetch --no-tags --depth=1 origin "$BASE_REF"
           mkdir -p "$RUNNER_TEMP/marina-context-base"
           git archive "$BASE_REF" | tar -x -C "$RUNNER_TEMP/marina-context-base"
-          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/marina-context-base/node_modules"
+          # The baseline runs its own code, so it needs its own dependencies: reuse
+          # the candidate's install only when both lockfiles agree (a PR that
+          # removes or replaces a package would otherwise break the baseline).
+          if cmp -s bun.lock "$RUNNER_TEMP/marina-context-base/bun.lock"; then
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/marina-context-base/node_modules"
+          else
+            (cd "$RUNNER_TEMP/marina-context-base" && bun install --frozen-lockfile)
+          fi
       - name: Compare three alternating base/candidate runs
         run: bun run check:context-performance --baseline "$RUNNER_TEMP/marina-context-base"
       - name: Preserve latency samples and comparison

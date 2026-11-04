@@ -4,7 +4,7 @@
 // `think` — zero-side-effect structured reasoning; resident in every profile.
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, Type } from "typebox";
 
 // ─── Think Tool (zero side effects) ────────────────────────────────────────
 

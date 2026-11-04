@@ -3,7 +3,7 @@
 import { expect, it } from "bun:test";
 import type { Agent, AgentMessage } from "@earendil-works/pi-agent-core";
 import { type AssistantMessage, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
 import type { PlatformMemoryBackend } from "../src/agent/memory-platform";
 import { OutstandingRequests } from "../src/agent/outstanding-requests";

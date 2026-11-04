@@ -6,7 +6,7 @@
 // of any profile set).
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { execCommand, type ToolContext } from "./shared";
 
 const evolutionToolSchema = Type.Object({

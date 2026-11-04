@@ -1,6 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
-import type { Static, TObject, TOptional, TSchema } from "@sinclair/typebox";
+import type { Static, TObject, TOptional, TSchema } from "typebox";
 import { z } from "zod";
 
 /** Render the deliberately small JSON Schema vocabulary used by memory tool contracts.
@@ -27,8 +27,25 @@ function validateKeywords(schema: TSchema): void {
     if (!supported.has(key)) throw new Error(`Unsupported memory tool schema keyword: ${key}`);
 }
 
-function render(schema: TSchema): z.ZodType {
-  validateKeywords(schema);
+/** The JSON Schema keywords `render` reads (TypeBox 1.x keeps `TSchema` opaque). */
+interface JsonSchemaNode {
+  const?: z.core.util.Literal;
+  enum?: [string, ...string[]];
+  anyOf?: TSchema[];
+  oneOf?: TSchema[];
+  type?: string;
+  patternProperties?: Record<string, TSchema>;
+  items?: TSchema;
+  maxItems?: number;
+  minimum?: number;
+  exclusiveMinimum?: number;
+  maximum?: number;
+  description?: string;
+}
+
+function render(node: TSchema): z.ZodType {
+  validateKeywords(node);
+  const schema = node as JsonSchemaNode;
   let result: z.ZodType;
   if ("const" in schema) result = z.literal(schema.const);
   else if (schema.enum) result = z.enum(schema.enum);
@@ -38,10 +55,10 @@ function render(schema: TSchema): z.ZodType {
     if (schema.patternProperties) {
       if (Object.keys(schema.patternProperties).join() !== "^(.*)$")
         throw new Error("Unsupported record key pattern");
-      result = z.record(z.string(), render(schema.patternProperties["^(.*)$"]));
-    } else result = z.object(mcpJsonSchema(schema as TObject));
+      result = z.record(z.string(), render(schema.patternProperties["^(.*)$"] as TSchema));
+    } else result = z.object(mcpJsonSchema(node as TObject));
   } else if (schema.type === "array") {
-    let array = z.array(render(schema.items));
+    let array = z.array(render(schema.items as TSchema));
     if (schema.maxItems !== undefined) array = array.max(schema.maxItems);
     result = array;
   } else if (schema.type === "integer" || schema.type === "number") {

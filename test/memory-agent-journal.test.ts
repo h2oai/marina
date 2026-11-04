@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent } from "@earendil-works/pi-agent-core";
 import { type AssistantMessage, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { DurableResidentMemory } from "../src/agent/durable-memory";
 import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
 import { PlatformMemoryBackend } from "../src/agent/memory-platform";

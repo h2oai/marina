@@ -7,7 +7,7 @@
 // (`applyStrictToolSchemas`) and `createProfileToolset` / `createScopedTools`.
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, Type } from "typebox";
 import type { AgentSupports } from "../agent-types";
 import type { PlatformMemoryBackend } from "../memory-platform";
 import { createAnalysisTools } from "./analysis";

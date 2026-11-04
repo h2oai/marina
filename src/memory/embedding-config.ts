@@ -47,7 +47,7 @@ export type EmbeddingConfig =
 
 /** Must equal the id the extension constructs; verified when the provider loads. */
 export const LOCAL_EMBEDDING_PROVIDER_ID =
-  "Xenova/all-MiniLM-L6-v2@751bff37182d3f1213fa05d7196b954e230abad9:onnx1.27-tokenizers0.2-q8-mean-chunks500-v2";
+  "Xenova/all-MiniLM-L6-v2@751bff37182d3f1213fa05d7196b954e230abad9:onnx1.31-tokenizers0.2-q8-mean-chunks500-v2";
 
 /** The variables one embedding configuration reads (memory and corpora each have their own). */
 export interface EmbeddingEnvNames {

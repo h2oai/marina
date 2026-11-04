@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Every dependency on its latest release; ONNX Runtime's telemetry turned off.** All workspaces,
+  the desktop app, the site and the three extensions are on their newest versions (pi-agent-core and
+  pi-ai 1.5, the Claude agent SDK, Discord, better-auth, Astro, Vite, Tailwind, Vitest and others),
+  with no advisories from `bun audit` in any lockfile. Tool schemas move from `@sinclair/typebox`
+  0.34 to its successor `typebox` 1.4, which pi 1.5 reads for parameter types; every published tool
+  and memory contract schema stays semantically identical (record keys keep `^(.*)$`), with only
+  key order inside a property changing. `extensions/local-embeddings` runs `onnxruntime-node` 1.31.1
+  (provider id `…:onnx1.31…`, so optional vectors reindex): since 1.29 the runtime uploads
+  telemetry to Microsoft's 1DS collector by default on Linux and macOS, so the extension writes
+  `ORT_DISABLE_TELEMETRY=1` into the native environment before the runtime loads (Bun's
+  `process.env` does not reach it), keeps a value the operator set, and refuses to load the runtime
+  if the switch cannot be written.
 - **Every dependency is on its latest release, clearing two advisories.** `zod` 4.6.7 in the
   `langgraph-store` extension (through `@langchain/langgraph` 1.5.3) and `@hono/node-server` 2.1.5
   (within the MCP SDK's declared range) fix GHSA-mrhx-c7xc-m3w5 and GHSA-rmxm-3fg6-px4f, and

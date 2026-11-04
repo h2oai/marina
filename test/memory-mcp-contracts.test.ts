@@ -3,7 +3,7 @@
 import { expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { z } from "zod";
 import { MEMORY_TOOL_INPUTS } from "../src/memory/tool-contracts";
 import { mcpJsonSchema } from "../src/net/mcp/mcp-json-schema";

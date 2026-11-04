@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Agent } from "@earendil-works/pi-agent-core";
 import { type AssistantMessage, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { AgentRuntime, spawnConfigFromSaved } from "../src/agent/agent-runtime";
 import type { AgentConfig, AgentEvent, AgentStatus } from "../src/agent/agent-types";
 import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";

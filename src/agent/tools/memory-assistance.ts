@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { MEMORY_ASSISTANCE_READS, MEMORY_HELPER_ROLES } from "../../sdk/memory-assistance";
 import type { MemoryOperationRequest } from "../../sdk/memory-operations";
 import type { ToolContext } from "./shared";
+
+/** Record keys as published since TypeBox 0.34 (`"^(.*)$"`); TypeBox 1.x would emit
+ * `"^.*$"`, and these wire schemas are held stable (test/memory-mcp-contracts.test.ts). */
+const RECORD_KEY = Type.String({ pattern: "^(.*)$" });
 
 const schema = Type.Object({
   action: Type.Union(
@@ -54,7 +58,7 @@ const schema = Type.Object({
         }),
       ),
       input: Type.Optional(
-        Type.Record(Type.String(), Type.Unknown(), {
+        Type.Record(RECORD_KEY, Type.Unknown(), {
           description:
             "search/source_search use query text. query uses exact subject, predicate, object, type, tier, valid_at filters; it does not take query text. graph uses subject, predicates, direction and max_depth. Omit start/end to read a source's first page.",
         }),
