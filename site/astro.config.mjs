@@ -64,6 +64,7 @@ export default defineConfig({
           items: [
             { label: "Choose an integration", slug: "docs/guides/integrations" },
             { label: "Coding agents & editors", slug: "docs/guides/coding-agent-integrations" },
+            { label: "Codex plugin", slug: "docs/guides/codex-plugin" },
             { label: "MCP", slug: "docs/guides/mcp-integration" },
             { label: "OpenAI-compatible model API", slug: "docs/guides/model-api" },
             { label: "Memory API", slug: "docs/guides/memory-api" },

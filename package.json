@@ -147,6 +147,7 @@
     "qualify:memory:assistance": "bun run scripts/research/memory-assistance-qualification.ts",
     "qualify:memory:reliability": "bun run scripts/qualify-memory-reliability.ts",
     "build:memory": "bun build src/sdk/memory.ts --target browser --outfile dist/memory.js",
+    "build:codex-plugin": "bun run scripts/build-codex-plugin.ts",
     "memory:mcp": "bun run scripts/memory-mcp.ts",
     "qualify:memory:storage": "bun run scripts/qualify-memory-storage.ts",
     "qualify:memory:sustained": "bun run scripts/qualify-memory-sustained.ts",

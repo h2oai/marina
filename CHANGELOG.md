@@ -905,6 +905,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Marina plugin for Codex.** `bun run build:codex-plugin` builds an installable local
+  marketplace with durable memory, setup and memory skills, and optional world access.
+  The package bundles its MCP adapters and references private credential files without
+  copying secrets. Failed world authentication now closes the stdio bridge promptly.
 - **A Claude Code plugin: `/plugin install marina`, with a world started on demand.**
   `plugins/claude-code` and a root `.claude-plugin/marketplace.json` (`/plugin install marina
   --marketplace h2oai/marina`) ship one MCP server (`marina mcp-stdio --start`), a `world` skill,

@@ -53,6 +53,10 @@ Use `/mcp` to inspect the connection. Source: [Claude Code MCP configuration](ht
 
 ### Codex CLI and IDE extension
 
+For Codex CLI or desktop, the [Marina plugin](codex-plugin.md) bundles memory tools,
+workflow skills and optional world access into one installable package. Use the manual
+configuration below for the IDE extension or an existing MCP setup.
+
 Add to your Codex configuration, normally `~/.codex/config.toml`:
 
 ```toml

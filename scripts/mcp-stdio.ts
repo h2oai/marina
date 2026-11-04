@@ -267,7 +267,7 @@ export async function runMcpStdio(argv: string[], io: McpStdioIO = {}): Promise<
     });
     const target = await resolveMcpTarget({
       ...(values.url ? { url: values.url } : {}),
-      ...(values.token ? { token: values.token } : {}),
+      ...(values.token !== undefined ? { token: values.token } : {}),
       ...(values["data-dir"] ? { dataDir: values["data-dir"] } : {}),
       ...(values.start ? { start: true } : {}),
       ...(values.idle ? { idle: values.idle } : {}),
@@ -277,10 +277,13 @@ export async function runMcpStdio(argv: string[], io: McpStdioIO = {}): Promise<
     });
     const stdin = io.stdin ?? process.stdin;
     const local = new StdioServerTransport(stdin, io.stdout ?? process.stdout);
+    let failed = false;
+    let finish: () => void = () => undefined;
     // The stdio transport never ends on its own: it ignores stdin EOF. A client
     // that goes away closes our stdin, so end there — or the bridge (and its
     // upstream MCP session) would outlive the client indefinitely.
     const closed = new Promise<void>((resolve) => {
+      finish = resolve;
       local.onclose = () => resolve();
       upstream.onclose = () => resolve();
       stdin.once("end", () => resolve());
@@ -289,6 +292,10 @@ export async function runMcpStdio(argv: string[], io: McpStdioIO = {}): Promise<
     local.onmessage = (message) => {
       upstream.send(message).catch((err) => {
         process.stderr.write(`[marina mcp-stdio] upstream send failed: ${getErrorMessage(err)}\n`);
+        // A rejected initialize (e.g. HTTP 401) has no JSON-RPC reply to forward.
+        // End stdio so the client sees a failed connection instead of timing out.
+        failed = true;
+        finish();
       });
     };
     upstream.onmessage = (message) => {
@@ -307,7 +314,7 @@ export async function runMcpStdio(argv: string[], io: McpStdioIO = {}): Promise<
     // connection now rather than when its stale-session sweep finds it.
     await upstream.terminateSession().catch(() => undefined);
     await Promise.allSettled([upstream.close(), local.close()]);
-    return 0;
+    return failed ? 1 : 0;
   } catch (err) {
     process.stderr.write(`marina mcp-stdio: ${getErrorMessage(err)}\n`);
     return 1;
