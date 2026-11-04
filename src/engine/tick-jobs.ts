@@ -362,20 +362,27 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     },
   });
 
-  // ~5 min: dreams the agents' context compactions asked for (request.ts),
-  // run once each agent is quiet; material and cooldown are waived, budget is not.
+  // ~5 min: the quiet sweep. The same schedule as the hourly job — every
+  // candidate agent and pool through the material / quiet / cooldown / budget
+  // gates (SQL only until one passes) — so a 30-minute quiet window anywhere in
+  // the hour produces a dream instead of having to coincide with the hourly
+  // tick (seen live: busy agents quiet for 40–50 min a day, never at that
+  // instant). Compaction requests (request.ts) ride the same gates with
+  // material and cooldown waived; `runRequestedDreams` then takes any request
+  // the candidate list did not reach.
   s.register({
-    name: "memory-dream-requested",
+    name: "memory-dream-quiet",
     every: OUTCOME_DELIVERY_INTERVAL,
     phase: MEMORY_DREAM_REQUEST_PHASE,
-    failureMessage: "Requested memory dream failed",
+    failureMessage: "Memory dream quiet sweep failed",
     run: async () => {
       if (!host.db) return;
-      const dreams = await runRequestedDreams(host.db);
+      const dreams = [...(await runDreamSchedule(host.db)), ...(await runRequestedDreams(host.db))];
       const ran = dreams.filter((d) => d.state !== "skipped");
       if (ran.length)
-        host.engine.logger.info("memory", "requested dream pass", {
+        host.engine.logger.info("memory", "dream quiet sweep", {
           dreamed: ran.map((d) => d.entityName),
+          ops: ran.reduce((n, d) => n + (d.checks?.accepted ?? 0), 0),
         });
     },
   });
@@ -723,7 +730,7 @@ export const OUTCOME_AUTORESOLVE_PHASE = 3450;
 export const USEFULNESS_SETTLE_PHASE = 3550;
 /** Hourly phase of `memory-dream`. */
 export const MEMORY_DREAM_PHASE = 3400;
-/** Requested (compaction-triggered) dreams: every 5 min, clear of outcome delivery's 150. */
+/** The dream quiet sweep (schedule + requested dreams): every 5 min, clear of outcome delivery's 150. */
 export const MEMORY_DREAM_REQUEST_PHASE = 225;
 
 /** Ticks between arena filing-watch passes (src/arena/filing-watch.ts). */
