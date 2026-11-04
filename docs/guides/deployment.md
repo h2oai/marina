@@ -28,7 +28,7 @@ A single Bun process serves everything on **`WS_PORT`** (default `3300`):
 
 | Surface | Path / Protocol | Notes |
 |---------|-----------------|-------|
-| Web chat | `GET /` | Browser client |
+| Web chat | `GET /chat` | Compact browser client (`GET /` redirects to the dashboard) |
 | Dashboard SPA | `/dashboard`, `/canvas`, `/who/<name>` | Built from `dashboard/` into `dist/dashboard` |
 | WebSocket | `/ws` | Live agent/human connection |
 | OpenAI/Ollama API | `/v1/*`, `/api/*` | Drop-in LLM endpoint ([Model API](model-api.md)) |
@@ -69,13 +69,13 @@ docker compose logs -f
 
 Then open `http://localhost:3300`. State lives in the named volume `marina-data`; `docker compose down` stops the instance without deleting it, and `docker compose down -v` wipes the world.
 
-The image builds the dashboard SPA, runs as an unprivileged `bun` user, and ships a `HEALTHCHECK` that polls `/health`. `docker compose up` waits for it to report healthy.
+The image builds the dashboard SPA, runs as an unprivileged `bun` user, and ships a `HEALTHCHECK` that polls `/health`. `docker compose up -d` returns once the containers start, without waiting for that check; add `--wait` (`docker compose up -d --build --wait`) to block until it reports healthy.
 
 Inside the container Marina binds `0.0.0.0`, so it derives the **`public`** trust profile: the
 OpenAI-compatible API stays closed until you set `MODEL_API_KEYS`, safety gates are enforced, and
 seeded agents do not start on their own. That is the right default for a server. For a personal
 instance on your own machine, add the local overlay, which declares `MARINA_PROFILE=local` and so
-behaves like a native `bun run start` (generated model-API key in `docker compose logs`, seeded
+behaves like a native `bun run start` (a generated model-API key, kept in a 0600 file next to the database in the data volume and never written to the logs — `docker compose logs` shows only the `$(cat …)` line that reads it; seeded
 agents start once a provider key is set, $50/day default spend cap):
 
 ```bash
@@ -165,9 +165,9 @@ Marina's HTTP API requires authentication **by default** — but it's easy to we
 - [ ] **Don't publish ports 4000 (telnet) and 3302 (log viewer)** — neither is authenticated. Telnet is off by default (`TELNET_PORT=0`), and both listeners bind the resolved `WS_HOST` (loopback unless you opt into exposure), but the publish spec is still your boundary: keep them off your public load balancer / security group. The default docker-compose publishes all ports to the host's `127.0.0.1` only.
 - [ ] **Set `GATEWAY_SECRET`** if (and only if) you use [federation](federation.md). Otherwise leave it unset.
 - [ ] **Terminate TLS at a reverse proxy** (next section). Marina speaks plain HTTP/WS; never expose `3300` directly to the internet.
-- [ ] Rate limits are built in (WS 5/s, MCP 5/s, Model API 2/s per IP, Memory API 10/s per agent, dashboard REST 60/10 s per principal, canvas + asset writes 30/10 s per principal, public `/api/entity/*` 30/10 s per IP, MCP sessions 10/min per IP, pre-auth `/api/setup-status` 20/min per IP, model-API reads 120/min per IP, public asset reads 300/min per IP, and 20 failed `/v1` / `/mem` credentials per IP per minute before that address is refused) but a proxy-level limit is still wise. Per-IP limits key on the TCP peer; set `MARINA_TRUST_PROXY=true` behind your reverse proxy so they key on `X-Forwarded-For` instead.
+- [ ] Rate limits are built in (WebSocket, telnet and MCP commands 50/s with a burst of 200 per entity — one limiter, MCP in its own bucket — Model API 20/s burst 100 per IP, Memory API 10/s burst 20 per agent, dashboard REST 60/10 s per principal, canvas + asset writes 30/10 s per principal, public `/api/entity/*` 30/10 s per IP, MCP sessions 10/min per IP, pre-auth `/api/setup-status` 20/min per IP, model-API reads 120/min per IP, public asset reads 300/min per IP, and 20 failed `/v1` / `/mem` credentials per IP per minute before that address is refused) but a proxy-level limit is still wise. Per-IP limits key on the TCP peer; set `MARINA_TRUST_PROXY=true` behind your reverse proxy so they key on `X-Forwarded-For` instead.
 - [ ] **Public hostname on a loopback bind** (a reverse proxy on the same host forwarding to `127.0.0.1:3300`): set `MARINA_ALLOWED_HOSTS=marina.example.com` — a loopback bind answers only to loopback `Host` names and the names listed there (DNS-rebinding guard), so without it every proxied request gets `421`. On a non-loopback bind, setting it turns the same check on. See [security](../architecture/security.md).
-- [ ] **MCP behind a public hostname**: set `MARINA_MCP_ALLOWED_HOSTS=mcp.example.com` (DNS-rebinding guard; unset, a public bind accepts only loopback names, the bind address, the machine hostname and the `BETTER_AUTH_URL`/`ALLOWED_ORIGINS` hosts) — the transport already requires a `MODEL_API_KEYS` bearer on any non-loopback bind. See [mcp.md](../mcp.md#transport-security).
+- [ ] **MCP behind a public hostname**: set `MARINA_MCP_ALLOWED_HOSTS=mcp.example.com` (DNS-rebinding guard; unset, a public bind accepts only loopback names, the bind address, the machine hostname and the `BETTER_AUTH_URL`/`ALLOWED_ORIGINS` hosts) — the transport already requires a `MODEL_API_KEYS` bearer on any non-loopback bind. See [MCP transport security](mcp-integration.md#transport-security).
 - [ ] **Request bodies** are capped at 8 MiB (`MARINA_MAX_REQUEST_BODY_BYTES`); asset uploads at 50 MiB (`MARINA_MAX_UPLOAD_BYTES`). Uploaded assets are MIME-allowlisted and served with `nosniff` + a no-script CSP; every HTML page gets `X-Frame-Options: SAMEORIGIN` and the dashboard Content-Security-Policy below.
 
 ### Dashboard Content-Security-Policy

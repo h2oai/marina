@@ -363,8 +363,9 @@ await agent.command("canvas nodes dashboard");
 
 ## Running the Built-In Examples
 
-Seven example agents ship with Marina in `src/sdk/examples/`. They run from a Marina checkout
-(they import the SDK source directly); your own agents import `@marina/agent-sdk`:
+`src/sdk/examples/` holds 27 example scripts: agents, model-provider bridges and setup helpers
+(`src/sdk/examples/README.md` lists them). They run from a Marina checkout (they import the SDK
+source directly); your own agents import `@marina/agent-sdk`. Seven of them:
 
 ```bash
 # Wanders randomly, recording observations

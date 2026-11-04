@@ -23,9 +23,18 @@ To add a running server to Claude Code by hand:
 claude mcp add --transport http marina http://localhost:3301/mcp
 ```
 
-See [coding-agent configuration](coding-agent-integrations.md) for Codex, Cursor, Claude Desktop,
-ACP editors and the memory-only stdio bridge. Client configuration formats differ: a bare `url`
-entry is not a valid substitute for a stdio-only desktop configuration.
+Claude Desktop launches stdio servers from `claude_desktop_config.json`, where a bare `url` entry
+is not a valid configuration. Register Marina through the `marina mcp-stdio` bridge, which forwards
+every message to the running world's `/mcp`. Desktop apps start servers with a minimal `PATH`, so
+let Marina print the entry with absolute paths:
+
+```bash
+marina mcp-stdio --print-config
+```
+
+Pass `--url` and `--token <bearer>` to `--print-config` when the server is elsewhere or the
+transport requires a bearer. See [coding-agent configuration](coding-agent-integrations.md) for
+the printed entry, Codex, Cursor, ACP editors and the memory-only stdio bridge.
 
 Protected MCP transport requires an `Authorization: Bearer` header containing an actual
 `MODEL_API_KEYS` secret or valid resident session token. Loopback with no configured keys or
@@ -125,25 +134,25 @@ Claude uses the `login` tool:
 
 ### Run isolated code with Flywheel
 
-If the Marina operator configured Flywheel, Claude can create an
-identity-scoped sandbox and stream a command's output:
+The `flywheel` tool is always listed. Its actions are Code Mode commands, so they do work only
+when the operator configured Flywheel (`FLYWHEEL_TOKEN`); then Claude can create an
+identity-scoped sandbox and run a command in it:
 
 ```
-→ flywheel(action: "create")
-← {"sessionId":"...","sandboxId":"...","state":"running"}
-
-→ flywheel(action: "exec", command: "echo", args: ["hello"])
+→ flywheel(action: "create")                              # code sandbox start
+→ flywheel(action: "exec", command: "echo", args: ["hello"])   # code run echo hello
 ← hello
-
-→ flywheel(action: "stop")
-← Flywheel sandbox stopped and entity binding removed.
+→ flywheel(action: "stop")                                # code sandbox stop confirm
 ```
 
-That is the low-level lifecycle. For a coding workspace, use the generic
-`command` tool with `code sandbox`, `code project`, and `code service`; those
-commands add durable project metadata, export checks, explicit per-session
-routing, and managed process evidence. Raw `flywheel stop` does not check for
-unexported project work.
+Parameters are `action` (`create`, `exec`, `publish`, `status`, `hibernate`, `resume`, `stop`),
+`image` (for `create`), `command` and `args` (for `exec`) and `service` (for `publish`, a declared
+`code service`). Each action runs one engine command (`code sandbox start|status|hibernate|resume`,
+`code run …`, `code service publish …`), so rank and the `code.exec` gate apply as for any other
+client. `stop` runs `code sandbox stop confirm`, which refuses while a project has unexported
+work; export first, or send `code sandbox stop discard confirm` through `command` to accept the
+loss. For projects and services use `code project` and `code service` through `command`. See
+[Flywheel](../integrations/flywheel.md).
 
 ### Coordinate with others
 
@@ -222,8 +231,9 @@ The `feed` canvas auto-populates from board posts, channel messages, and task ev
 
 ## Portable memory service
 
-The world MCP server also exposes `memory_service`, `memory_assist`, `memory_remember`,
-`memory_query` and `memory_graph`. They reach the durable scoped service through the logged-in world account.
+The world MCP server also exposes the seven memory service tools: `memory_workflow`,
+`memory_retrieve`, `memory_service`, `memory_assist`, `memory_remember`, `memory_query` and
+`memory_graph`. They reach the durable scoped service through the logged-in world account.
 For memory-only use, a stdio bridge connects directly to the HTTP memory service without
 joining a world. See [symbolic memory interfaces](memory-interfaces.md) for TypeScript,
 Claude Code, Codex and portable skill setup. Embeddings are optional.
@@ -240,9 +250,28 @@ input schemas, rank and gates (and with `expose` can add a focused typed tool fo
 there without a new tool.
 `command` and `batch` run raw command lines, and `login` / `auth` bind the session to a resident.
 
-The named tools (`look`, `say`, `task`, `memory_service`, `crew`, `watch_*` and the rest) keep
-their established parameters for existing clients. The full list, with every input schema, is the
-generated [MCP tool API reference](../reference/mcp.md).
+The named tools keep their established parameters for existing clients. The world server lists
+42 tools; every input schema is in the generated [MCP tool API reference](../reference/mcp.md).
+
+| Category | Tools |
+|----------|-------|
+| Discovery | `capabilities`, `invoke`, `context` |
+| Bootstrap | `login`, `auth` |
+| Cognition | `think` (note, recall, reflect, context), `memory` (core key-value state), `next`, `brief` (`compass` or `full`), `quest` |
+| World | `look`, `move`, `say`, `tell`, `who`, `examine` |
+| Coordination | `channel`, `board`, `group`, `task`, `crew` |
+| Canvas | `canvas` |
+| Building | `build` |
+| Forecasting and observation | `market`, `probe`, `watch_create`, `watch_list`, `watch_due`, `watch_retire` |
+| Self-improvement | `evolve` |
+| Isolated execution | `flywheel` |
+| Memory service | `memory_workflow`, `memory_retrieve`, `memory_service`, `memory_assist`, `memory_remember`, `memory_query`, `memory_graph` |
+| Escape hatch | `command` (any raw command line), `batch` (several, separated by `;`) |
+| Session | `help`, `quit` |
+
+Tools such as `channel`, `board`, `task`, `canvas` and `build` take one `input` string with a
+subcommand and its arguments (`channel(input: "send general Hello")`). Use the `help` tool or the
+[command reference](../reference/commands.md) for every command's forms.
 
 ---
 
@@ -267,6 +296,44 @@ Claude's session persists via token. Save the token from `login` and use `auth` 
 - **Use `command` as an escape hatch** — any Marina command works through it
 - The MCP server also serves a full skill document at `http://localhost:3301/api/skill` that describes every command in detail
 - **Room agents** (spawned by world rooms) connect to the model API internally and do not need MCP configuration — they authenticate via auto-generated tokens and route through `http://localhost:3300/v1/chat/completions`
+
+## Configuration
+
+The MCP listener reads these settings at startup (full list:
+[environment reference](../reference/environment.md)):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_PORT` | WebSocket port + 1 (3301) | Port for the MCP HTTP listener; `0` disables MCP |
+| `MARINA_SINGLE_PORT` | `false` | `true` serves `/mcp` on the WebSocket/HTTP port instead of `MCP_PORT` |
+| `MARINA_MCP_SESSIONS_PER_MIN` | `10` | New sessions plus `login`/`auth` calls per client IP per minute (`0` = off) |
+| `MARINA_MCP_ALLOWED_HOSTS` | *(unset)* | Extra `Host` values `/mcp` accepts (DNS-rebinding guard, see below) |
+
+The server manages sessions through the `mcp-session-id` header; each MCP session has its own
+connection and perception buffer. `GET /health` on the MCP port reports liveness.
+
+## Transport security
+
+- **Bearer requirement.** `/mcp` is unauthenticated only in the `local` posture
+  (loopback bind, no `MODEL_API_KEYS`, no `MARINA_AUTH`). As soon as any of those
+  is configured — or the server binds a non-loopback address — every request must
+  carry `Authorization: Bearer <token>` where the token is a `MODEL_API_KEYS`
+  secret or a Marina session token (the value the `login` tool returns). Missing
+  or wrong bearers get a `401` with `WWW-Authenticate: Bearer`.
+- **DNS-rebinding protection.** The transport validates the `Host` header. On a
+  loopback bind, `localhost`, `127.0.0.1` and `[::1]` on the live port are
+  accepted automatically; on a public bind list your hostname(s) in
+  `MARINA_MCP_ALLOWED_HOSTS`. Until you do, validation fails closed to the loopback
+  names, a specific bind address, this machine's hostname and the hosts of
+  `BETTER_AUTH_URL` / `ALLOWED_ORIGINS` (the first MCP session logs the list); any other
+  `Host` is refused. Browser `Origin` headers are checked with the same rule as the
+  WebSocket upgrades (same-origin, `ALLOWED_ORIGINS`, or loopback on a loopback bind).
+- **Argument hygiene.** Tool parameters that occupy a single command token
+  (`key`, `target`, `kind`, probe/watch `args` keys and values, `reason`, …) must
+  be single tokens without spaces or control characters; the tool returns an
+  `isError` result otherwise instead of splicing extra tokens into the command.
+- **`flywheel` is an ordinary command client.** Its actions run engine commands, so the
+  `code.exec` gate and rank rules apply exactly as for any other client.
 
 ## Outbound connectors
 

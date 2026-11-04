@@ -115,6 +115,9 @@ const VALID_NOTE_TYPES = new Set([
   "skill",
   "episode",
   "principle",
+  // The reflection tier (`inferTier`): what the idle turn asks for
+  // (`memory note <text> type reflection`, src/agent/idle-reflection.ts).
+  "reflection",
 ]);
 
 const VALID_RELATIONSHIPS = new Set([

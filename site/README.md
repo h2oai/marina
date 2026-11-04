@@ -8,7 +8,7 @@ The GitHub Pages site combines an Astro landing page, Starlight guides and a gen
   the ignored `site/src/content/docs/docs/guides/` collection, preserving guide anchors and mapping
   repository-only references to GitHub. Do not edit or commit the generated copies.
 - Add important guide entry points to `site/astro.config.mjs`. The overview lives in
-  `site/src/content/docs/docs/overview.md`; the landing page is `site/src/pages/index.astro`.
+  `site/src/content/docs/docs/overview.mdx`; the landing page is `site/src/pages/index.astro`.
 - Command help and public API declarations drive `docs/reference/`. Run `bun run docs:api` at the
   repository root after changing them; the explorer consumes `docs/reference/api.json`.
 - Keep walkthroughs about supported behavior. Internal plans, audits and qualification reports

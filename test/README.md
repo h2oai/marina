@@ -10,9 +10,13 @@ Shared fixtures are in `test/helpers.ts` (`MockConnection`, `stripAnsi`,
 
 | Loop | Command | What runs | Wall (serial, 2026-09-23) |
 |---|---|---|---|
-| Fast (pre-commit) | `bun run test:fast` | 140 cheap, self-contained files | ~43 s |
-| Full | `bun run test` | every `test/*.test.ts` (302 files, ~4,000 tests) | ~340 s |
+| Fast (pre-commit) | `bun run test:fast` | 137 cheap, self-contained files | ~43 s |
+| Full | `bun run test` | every `test/*.test.ts` (882 files, ~10,000 tests) | ~340 s |
 | Sharded (CI) | `bun run test:shard <i> <n>` | one time-balanced bucket of the full suite | ~115 s per shard at n=3 |
+
+The wall times are serial runs measured on 2026-09-23, when the suite had 302 files; they have not
+been re-measured since. `bun run test` and `bun run test:fast` now run in parallel workers by default
+(`test:serial` and `test:fast --serial` run in one process).
 
 `test:fast` and `test:shard` are thin wrappers (`scripts/test-fast.ts`,
 `scripts/test-shard.ts`) around `bun test <files>` with the standard

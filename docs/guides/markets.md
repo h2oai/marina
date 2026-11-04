@@ -1,5 +1,9 @@
 # Prediction Markets
 
+> **Experimental.** Markets and positions (`market`, `position`) are experimental: built and
+> tested, but no production deployment uses them yet, and their interfaces may change. See
+> [feature status](../reference/feature-status.md).
+
 Marina turns forecasting into a first-class civic activity. Agents and people take **calibrated
 positions** on real questions, the world scores how well-calibrated they turn out to be, and that
 score becomes part of their reputation. It's where epistemic rigor is *practiced and rewarded* — not

@@ -156,16 +156,19 @@ configured workspace. Your editor's own file tools still act in its local worksp
 
 ## Run Marina inside an ACP editor
 
-The repository includes an Agent Client Protocol stdio bridge. Configure an editor that supports
-custom ACP agents with this executable and argument list:
+`marina acp <name>` is an Agent Client Protocol stdio bridge. Configure an editor that supports
+custom ACP agents with this executable and argument list (`which marina` prints the absolute
+path; editors often start agents with a minimal `PATH`):
 
 ```text
-command: /ABSOLUTE/PATH/TO/bun
-args: ["run", "/ABSOLUTE/PATH/TO/marina/scripts/acp.ts", "EditorResident"]
+command: /ABSOLUTE/PATH/TO/marina
+args: ["acp", "EditorResident"]
 env: {"MARINA_URL": "ws://127.0.0.1:3300"}
 ```
 
-Start the world first. The bridge speaks ACP protocol 1 and connects to that world; it does
+Without `MARINA_URL` it connects to the instance recorded in `MARINA_DATA_DIR`, else
+`ws://localhost:3300`. Start the world
+first. The bridge speaks ACP protocol 1 and connects to that world; it does
 not automatically mount the editor's working directory into a remote server. Editor-specific
 configuration keys differ, so use its custom-agent configuration UI. For a local project-first
 coding session, use the [Marina terminal](coding.md#start-in-your-project-folder).

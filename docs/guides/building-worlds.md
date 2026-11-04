@@ -510,7 +510,7 @@ Publish interactive UIs as canvas nodes. Create a JSON asset with A2UI component
 }
 ```
 
-Components: `Text`, `Button`, `TextField`, `CheckBox`, `DateTimeInput`, `Row`, `Column`, `Card`, `Surface`, `DataTable`, `Timeline`.
+Components: `Text`, `Button`, `TextField`, `CheckBox`, `DateTimeInput`, `Row`, `Column`, `Card`, `Surface`, `DataTable`, `Timeline`, `Resource` (see [Published panels](published-panels.md)).
 
 Upload the JSON and publish as type `a2ui`:
 

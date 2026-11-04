@@ -159,16 +159,16 @@ Current connection settings are explicit in `src/persistence/database.ts`:
 | Setting | Current value / behavior |
 | --- | --- |
 | Journal | WAL |
-| Durability | World and standalone service default to FULL; direct `new MarinaDB()` defaults to NORMAL for explicit callers/tests |
+| Durability | The world server defaults to NORMAL under the `local` trust profile and FULL under `shared`/`public`; `MARINA_DB_DURABILITY=full\|normal` overrides it. The standalone memory service uses FULL; direct `new MarinaDB()` defaults to NORMAL for explicit callers/tests |
 | Writer busy timeout | 5,000 ms |
 | Page cache | 64,000 KiB configured on each connection |
 | Memory mapping | Up to 256 MiB on each connection |
 | Temporary tables | Memory on the writer |
-| Checkpoint | `checkpoint()` uses PASSIVE; startup and close use TRUNCATE |
-| Auto-checkpoint | SQLite default; Marina does not override `wal_autocheckpoint` |
+| Checkpoint | The server's `wal-checkpoint` tick job runs a PASSIVE checkpoint every 10 ticks (`src/engine/tick-jobs.ts`); `checkpoint()` uses PASSIVE; startup and close use TRUNCATE |
+| Auto-checkpoint | `wal_autocheckpoint=16384` pages (64 MiB at 4 KiB pages), a backstop for processes with no tick such as CLIs and scripts |
 
-These are connection settings, not environment knobs. Running a PRAGMA in a separate
-CLI does not retune the server connection. See SQLite's [WAL documentation](https://sqlite.org/wal.html)
+Apart from durability (`MARINA_DB_DURABILITY`), these are connection settings, not
+environment knobs. Running a PRAGMA in a separate CLI does not retune the server connection. See SQLite's [WAL documentation](https://sqlite.org/wal.html)
 for checkpoints and long-lived readers. Use local persistent storage; WAL's shared-memory
 coordination is not a multi-host network-filesystem architecture.
 
@@ -181,14 +181,16 @@ to the same writer. The service's storage quotas fail writes explicitly; it does
 silently drop writes or switch to an in-memory store.
 
 Never delete live WAL/SHM files. Use the [verified snapshot/restore workflow](recovery.md),
-not a raw copy of only the `.db` file. FULL durability remains the production default;
-switching to NORMAL trades crash durability for write latency and is not an automatic
-overload response. After disk-full or I/O failures, resolve storage pressure and inspect
+not a raw copy of only the `.db` file. FULL durability is the default on `shared` and
+`public` instances (NORMAL is the `local` default); switching a server to NORMAL
+trades crash durability for write latency and is not an automatic overload response. After disk-full or I/O failures, resolve storage pressure and inspect
 the failed receipt before retrying; use stable idempotency keys where the API supports them.
 
 ### Compare checkpoint thresholds on representative storage
 
-SQLite already checkpoints automatically, normally at 1,000 WAL pages. Smaller thresholds
+SQLite checkpoints automatically at the `wal_autocheckpoint` threshold — 1,000 WAL pages by
+SQLite's default, 16,384 on Marina's connections, where the server's `wal-checkpoint` tick job
+normally checkpoints first. Smaller thresholds
 trade more frequent checkpoint work for a smaller WAL; larger ones can improve write
 throughput while increasing read cost and disk use. A long-lived reader can prevent a
 checkpoint from finishing at any threshold. See [SQLite checkpoint behavior](https://www.sqlite.org/wal.html#checkpointing)

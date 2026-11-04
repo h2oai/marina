@@ -12,7 +12,7 @@
  *     except a loopback `marina/*` call, which the `/v1` passthru records;
  *   - retries transient failures (429, 5xx, network) a bounded number of
  *     times with backoff (`retry.ts`; default one retry);
- *   - with `MARINA_MODEL_ROUTE_FALLBACK=on` (default off), reuses route
+ *   - unless `MARINA_MODEL_ROUTE_FALLBACK=off` (default on), reuses route
  *     health (`src/net/model/route-health.ts`): a first-party route under a
  *     usage limit is served by the SAME model via OpenRouter, and a usage
  *     limit seen here marks the route for every caller. Never another model.

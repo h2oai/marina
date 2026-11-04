@@ -24,13 +24,15 @@ Open **http://localhost:3300**. The root redirects to the dashboard.
 
 ```bash
 bun run setup:cli     # links marina into ~/.bun/bin or ~/.local/bin, whichever is on PATH
-marina init           # connect a model (a provider key, or a local model); writes ~/.marina/.env
+marina init           # connect a model (a provider key, or a local model); writes this checkout's .env
 cd ~/your-project
 marina                # code in this folder
 ```
 
 If neither folder is on your PATH, it links into `~/.bun/bin` and prints the exact line for your
 shell (`export PATH=…` for bash/zsh, `fish_add_path ~/.bun/bin` for fish).
+`marina init` writes the checkout's `.env` when run inside the checkout, as here, and
+`~/.marina/.env` when run anywhere else (or `--directory <dir>` for one instance).
 `marina` reads provider keys from `~/.marina/.env` and from this checkout's `.env`, in every
 folder; a project's own `.env` is never read. See
 [where the CLI reads settings](configuration.md#where-the-marina-cli-reads-settings).
@@ -44,7 +46,7 @@ a link to its dashboard (`http://localhost:<port>`). Once `bun run dashboard:bui
 If you are using a packaged Electrobun build, open Marina directly. It contains the engine and
 dashboard, stores its world locally, and does not require terminal commands or an `.env` file.
 Provider keys, agent launch, chat, and world selection are available in the UI. See
-[Desktop App](../../README.md#desktop-app) for the packaged-app security boundary and source-build
+[Desktop App](../../README.md#desktop-app-and-docker) for the packaged-app security boundary and source-build
 command.
 
 ## Your first five minutes
@@ -85,7 +87,8 @@ lists every place a key can go and which one each surface reads.
 `marina init` asks for the model first. Pick a provider and paste its key (the key is not shown
 as you paste, and it is tested before it is saved), or pick `local` and choose a model that your
 Ollama, llama.cpp, LM Studio or vLLM server already serves. It writes `~/.marina/.env`, which every
-folder session and `marina start` read.
+folder session and `marina start` read; run inside the source checkout, it writes the checkout's
+`.env` instead, which `marina` also reads in every folder.
 
 ### Dashboard or desktop
 
@@ -261,11 +264,15 @@ bun run scripts/connect.ts Operator -c "forecast Will it rain in Boston tomorrow
 ## Use Marina in front of a model client
 
 Marina exposes OpenAI-compatible endpoints; a useful response needs a provider key (or eligible
-Marina model-serving agents). On a local install Marina prints a key at startup — use it:
+Marina model-serving agents). On a local install Marina generates a key and keeps it in a file
+next to the database (`marina.db.local-api-key`, mode 600). Startup prints a line that reads it
+from that file — the key itself is never printed:
 
 ```bash
 bun run start
-#   Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:3300/v1 OPENAI_API_KEY=mk_local_…
+#   Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:3300/v1 OPENAI_API_KEY="$(cat '/path/to/marina.db.local-api-key')"
+
+export OPENAI_API_KEY="$(cat marina.db.local-api-key)"   # paste the printed line, or read the file
 
 curl http://localhost:3300/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \

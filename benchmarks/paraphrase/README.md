@@ -31,7 +31,7 @@ the same commit so numbers stay comparable. `test/retrieval-quality.test.ts` ass
 | `legacy-recall` | the production `db.recallNotes` blend (importance / recency / relevance / confidence) |
 | `legacy-recall+expansion` | `legacy-recall` fused (RRF, k=60) over the original query plus at most four alternatives from a caller vocabulary (`--vocab`) |
 | `durable-lexical` | the durable memory service, `mode:"lexical"` |
-| `durable-hybrid` | the durable memory service, `mode:"hybrid"` — only with `--embeddings local\|ollama` and a reachable provider; otherwise `skipped` |
+| `durable-hybrid` | the durable memory service, `mode:"hybrid"` — only with `--embeddings local\|ollama\|openai` and a reachable provider; otherwise `skipped` |
 
 ## Gate
 
@@ -47,10 +47,32 @@ is already near the ceiling.
 bun run qualify:paraphrase
 bun run scripts/qualify-paraphrase.ts --vocab benchmarks/paraphrase/vocab.example.json
 bun run scripts/qualify-paraphrase.ts --embeddings local --model-cache data/memory-models --local-only
+bun run scripts/qualify-paraphrase.ts --embeddings ollama --embedding-model <id> --embedding-revision <rev>
+bun run scripts/qualify-paraphrase.ts --embeddings openai --embedding-url <base /v1> \
+  --embedding-model <id> --embedding-revision <rev>
 bun run scripts/qualify-paraphrase.ts --out data/scratch/paraphrase-hit3.json --limit 20
 ```
 
-Prints a table and writes `marina.paraphrase.report.v1` JSON to `--out`
-(default `data/scratch/paraphrase-hit3.json`). Exit code is always 0. Nothing is downloaded and
-no paid model is called; the local provider requires the optional extension
-(`bun install --cwd extensions/local-embeddings --frozen-lockfile`).
+| flag | meaning | default |
+| --- | --- | --- |
+| `--corpus <file>` | corpus to score instead of the frozen `corpus.json` | `corpus.json` |
+| `--vocab <file>` | caller vocabulary for the `legacy-recall+expansion` path (JSON with `policy` and `rules`) | none |
+| `--embeddings <kind>` | `none`, `local`, `ollama` or `openai`; anything but `none` adds the `durable-hybrid` path | `none` |
+| `--model-cache <dir>` | model cache for `--embeddings local` | `data/memory-models` |
+| `--local-only` | `--embeddings local` never downloads; the model must already be in the cache | off |
+| `--embedding-url <url>` | provider base URL: Ollama, or an OpenAI-compatible `/v1` | Ollama: `http://127.0.0.1:11434` |
+| `--embedding-model <id>` | embedding model id (`ollama`, `openai`) | none |
+| `--embedding-revision <rev>` | model revision recorded with the vectors (`ollama`, `openai`) | none |
+| `--out <file>` | report path | `data/scratch/paraphrase-hit3.json` |
+| `--limit <n>` | score only the first n triples | all |
+
+`--embeddings openai` reads its key from `MARINA_MEMORY_EMBEDDING_API_KEY`, or the vendor key for
+openrouter.ai / api.openai.com, and the other `MARINA_MEMORY_EMBEDDING_*` settings from the
+environment (the flags override URL, model and revision).
+
+Prints a table and writes `marina.paraphrase.report.v1` JSON to `--out`. Exit code is always 0:
+this reports evidence, it does not gate CI. No paid chat model is ever called; `--embeddings openai`
+pays only for embeddings (a few hundred short texts). `--embeddings local` downloads the pinned
+model on first use unless `--local-only` is set, and requires the optional extension
+(`bun install --cwd extensions/local-embeddings --frozen-lockfile`); when the provider is absent or
+unreachable the hybrid row prints `skipped`.

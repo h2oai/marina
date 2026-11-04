@@ -7,7 +7,7 @@ scripts print their own `--help`; the linked guide is the long form.
 
 | Script | What it does |
 |---|---|
-| `start` / `dev` | Start the server (`src/main.ts`). On the local profile it prints a ready-to-use `OPENAI_BASE_URL` / `OPENAI_API_KEY` line. |
+| `start` / `dev` | Start the server (`src/main.ts`). On the local profile it prints a ready-to-use `OPENAI_BASE_URL` / `OPENAI_API_KEY` line; the key part is a `$(cat '<path>')` that reads the 0600 key file, never the key itself. |
 | `init` | Interactive first-run setup: writes `.env` (provider keys, profile, world). See [Getting Started](getting-started.md). |
 | `code [dir]` | Folder-scoped Marina in agentic Code Mode for that directory — "Claude/Codex in any folder". See [Coding](coding.md). |
 | `clean` | Delete the local database and scratch files. Irreversible; stop the server first. |
@@ -35,7 +35,7 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 | `forecastbench fetch\|estimate\|run\|write\|upload\|resolve\|select\|baseline\|learn\|status` | ForecastBench: forecast a round's 500 questions (resumable) with statistical priors for dataset questions, write the set file, choose up to 3 configurations by backtest, score the model-free priors (`baseline`), learn from backtest answers (`learn`); `upload` needs `FORECASTBENCH_GCS_FOLDER` and `--yes`. See [ForecastBench](forecastbench.md). |
 | `deepresearch select\|run\|check\|score\|summary\|compare\|file\|export` | DeepResearch Bench I and II: cited research reports for each task (resumable, `--max-usd` hard stop), the optional cross-model fact pass, local scoring with the official evaluators behind a capped judge proxy, ledger and lessons; never sends anything. See [DeepResearch Bench](deepresearch-bench.md). |
 | `metaculus select\|pass\|forecast\|resolve\|status\|timer` | Metaculus tournament bot: choose a configuration by held-out backtest, forecast open questions with a reasoning comment (`--dry-run` posts nothing), learn from resolved ones, write the 20-minute systemd units (never enabled). Needs `METACULUS_TOKEN`. See [Metaculus](metaculus.md). |
-| `learned export\|import\|entitle\|verify\|diff\|keygen` | Signed `marina.learned.v1` bundles of lessons, defaults, ledger aggregates, adopted roles and ratified conventions: export (allow-list, scans, proprietary unless `--open`), verify against pinned keys, diff two versions, import (`MARINA_UPSTREAM=on`; unset imports only open bundles signed by a pinned key; trust `imported`, served below local lessons per `MARINA_IMPORTED_LESSONS`; paid slices need `--entitlement`, your own private pack `--own`), entitle (sign an entitlement token). See [Learned bundles](learned-bundles.md). |
+| `learned export\|import\|distill\|archive\|entitle\|verify\|diff\|keygen` | Signed `marina.learned.v1` bundles of lessons, defaults, ledger aggregates, adopted roles and ratified conventions: export (allow-list, scans, proprietary unless `--open`), verify against pinned keys, diff two versions, distill (read a world database read-only into a bundle, unsigned and labelled so without a key; `--archive` then archives the database), archive (move a stopped world's database into a cold archive directory beside it; never deletes), import (`MARINA_UPSTREAM=on`; unset imports only open bundles signed by a pinned key; trust `imported`, served below local lessons per `MARINA_IMPORTED_LESSONS`; paid slices need `--entitlement`, your own private pack `--own`), entitle (sign an entitlement token). See [Learned bundles](learned-bundles.md). |
 | `mind2web2 run\|cache\|judge\|score\|record` | Mind2Web 2: answer live-web research tasks with the research agent (`--cap-usd` required), export the pages it read in the judge's cache layout, run the official judge locally under a spend cap, score, and record to the ledger and lessons. Never submits. See [Mind2Web 2](mind2web2.md). |
 | `repro doctor\|list\|<setup>` | Reproduce a published benchmark setup (`hle-verified`, `swebench-verified`, `tau2`, `futurex-backtest`, `arena-backtest`): prerequisite checks with fixes, `--dry-run` plans with estimated spend, replicated arms, a pooled comparison from the ledger. See [Reproduce](reproduce.md). |
 | `leaderboards` | Print a markdown snapshot of the public-competition record — external submissions, arena filings, and the benchmark ledger — from the append-only tables. See [Leaderboards](leaderboards.md). |
@@ -67,7 +67,7 @@ The terminal client is `bun run scripts/connect.ts <name>` (`-c "<command>"` for
 |---|---|
 | `test` | Full backend suite, four workers, progress heartbeat and a 15-minute process deadline. |
 | `test:ui` | Full dashboard suite on Node/Vitest, with four JSDOM workers. |
-| `test:browser` | Build and run the six discovery, memory and participation browser journeys. |
+| `test:browser` | Build the dashboard and run every Playwright spec in `dashboard/e2e/*.spec.ts`. |
 | `test:explorer` | Build the documentation site and verify API explorer search, schemas, deep links and mobile layout in Chromium. |
 | `test:properties` | Run shrinking, seeded cache invalidation, command scheduling/cancellation and context security properties (`FC_SEED`, `FC_RUNS`, `FC_PATH`). |
 | `docs:api [--check]` | Generate builtin commands, live MCP tool schemas, published SDK declarations, HTTP dispatch references and API explorer data, or check them for drift. |
@@ -100,7 +100,9 @@ budget flag. Write their reports outside the public checkout.
 | `eval:triage --futurex <rows.json>` | Offline intake-triage evaluation (deterministic, no model call, no cost): the class mix of FutureX rows at several horizons, and each class's mean score and loss share over ledger runs (`--ledger`), FutureX run directories (`--results`) and ForecastBench result files (`--forecastbench`). Writes markdown and JSON. Library: `benchmarks/triage/eval.ts`. |
 | `bench:tier0` | A small fixed hard slice (HLE verified gold, GPQA, FRAMES) for crew and formation sweeps against any endpoint. |
 | `bench:native` | Native world tasks: print a seeded task, or run and score it against a live server. |
+| `bench:dream -- --db <path>` | Replay every recorded memory dream offline, with no model calls: probes rebuilt from the live records (intact / drifted / gone) and run today, merge/link/decay ops re-checked, and the held-out effect over every owner (`--limit`, `--json`). See [Memory](../architecture/memory.md). |
 | `bench:participation-context` | Measure automatic-context retrieval latency on seeded records. See [Testing](testing.md#context-latency-regression-gate). |
+| `qualify:tasks --input <file> --output <file>` | Score a frozen task-completion suite from saved, audited evidence (no agents, no provider calls); exits 1 unless every planned run and phase passes. See [Testing](testing.md#complete-task-qualification). |
 | `qualify:coding` | Live Code Mode qualification on small fixture projects (`--directory`, `--budget-usd`). See [Testing](testing.md). |
 | `qualify:agents:handoff` | Live, bounded resident handoff qualification (needs `OPENAI_API_KEY`, `--directory`). See [Execution evidence](execution-evidence.md). |
 | `qualify:sdk` | Build, pack and install the SDK into a temporary consumer project and check its exports. |

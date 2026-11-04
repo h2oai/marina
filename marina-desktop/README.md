@@ -1,6 +1,6 @@
 # Marina desktop development
 
-Marina uses **Electrobun 2.0.2**, with Hutch managing the native build and SDK.
+Marina uses **Electrobun 2.0.5**, with Hutch managing the native build and SDK.
 The main process remains **Bun**: the same engine, SQLite persistence, dashboard,
 participation contracts and coding commands run inside the native application.
 
@@ -50,7 +50,7 @@ packaging. See `--help` for selective skips and generated-output cleanup.
 
 ## Runtime and resources
 
-Electrobun 2.0.2 normally ships Bun 1.4.0; Marina requires the newer version in
+The Bun that Electrobun bundles can be older than the version Marina requires in
 `.bun-version`. The `postBuild` hook replaces the **app's copy** of Bun with the
 build executable, checks its version/platform/architecture, then updates runtime
 metadata before wrapping, signing or packaging. It never modifies the shared

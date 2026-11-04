@@ -101,13 +101,24 @@ RPC requests go through Marina's SSRF guard. A loopback devnet such as anvil is
 reachable only under `MARINA_PROFILE=local`.
 
 In-world, `market status` and `market audit` are read-only. Every other action
-is an operator act:
+is an operator act. `bun run learned …` is a core script and runs from the Marina
+repository root; `bun run cli.ts …` runs from `extensions/marina-market/`. Relative
+paths resolve against the directory each command runs in, and `cli.ts import`
+opens `DB_PATH` (default `marina.db` in the current directory), so point it and
+the config (`--config` or `MARINA_MARKET_CONFIG`, which every `cli.ts` command but `publish`
+reads) at absolute paths:
 
 ```bash
+# from the repository root
 bun run learned keygen publisher.key                     # core: a publisher key (0600)
-bun run cli.ts publish <payload-dir> <out-dir> publish.json --key-file publisher.key
 bun run learned entitle --artifact <id> --tiers tier:standard --licensee buyer --key-file publisher.key
-MARINA_UPSTREAM=on bun run cli.ts import <bundle-dir> --slices tier:standard --proof proof.json
+
+# from extensions/marina-market/
+cd extensions/marina-market
+export MARINA_MARKET_CONFIG=/abs/path/to/market.json
+bun run cli.ts publish <payload-dir> <out-dir> publish.json --key-file ../../publisher.key
+DB_PATH=/abs/path/to/marina.db MARINA_UPSTREAM=on \
+  bun run cli.ts import <bundle-dir> --slices tier:standard --proof proof.json
 bun run cli.ts statement --chain base-sepolia --artifact <id> --tiers tier:standard --address 0x…
 bun run cli.ts anchor-tx <bundle-dir> --chain base-sepolia   # unsigned; sign in your wallet
 bun run cli.ts resolve-settlement --chain base-sepolia --tx 0x… --licensee 0x… --artifact <id> --tier tier:standard

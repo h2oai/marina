@@ -4,11 +4,14 @@ Marina ships **open by default**: a local or standalone instance needs no auth â
 connect, pick a name, and you're in. That's ideal for development and single-operator use.
 
 For **public / multi-user hosting**, Marina offers an *optional* authentication layer built on
-[better-auth](https://github.com/better-auth/better-auth) (self-hosted, OIDC/SAML-capable). It is
+[better-auth](https://github.com/better-auth/better-auth) (self-hosted): email/password sign-in plus
+Google, GitHub and Microsoft OAuth. Enterprise SSO (OIDC/SAML) is not wired. It is
 **off unless you turn it on**, and when off it is never imported and changes nothing.
 
-> **Default (no setup):** passwordless name-login over every surface, and admins set by name via
-> `MARINA_ADMINS` (honoured only for loopback logins). Fine locally; **not** safe on a public port,
+> **Default (no setup):** passwordless name-login over every surface. Under the default `local`
+> trust profile every person who logs in over loopback is the operator (sovereign) with no further
+> setting; agents are not. On a `shared` or `public` instance without sign-in (or `local` with
+> `MARINA_AUTONOMY=guarded`), admins are set by name via `MARINA_ADMINS` (honoured only for loopback logins). Fine locally; **not** safe on a public port,
 > where anyone can claim any name, and Marina refuses to boot a non-loopback bind with passwordless
 > login unless you set `MARINA_ALLOW_INSECURE_PUBLIC=true`. Turning auth on closes the hole.
 
@@ -101,7 +104,7 @@ A matching **verified** email is promoted to rank 9 (sovereign) + all safety gat
 auth on, name-based `MARINA_ADMINS` is ignored.
 
 > **Note:** plain email/password sign-ups are *unverified* unless you wire an email-verification mailer,
-> so they won't receive admin. For admins, use a social/SSO provider (verified email), or enable
+> so they won't receive admin. For admins, use a social provider (verified email), or enable
 > better-auth email verification. Non-admin users work fine unverified.
 
 ## How agents authenticate when auth is on

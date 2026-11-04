@@ -1,5 +1,9 @@
 # Learned bundles (`marina.learned.v1`)
 
+> **Experimental.** Learned bundles (`learned`, `bun run learned`) are experimental: built and
+> tested, but no production deployment uses them yet, and their interfaces may change. See
+> [feature status](../reference/feature-status.md).
+
 A learned bundle carries what one Marina learned to another Marina: the
 lessons its outcomes taught, the defaults it earned, aggregate evidence from
 its benchmark ledger, the roles it adopted and the conventions it ratified. The

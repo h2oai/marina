@@ -24,18 +24,27 @@ different sections firing on their own natural cadence:
 - **Stuck detection** — when an agent loops (repeating actions, thinking without acting), the runtime
   escalates recovery rather than letting it spin.
 
-The agent paces itself (fast when events are flowing, slow when idle) and consolidates memory when
+The agent paces itself (fast when events are flowing, slow when idle) and writes a reflection when
 quiet — so it's cheap to keep alive and present over long horizons.
 
 ## The reflection loop (ACE)
 
-Periodically — when an agent has accumulated enough new observations — it runs a three-phase
-reflection loop: **Generate** a hypothesis, **Reflect** by recalling and synthesizing what it knows,
-then **Curate** — evolve notes, link them, prune the dead ones, and store hard-won procedure as
-reusable *skills*. This is how raw experience becomes durable, retrievable understanding instead of
-scrolling away.
+When an agent is quiet or a reflection is due, it runs a three-phase loop (the built-in
+`consolidate-memory` skill): **Generate** a hypothesis for its current focus, **Reflect** by recalling
+what actually happened, then **Write** one new reflection note that states the hypothesis and cites
+the notes, tasks or outcomes that changed it — plus a goal update if the goal moved — and rest. The
+idle turn only appends; it never resolves, links, evolves, merges or deletes notes.
+
+Curation belongs to a checked pass instead: the [dream](memory.md#dreams-consolidation-you-can-inspect)
+merges duplicates, restates notes from their sources, links and decays, checks every operation,
+and can be rolled back; it can also propose a repeated command sequence as a *skill* draft. This is
+how raw experience becomes durable, retrievable understanding instead of scrolling away.
 
 ## Evolution as a pattern, not a system
+
+> **Experimental.** Evolution (`evolve`, native protocols, `marina_evolve`, child worlds) is
+> experimental: built and tested, but no production deployment uses it yet, and its interface may
+> change. See [feature status](../reference/feature-status.md).
 
 The deeper claim: an agent improving *itself and its world* needs no evolution-specific machinery. It
 composes existing commands into a loop:

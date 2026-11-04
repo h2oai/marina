@@ -16,7 +16,7 @@ This means:
 - **Skills transfer** — procedures stored via `skill store` become discoverable starting points for successors
 - **Shared pools accumulate** — team knowledge grows beyond any single agent's lifespan
 
-When you consolidate memory, you're not just tidying your own notes — you're curating a knowledge base that compounds over time. A quiet agent that has written notes since it last tidied is offered a short list of options: resolve a contradiction, link evidence, evolve a stale belief, store a reusable procedure, or rest. When a reflection is due, the built-in `consolidate-memory` skill (`skill builtin consolidate-memory`) gives the full procedure: generate a hypothesis, reflect on what happened, curate what to keep.
+Your idle turn adds to that knowledge base; it never rewrites it. When your prompt says you are quiet or a reflection is due, the ask is one reflection written as a new note, a goal update if your goal moved, then rest. The built-in `consolidate-memory` skill (`skill builtin consolidate-memory`) gives the procedure: generate a hypothesis, reflect on what happened, write one new record. Rewriting what is already stored (merging, restating, linking, decaying) is the job of a checked consolidation pass, the [dream](#dreams-consolidation-you-can-inspect), never of the idle turn.
 
 ---
 
@@ -176,8 +176,8 @@ The number after `#id` is the relevance score (0-1). Higher is more relevant.
 ### Filter by type
 
 ```
-> recall eastern sector #decision
-Recall: "eastern sector" (decisions)
+> recall eastern sector type decision
+Recall: "eastern sector" decision
   #5 0.88 !5 2m ago   We should file a task to reconnect the eastern exits
 ```
 
@@ -279,10 +279,11 @@ The reflection itself becomes a new note you can recall later. Use it to:
 
 When your prompt says `[Quiet — nothing needs your attention]` or `[Reflection Due]`, that is
 the ask: one reflection, written as a new note (`memory note <hypothesis and what changed it,
-citing #ids> type reflection`), a goal update if your goal moved, then rest. Not resolve, link,
-evolve or merge: those rewrite the store, and a rewrite needs a check and a way back, so they
-belong to a consolidation pass rather than an idle turn. `skill builtin consolidate-memory` has
-the steps.
+citing #ids> type reflection`), a goal update if your goal moved (`memory set goal <objective>`),
+then rest (`memory set rest <why>`). Do not resolve, link, evolve, merge or delete notes at idle:
+those rewrite the store, and a rewrite needs a check and a way back, so they belong to the
+[dream](#dreams-consolidation-you-can-inspect) pass rather than an idle turn. `skill builtin
+consolidate-memory` has the steps (generate, reflect, write).
 
 ---
 
@@ -330,6 +331,13 @@ meaning on its own. A dream also looks at your work: a command sequence that ran
 your successful tasks, and that no skill or macro of yours covers, may come back as a proposed
 **skill draft** (the steps are from the usage ledger; the dream only names and describes it).
 Every applied dream can be reversed as a whole.
+
+What a dream does not do: it never touches a verified note, never deletes or erases anything (a
+merged or superseded note stays readable and comes back on rollback), never rewrites a note's text
+without your adoption, and a decay only lowers importance by 2 (never below 1). On its schedule it
+runs at most once every 8 hours, only after you have written at least 12 new records (or 64 KB of
+journal) since the last one and made no tool call for 30 minutes; `memory dream now` skips those
+gates but never the daily spend budget.
 
 ```
 > memory dream log

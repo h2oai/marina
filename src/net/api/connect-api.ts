@@ -21,6 +21,35 @@ interface ConnectEndpoints {
   telnet?: number;
 }
 
+/**
+ * The world MCP server's named tools by category, as `/api/connect` advertises
+ * them. `test/connect-api.test.ts` holds this set equal to the generated
+ * `docs/reference/mcp.md` (the live `tools/list`), so a new tool must be listed.
+ */
+export const MCP_TOOL_CATEGORIES = {
+  discovery: ["capabilities", "invoke", "context"],
+  bootstrap: ["login", "auth"],
+  cognition: ["think", "memory", "next", "brief", "quest"],
+  world: ["look", "move", "say", "tell", "who", "examine"],
+  coordination: ["channel", "board", "group", "task", "crew"],
+  canvas: ["canvas"],
+  building: ["build"],
+  observation: ["market", "probe", "watch_create", "watch_list", "watch_due", "watch_retire"],
+  evolution: ["evolve"],
+  execution: ["flywheel"],
+  memoryService: [
+    "memory_workflow",
+    "memory_retrieve",
+    "memory_service",
+    "memory_assist",
+    "memory_remember",
+    "memory_query",
+    "memory_graph",
+  ],
+  escape: ["command", "batch"],
+  session: ["help", "quit"],
+} as const;
+
 const endpointsByEngine = new WeakMap<Engine, ConnectEndpoints>();
 
 /** Register the actual bound port so discovery remains correct with port 0 or custom ports. */
@@ -41,7 +70,9 @@ export function buildConnectManifest(req: Request, engine: Engine): Response {
   const endpoints = endpointsByEngine.get(engine) ?? {};
   const wsPort = endpoints.websocket ?? localWsPort();
   const mcpPort = endpoints.mcp ?? localMcpPort();
-  const telnetPort = endpoints.telnet ?? (Number(process.env.TELNET_PORT) || 4000);
+  // Telnet is off unless TELNET_PORT is set (src/main.ts); never advertise a port
+  // nothing listens on.
+  const telnetPort = endpoints.telnet ?? (Number(process.env.TELNET_PORT) || 0);
 
   const manifest = {
     name: "Marina",
@@ -90,15 +121,7 @@ export function buildConnectManifest(req: Request, engine: Engine): Response {
             marina: { url: `http://${bare}:${mcpPort}/mcp` },
           },
         },
-        tools: {
-          bootstrap: ["login", "auth"],
-          cognition: ["think", "memory", "next", "brief", "quest"],
-          world: ["look", "move", "say", "tell", "who", "examine"],
-          coordination: ["channel", "board", "group", "task"],
-          building: ["build"],
-          escape: ["command", "batch"],
-          session: ["help", "quit"],
-        },
+        tools: MCP_TOOL_CATEGORIES,
       },
       websocket: {
         url: `ws://${bare}:${wsPort}/ws`,
@@ -106,11 +129,18 @@ export function buildConnectManifest(req: Request, engine: Engine): Response {
         login: { type: "login", name: "<your-name>" },
         command: { type: "command", command: "<your-command>" },
       },
-      telnet: {
-        host: bare,
-        port: telnetPort,
-        description: "Raw TCP for simple line-based interaction",
-      },
+      telnet:
+        telnetPort > 0
+          ? {
+              enabled: true,
+              host: bare,
+              port: telnetPort,
+              description: "Raw TCP for simple line-based interaction",
+            }
+          : {
+              enabled: false,
+              description: "Raw TCP line interface; off unless the operator sets TELNET_PORT",
+            },
       model: {
         url: `http://${bare}:${wsPort}/v1`,
         description: "OpenAI-compatible chat completions — world as model",

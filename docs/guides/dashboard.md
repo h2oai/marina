@@ -40,8 +40,8 @@ conversation history.
 ### One Canvas workspace
 
 Chat, Workspace and Context use one Canvas panel host with the same default proportions,
-panel styling, tabs and mobile pane switcher. `?surface=canvas` links and saved **Previous grid**
-arrangements remain readable in this host.
+panel styling, tabs and mobile pane switcher. `?view=canvas` links open it, `/canvas` opens it
+full screen, and saved **Previous grid** arrangements remain readable in this host.
 Drag headers and resize corners on desktop; maximizing or switching panes keeps drafts mounted.
 Embedded Canvas boards retain their own pan, zoom, selection and editing controls.
 

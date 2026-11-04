@@ -101,16 +101,38 @@ bun run scripts/memory-mcp.ts --url http://127.0.0.1:3301 --credentials /absolut
 It exposes `memory_workflow`, `memory_retrieve`, `memory_service`, `memory_assist`, `memory_remember`, `memory_query` and `memory_graph`. Start
 with `memory_retrieve` arguments `{task:"deployment rollback procedure"}` for citable evidence.
 The generic
-service tool accepts `{operation, space_id?, id?, input?, key?}`. Its operations match the HTTP
-client: `capabilities`, `usage`, `me`, `spaces`, `create_space`, `space`, `remember`, `get`, `revise`,
-`query`, `graph`, `search`, `context`, `capture`, `capture_batch`, `sources`, `source_search`, `source_range`,
-`retrieve`, `plan`, `execute_plan`, `vocabulary`, `save_vocabulary`, `checkpoint`, `save_checkpoint`,
-`capture_checkpoint`, `grant`, `forget`, `export`, `job`, `reindex`, `review`, `reaffirm`, `cache_get`, `cache_put`,
-`cache_delete`, `export_bundle`, `import_bundle`, `federation_mounts`, `federated_search`,
-`federated_read`, `acknowledge`. `id` is the record, checkpoint name or job ID
+service tool accepts `{operation, space_id?, id?, input?, key?}`. Its operations are the
+`MEMORY_OPERATIONS` list in `src/sdk/memory-operations.ts`, the same set the HTTP client offers:
+
+- identity and spaces: `me`, `spaces`, `create_space`, `space`, `capabilities`, `usage`, `grant`
+- records: `remember`, `get`, `revise`, `query`, `join`, `graph`, `knowledge_graph`, `search`,
+  `context`, `forget`, `adopt`
+- evidence: `capture`, `capture_batch`, `sources`, `source_headers`, `source_search`, `source_range`
+- retrieval and planning: `retrieve`, `retrieve_cached`, `plan`, `execute_plan`, `workflow`,
+  `vocabulary`, `save_vocabulary`
+- rules and stores: `json_store`, `save_rule`, `run_rule`, `materialize_rule`
+- checkpoints and jobs: `checkpoint`, `save_checkpoint`, `capture_checkpoint`, `job`, `reindex`
+- review: `review`, `reaffirm`, `resolve`, `acknowledge`
+- cache: `cache_get`, `cache_put`, `cache_delete`
+- assistance: `assist_create`, `assist_jobs`, `assist_get`, `assist_claim`, `assist_heartbeat`,
+  `assist_read`, `assist_finish`, `assist_cancel`, `assist_delegate`
+- export and transfer: `export`, `export_page`, `export_bundle`, `import_bundle`, `transfer_begin`,
+  `transfer_status`, `transfers`, `transfer_page`, `transfer_commit`, `transfer_abort`
+- federation: `federation_mounts`, `federated_search`, `federated_read`, `federated_retrieve`
+
+`id` is the record, checkpoint name or job ID
 as appropriate; `input` is the HTTP body, or GET options such as `version`, `after`, `limit`.
 Capture uses `input: {content, session_id?}`; checkpoint writes use
 `input: {expected_version, source_cursor, source_ids?, data}`. Space omission uses the configured default.
+
+The bridge also publishes one MCP resource, `memory://space` (up to 20 current assertions in the
+configured space), and clients may subscribe to it: the bridge re-reads the space generation about
+once a second and sends `notifications/resources/updated` when it changes, including after writes
+made through HTTP or the world. A denied re-read ends the subscription without returning data.
+`--profile knowledge-graph` replaces the seven tools with the reference knowledge-graph tool names
+(`create_entities`, `create_relations`, `add_observations`, `delete_entities`,
+`delete_observations`, `delete_relations`, `read_graph`, `search_nodes`, `open_nodes`) over the
+same scoped service, with a subscribable `memory://knowledge-graph` resource.
 
 Tool replies include readable text plus `structuredContent: {ok, space_id, result}` or
 `{ok:false,error:{code,message,status}}`, and `isError`. Mutations accept an idempotency `key`;
@@ -155,8 +177,8 @@ Residents and humans can run `memory retrieve <task>`. Resident agents also use
 evidence and diagnostics as HTTP and MCP, subject to the caller's space permissions.
 
 The full world exposes `/v1/memory` on its HTTP/WebSocket port (normally **3300**). World MCP
-is a different listener (normally **3301**, `/mcp`), with login/auth and the same four service
-tools. The standalone memory server also defaults to 3301; use different ports if running both.
+is a different listener (normally **3301**, `/mcp`), with login/auth and the same seven `memory_*`
+tools (the world listener publishes no memory resources). The standalone memory server also defaults to 3301; use different ports if running both.
 The stdio bridge connects to the memory **HTTP** listener, not the world MCP listener.
 
 World commands bind to the logged-in durable world user principal and lazily create a private

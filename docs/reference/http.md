@@ -84,19 +84,19 @@ Fields read here: `Math.min(Number(url.searchParams.get("limit")) &#124;&#124; 5
 
 ### `url.pathname === "/api/connect"`
 
-[Source](../../src/net/api/connect-api.ts#L195)
+[Source](../../src/net/api/connect-api.ts#L225)
 
 - Guard: `url.pathname === "/api/connect"`
 
 ### `url.pathname === "/api/connect/negotiate"`
 
-[Source](../../src/net/api/connect-api.ts#L196)
+[Source](../../src/net/api/connect-api.ts#L226)
 
 - Guard: `url.pathname === "/api/connect/negotiate"`
 
 ### `url.pathname === "/api/skill"`
 
-[Source](../../src/net/api/connect-api.ts#L197)
+[Source](../../src/net/api/connect-api.ts#L227)
 
 - Guard: `url.pathname === "/api/skill"`
 

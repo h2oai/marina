@@ -763,7 +763,7 @@ code review approve|reject <review_id>                        # a person closes 
 
 - **Snapshot.** Each round stores the author's changes as a `review_snapshot` artifact: the diff
   of the requester's coding session, or, for a supervised resident, the worktree diff its local
-  supervisor captured (see [participant routing](participant-routing.md#supervised-residents-experimental)).
+  supervisor captured (see [participant routing](participant-routing.md#supervised-residents)).
   Over telnet the request is refused, like every host subprocess.
 - **Reviewer.** A named reviewer must be online. `auto` picks an online agent other than the author:
   a different vendor first, then a different model, then anyone, and the request records which tier
