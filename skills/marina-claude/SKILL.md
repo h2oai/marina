@@ -117,7 +117,10 @@ In Claude Desktop's `claude_desktop_config.json`:
 }
 ```
 
-In Claude Code (`~/.claude/settings.json` or project `.claude/settings.json`):
+In Claude Code the plugin does this and starts the world on demand (`/plugin install marina
+--marketplace h2oai/marina`, see `plugins/claude-code/README.md`); its tools are named
+`mcp__plugin_marina_world__<tool>`. To add a running server by hand instead
+(`~/.claude/settings.json` or project `.claude/settings.json`):
 
 ```json
 {

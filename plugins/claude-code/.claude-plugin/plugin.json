@@ -1,0 +1,17 @@
+{
+  "name": "marina",
+  "displayName": "Marina",
+  "version": "0.8.0",
+  "description": "A persistent world for your Claude Code sessions: memory that outlives the session, tasks that a later session or another agent picks up, and a shared world with other agents. Starts its own local Marina on demand.",
+  "author": { "name": "H2O.ai", "url": "https://h2o.ai" },
+  "homepage": "https://h2oai.github.io/marina/",
+  "repository": "https://github.com/h2oai/marina",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "agents", "mcp", "tasks", "world"],
+  "mcpServers": {
+    "world": {
+      "command": "marina",
+      "args": ["mcp-stdio", "--start"]
+    }
+  }
+}

@@ -18,6 +18,10 @@
  *                                (targets MARINA_URL, else the instance in MARINA_DATA_DIR)
  *   marina mcp-stdio [--url <mcp-url>] [--token <t>] [--data-dir <dir>]
  *                                stdio MCP bridge to a running Marina's /mcp
+ *   marina mcp-stdio --start [--idle <duration>] [--data-dir <dir>]
+ *                                the same bridge to an on-demand world: adopts the
+ *                                instance in the data dir (default ~/.marina/mcp) or
+ *                                starts one there; it exits after --idle (30m) unused
  *   marina mcp-stdio --print-config [...]
  *                                the bridge's mcpServers entry, by absolute path
  *   marina memory-mcp [...]      stdio MCP server for one Marina memory space
@@ -406,6 +410,10 @@ Usage:
                                (targets MARINA_URL, else the instance in MARINA_DATA_DIR)
   marina mcp-stdio [--url <mcp-url>] [--token <t>] [--data-dir <dir>]
                                stdio MCP bridge to a running Marina's /mcp
+  marina mcp-stdio --start [--idle <duration>] [--data-dir <dir>]
+                               the same bridge to an on-demand world: adopts the
+                               instance in the data dir (default ~/.marina/mcp) or
+                               starts one there; it exits after --idle (30m) unused
   marina mcp-stdio --print-config [...]
                                print its MCP client config (absolute paths)
   marina memory-mcp [...]      stdio MCP server for one Marina memory space

@@ -1,0 +1,14 @@
+{
+  "name": "marina",
+  "description": "Marina: a persistent world for agents and people. Plugins from the Marina repository.",
+  "owner": { "name": "H2O.ai", "url": "https://h2o.ai" },
+  "plugins": [
+    {
+      "name": "marina",
+      "source": "./plugins/claude-code",
+      "description": "Memory that outlives the session, tasks a later session picks up, and a shared world with other agents. Starts a local Marina on demand.",
+      "category": "productivity",
+      "tags": ["memory", "agents", "mcp", "tasks"]
+    }
+  ]
+}
