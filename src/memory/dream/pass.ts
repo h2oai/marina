@@ -35,8 +35,11 @@
 import { createHash } from "node:crypto";
 import { roleModel } from "../../config/model-tiers";
 import { dailyCapRefusal, dailySpendCapUsd, spentTodayUsd } from "../../engine/spend-ledger";
+import { isLoopbackMarinaSpec } from "../../model/access";
 import { modelComplete } from "../../model/complete";
 import type { Complete } from "../../model/reply";
+import { selfModelToken } from "../../net/model/self-model-token";
+import { modelApiKeySecrets } from "../../net/model-api/api-keys";
 import type { MarinaDB } from "../../persistence/database";
 import { type ApplyResult, applyOps, fileProposals } from "./apply";
 import { checkOps, opIds } from "./check";
@@ -67,7 +70,6 @@ export const DREAM_COOLDOWN_MS = 8 * HOUR_MS;
 export const DREAM_FIRST_WINDOW_MS = 7 * 24 * HOUR_MS;
 export const DREAM_WORLD_CAP_SHARE = 0.8;
 export const DREAM_MODEL_TIMEOUT_MS = 90_000;
-export const DREAM_MAX_OUTPUT_TOKENS = 3000;
 /** Entities considered per scheduled run. */
 export const DREAM_CANDIDATES_PER_RUN = 20;
 
@@ -267,10 +269,22 @@ export async function runDream(
     const choice = roleModel("dreamer", { env });
     model = choice.model;
     try {
-      const made = modelComplete(choice.model, env, {
+      // The cheap tier is this Marina's own `/v1` (`marina/cheap`): inside the
+      // serving process it is called with the internal model token, as the
+      // room agents and the lessons writer do — never a vendor key, and never
+      // refused on an install that sets no MODEL_API_KEYS (seen live: every
+      // dream skipped "no model" for a day).
+      const callEnv =
+        isLoopbackMarinaSpec(choice.model) && modelApiKeySecrets(env).length === 0
+          ? { ...env, MODEL_API_KEYS: await selfModelToken(env) }
+          : env;
+      const made = modelComplete(choice.model, callEnv, {
         purpose: "dream",
         timeoutMs: DREAM_MODEL_TIMEOUT_MS,
-        maxTokens: DREAM_MAX_OUTPUT_TOKENS,
+        // No explicit cap: an explicit one never grows, and a cheap model that
+        // reasons spent all of 3000 tokens thinking and answered nothing (seen
+        // live). The automatic cap leaves reasoning headroom, retries once
+        // grown, and is bounded by the cheap tier's output cap.
         trace: { caller: "memory.dream" },
       });
       complete = made.complete;
