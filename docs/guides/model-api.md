@@ -379,6 +379,27 @@ fallback reason in **Admin → Traces** or with `trace show <id>`. Every agent-r
 streaming or not — returns the traced request identity in its `x-request-id` header; that value is
 the trace id to pass to `trace show`.
 
+### Point an agent at another Marina instance
+
+An agent on this instance uses `marina` (or `marina/<model>`, `marina:<channel>`) for this
+instance's own `/v1`, authenticated with the internal token. Append `@<host-or-url>` to target
+another Marina's `/v1` instead:
+
+```text
+agent spawn alice model marina@https://gpu.box:3300/v1 key remoteMarina role scholar
+```
+
+- The host can be a full URL (`https://gpu.box:3300/v1`), a scheme and host
+  (`https://gpu.box`) or a bare `host:port`. Marina adds `http://` when no scheme is given and
+  appends `/v1` when the path has no version.
+- A remote instance does not accept this instance's internal token. Store the remote's
+  `MODEL_API_KEYS` secret under **Admin → Keys** (provider `marina`) and name it with `key <name>`.
+  Without a key the spawn warns, and the agent works only against a remote running
+  `MARINA_OPEN_API=true`.
+- The target is caller-supplied, so it passes the outbound URL guard before the agent connects:
+  outside the `local` profile, loopback, private, link-local and cloud-metadata hosts are refused.
+  Under `local` a LAN or loopback host (a second instance on your own machine) is allowed.
+
 ---
 
 ## Memory injection, receipts and response cache
@@ -558,7 +579,7 @@ returns the chosen answer with a trace of every stage:
 
 ```bash
 curl -s http://localhost:3300/v1/patterns/run \
-  -H "Authorization: Bearer $MODEL_API_KEY" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MARINA_MODEL_KEY" -H "Content-Type: application/json" \
   -d '{"pattern":"debate","task":"Should we shard the events table?","members":["openrouter/openai/gpt-6.1-sol","openrouter/anthropic/claude-opus-5.5"],"budgetUsd":0.5}'
 # → {"message":"…","success":true,"pattern":"debate",
 #    "trace":{"steps":[{"stage":"opening:advocate-1","member":"…","status":"ok","text":"…","costUsd":0.01},…],"costUsd":0.05}}

@@ -1,5 +1,9 @@
 # Native Evolution Protocols
 
+> **Experimental.** Evolution (`evolve`, native protocols, `marina_evolve`, child worlds) is
+> experimental: built and tested, but no production deployment uses it yet, and its interface may
+> change. See [feature status](../reference/feature-status.md).
+
 Native evolution protocols make iterative experiments durable without creating a privileged
 Evolver agent or an automatic optimization daemon. They are disabled by default:
 

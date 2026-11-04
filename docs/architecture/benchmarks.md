@@ -4,7 +4,7 @@
 
 ## The `benchmark` command and the ledger
 
-The in-world command is `benchmark list/run/sweep/runs/result/leaderboard/frontier/compare/compare-run/participants/reference/orchestrations` (plus `defaults/challenge/promote`, `invalidate/revalidate` and `purge-content-notes`, below). Sweep (rank 4+) fans out across every live `marina:<crew>` channel. The ledger (migration 146: run cost/n/CI/slice/judge/target plus append-only `benchmark_items`, ids only and never case content) is ranked by `src/engine/benchmark-ledger.ts`; the operator imports outside results with `bun run benchmark:import`. Defaults change only by earned promotion (migration 147, `src/engine/benchmark-promotion.ts`, `benchmark defaults|challenge|promote`):
+The in-world command is `benchmark list/fetch/run/sweep/runs/result/leaderboard/frontier/compare/compare-run/replicates/participants/reference/orchestrations` (plus `defaults/eligible/challenge/promote`, `invalidate/revalidate` and `purge-content-notes`, below). `benchmark fetch <name>` (rank 4, `src/engine/benchmark-fetch.ts`) downloads one benchmark's dataset in the background through the harness downloader, every request through the SSRF guard (`HF_TOKEN` for gated sets); `benchmark list` shows which are downloaded. Sweep (rank 4+) fans out across every live `marina:<crew>` channel. The ledger (migration 146: run cost/n/CI/slice/judge/target plus append-only `benchmark_items`, ids only and never case content) is ranked by `src/engine/benchmark-ledger.ts`; the operator imports outside results with `bun run benchmark:import`. Defaults change only by earned promotion (migration 147, `src/engine/benchmark-promotion.ts`, `benchmark defaults|challenge|promote`):
   - The challenger must win on the slot's hashed holdout split (same benchmark, judge and items).
   - The paired interval must be above 0, and the gain must clear `promotionMargin(tried)`.
   - It needs `role.edit`, and is never the challenger's own author.
@@ -26,6 +26,9 @@ Every interval and test the ledger, route evidence, outcomes, promotion and the 
 - `paired.ts`: `wilsonInterval` (and the raw `wilsonBounds` under it), `mcnemarExact`, `mulberry32`, `pairedBootstrap`.
 - `replicates.ts`: replicate pooling and the two-stage replicate comparison (`poolGroup`, `comparePooled`, `seedFromIds`).
 - `bootstrap.ts`: `bootstrapMean`, `twoStageBootstrap`, `resampleMeans`, the `lcg32` PRNG and the `percentileFloor` / `percentileCeil` index rules.
+- `descriptive.ts`: `median` and `quantileInterpolated`.
+- `hash.ts`: the `fnv1a32` / `fnv1a32CodeUnits` string hashes.
+- `index.ts` re-exports all five.
 
 The harness copies (transfer, deepresearch, longmemeval, FutureX, forecast selection, genbench, `learned` export, arena-wiki backtest) are thin calls onto it; `test/stats-equivalence.test.ts` holds each bit-identical to its frozen original in `test/fixtures/stats-legacy.ts` (never edit the fixture to make it pass). A new statistic goes in `src/stats/`, not in a harness.
 ## What a run measures: residents, controls and judges
@@ -265,7 +268,7 @@ A promoted model this installation cannot call (no key for its provider, and no 
 
 The live run's pick 1 then resolves through `resolveDefault` as in the table above. Its disclosure line names the earned slot and the incumbent run.
 
-## Route evidence: observe by default, families from roles
+## Route evidence: on by default, families from roles
 
 Spawn-time route evidence (`src/engine/benchmark-evidence.ts`, `MARINA_ROUTE_EVIDENCE`) defaults to `on`. It applies the ledger's pick when at least two candidates have enough evidence and keeps the router's choice otherwise; `observe` only records the pick on the route decision, and `off` skips the lookup.
 

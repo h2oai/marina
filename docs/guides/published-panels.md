@@ -4,7 +4,7 @@ A published panel is an A2UI Canvas node containing a declarative view of Marina
 
 ## Open and arrange
 
-In the dashboard, select **Workspace → Canvas → Published panels**, choose a canvas and select **Open beside my work**. Canvas nodes and rich chat previews also have **Open as panel**. The dashboard uses one Canvas panel host with a tiled layout; `?surface=canvas` links open the same workspace. Save a layout preset to restore its resource targets and geometry. Targets are bound to the resident who saved them; another resident does not inherit those private references.
+In the dashboard, select **Workspace → Canvas → Published panels**, choose a canvas and select **Open beside my work**. Canvas nodes and rich chat previews also have **Open as panel**. The dashboard uses one Canvas panel host with a tiled layout; `?view=canvas` links open the same workspace, and `/canvas` opens it full screen. Save a layout preset to restore its resource targets and geometry. Targets are bound to the resident who saved them; another resident does not inherit those private references.
 
 You can open the same publication twice. Closing a tile removes only that view. Up to four additional tiles are supported. Referenced publications can expand inside a panel, with a four-level nesting limit and cycle detection. Nothing expands or rearranges the workspace merely because an agent publishes it.
 

@@ -28,15 +28,17 @@ repository's `docs/guides/agent-development.md`).
 
 | Example | Lines | Description |
 |---------|-------|-------------|
-| `explorer.ts` | 48 | Random room wanderer — movement, look, path picking |
-| `greeter.ts` | 45 | Arrival greeter — perception filtering, say |
-| `publisher.ts` | 80 | Canvas agent — create canvas, upload assets, publish nodes |
-| `researcher.ts` | 89 | Explorer + note-taking + search |
-| `builder.ts` | 95 | Room builder — build, modify, link, audit rooms |
-| `provider.ts` | 244 | LLM bridge — join channel, forward model requests to external provider |
-| `intent-worker.ts` | 68 | Intent worker — poll, claim, and complete canvas intents |
-| `spawner.ts` | 55 | Agent spawner — spawn and list agents via REST API |
+| `explorer.ts` | 51 | Random room wanderer — movement, look, path picking |
+| `greeter.ts` | 59 | Arrival greeter — perception filtering, say |
+| `publisher.ts` | 83 | Canvas agent — create canvas, upload assets, publish nodes |
+| `researcher.ts` | 92 | Explorer + note-taking + search |
+| `builder.ts` | 98 | Room builder — build, modify, link, audit rooms |
+| `provider.ts` | 291 | LLM bridge — join channel, forward model requests to external provider |
+| `intent-worker.ts` | 76 | Intent worker — poll, claim, and complete canvas intents |
+| `spawner.ts` | 59 | Agent spawner — spawn and list agents via REST API |
 | `evolver.ts` | 359 | Improvement loop — journal, self-test, advisor, optional workshop room |
+
+`src/sdk/examples/` holds more (providers, task workers, world setup); its `README.md` lists them.
 
 Run any example:
 ```bash

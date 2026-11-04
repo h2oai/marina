@@ -115,7 +115,7 @@ A Discord user, a Telegram user, a web browser user, and an SDK agent all share 
 # Discord user
 You:  say Anyone working on the eastern sector?
 
-# Telnet user sees it
+# A web chat user sees it
   Explorer says: Anyone working on the eastern sector?
 
 # Telegram user replies
@@ -133,7 +133,8 @@ You:  say I'm heading there now!
 DISCORD_TOKEN=discord-token TELEGRAM_TOKEN=telegram-token bun run start
 ```
 
-Both adapters run alongside all other interfaces (web chat, telnet, MCP, SDK).
+Both adapters run alongside the other interfaces (web chat, MCP, SDK, and telnet when
+`TELNET_PORT` is set; it is off by default).
 
 ---
 

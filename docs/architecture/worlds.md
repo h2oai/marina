@@ -17,13 +17,13 @@
 
 ## Room agents
 - **Room agents**: LLM-connected agents spawned by the world via `ctx.spawnRoomAgent()` in room `onEnter` handlers
-- **Self-referential**: Room agents use model `marina/default` which calls the local `/v1/chat/completions` endpoint. The model API proxies upstream to configured providers (Anthropic, OpenAI, etc.)
+- **Self-referential**: Room agents use the `room` model role (`roleModelFromEnv("room")`), the cheap tier `marina/cheap` by default, which calls the local `/v1/chat/completions` endpoint; the model API resolves the alias per request and proxies upstream to configured providers (Anthropic, OpenAI, etc.)
 - **Internal auth**: Room agents authenticate via an auto-generated internal token — no MARINA_OPEN_API needed
 - **Graceful degradation**: If no upstream API keys configured, rooms fall back to static entities (no LLM connection)
 - **Lazy spawning**: Room agents only spawn when someone enters a room (onEnter), not on tick
 - **Room affinity**: Agent config stores `room` field; agents are placed in their assigned room on spawn
 - **Roles**: guide, market-oracle, floor-host, proctor — defined in `worlds/seed.ts`
-- **Cost control**: Dynamic tick rate — idle room agents slow to 15s ticks, consolidate memory
+- **Cost control**: Dynamic tick rate — a working agent ticks every 15 s, an idle one every 60 s (`AGENT_ACTIVE_TICK_MS` / `AGENT_IDLE_TICK_MS`), and an idle agent with nothing new or owed skips the model call altogether
 
 See also: `docs/guides/building-worlds.md`, `docs/guides/example-worlds.md`.
 
@@ -47,11 +47,11 @@ its state lives in room KV, and gates, traces and spend apply unchanged.
 - **Agent-built tool rooms:** agents can build their own with `build` (behind `world.code`), or wrap
   an MCP server via `connect`. → `docs/guides/search.md`
 
-## Per-world model overrides (read only in `worlds/`)
+## Per-world model overrides (read in `worlds/`)
 
-World definitions read a handful of `MARINA_*` variables directly, so they never
-appear in `src/` and are easy to miss. `config/environment.reference` lists them; this is where
-they are explained. All are optional — unset means the world's own default.
+World definitions read a handful of `MARINA_*` variables directly; all but
+`MARINA_AGENT_MODELS` never appear in `src/` and are easy to miss. `config/environment.reference`
+lists them; this is where they are explained. All are optional — unset means the world's own default.
 
 | Variable | Read by | Effect | Default |
 |---|---|---|---|
@@ -62,7 +62,7 @@ they are explained. All are optional — unset means the world's own default.
 | `MARINA_MATH_MODEL` | `showcase` | Model for the mathematician specialist. | `MARINA_CREW_MODEL` |
 | `MARINA_REFLECTOR_MODEL` | `showcase` | Model for the crew reflector. | `MARINA_CREW_MODEL` |
 | `MARINA_SEED_SKILLS` | `showcase` | `true` seeds the universal skill packages on first boot. | off |
-| `MARINA_AGENT_MODELS` | every world (`seedSystemAgent`) | Per-agent map, `Name=model,Name=model` (names case-insensitive, model passed through as-is). Puts a different model on any boot-seeded agent — Translator and every specialist included. Wins over every variable above. A model of `route` (or `model:route`) asks the spawn-time router to pick (`MARINA_ROUTES` / tiers, plus `MARINA_ROUTE_EVIDENCE`) at the agent's first spawn; the resolved id is persisted and kept on later boots while the seed still says `route` — changing the entry's value applies as usual. | unset |
+| `MARINA_AGENT_MODELS` | every world (`seedSystemAgent`) | Per-agent map, `Name=model,Name=model` (names case-insensitive, model passed through as-is). Puts a different model on any boot-seeded agent — Translator and every specialist included. Wins over every variable above. The same variable's `role:<role>=<model>` entries are read in `src/config/model-tiers.ts` (model tiers), and `src/main.ts` logs `agentModelMapProblems()` at boot. A model of `route` (or `model:route`) asks the spawn-time router to pick (`MARINA_ROUTES` / tiers, plus `MARINA_ROUTE_EVIDENCE`) at the agent's first spawn; the resolved id is persisted and kept on later boots while the seed still says `route` — changing the entry's value applies as usual. | unset |
 
 Precedence for a seeded agent's model is: its `MARINA_AGENT_MODELS` entry, then
 its own specific override, then `MARINA_CREW_MODEL`, then `role:crew=` in

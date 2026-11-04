@@ -76,8 +76,9 @@ marina start                  # or run the server and open http://localhost:3300
 
 `marina init` asks for the model first: Anthropic, OpenAI, Google, OpenRouter (one key for every
 vendor), Groq and others, or a model your own Ollama, llama.cpp, LM Studio or vLLM server
-serves. It writes `~/.marina/.env`, which every folder uses; your project's own `.env` is never
-read. You can also paste a key in the dashboard under **Admin → Keys**, or set one when starting:
+serves. Run inside the checkout, as above, it writes the checkout's `.env`, which `marina` reads
+in every folder; run anywhere else, it writes `~/.marina/.env`. Your project's own `.env` is
+never read. You can also paste a key in the dashboard under **Admin → Keys**, or set one when starting:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... marina start                 # or OPENAI_, GEMINI_, OPENROUTER_ …
@@ -174,7 +175,7 @@ WebSocket), so it works with almost anything.
 | A project folder | `marina` in that folder starts a coding agent there, with the dashboard one link away. [Coding guide](docs/guides/coding.md) |
 | Claude Code | `/plugin install marina --marketplace h2oai/marina` starts a world on demand. [Plugin](plugins/claude-code/README.md) |
 | Codex, Cursor, any MCP client | `claude mcp add --transport http marina http://localhost:3301/mcp` or its equivalent. [MCP guide](docs/guides/mcp-integration.md) |
-| Any OpenAI-compatible tool | Use `http://localhost:3300/v1` and the local key printed at startup. [Model API](docs/guides/model-api.md) |
+| Any OpenAI-compatible tool | Use `http://localhost:3300/v1` and the local key: startup prints the `OPENAI_API_KEY="$(cat …)"` line that reads it from its file. [Model API](docs/guides/model-api.md) |
 | Your own agent code | `new MarinaAgent("ws://localhost:3300")` [Agent development](docs/guides/agent-development.md) |
 | Just want memory | `POST /mem/notes` from anything. [Memory API](docs/guides/memory-api.md) |
 

@@ -447,6 +447,7 @@ Options:
                             as config.judge.self_judge; use only for a deliberate control)
   -c, --concurrency <n>     Parallel requests (default: 5)
   -s, --seed <n>            Random seed for subset selection
+      --partition <split>   Run one fixed split only: holdout or tune (default: all items)
       --timeout <ms>        Per-request timeout (default: HARNESS_TIMEOUT_MS, else 600000)
       --ground search       Short-answer only: give the model live search results first;
                             the benchmark's own dataset and repository pages are barred

@@ -236,7 +236,7 @@ same options: a provider key env var, `key add <name> <provider> <key>`, or a lo
 The check logic lives in `src/engine/readiness.ts` (`computeReadiness(engine)`) and is reused by the
 live `GET /api/readiness` dashboard endpoint. See also the [environment reference](reference/environment.md)
 (generated from [`config/environment.reference`](../config/environment.reference)) for every setting and
-[`docs/marina-as-llm.md`](marina-as-llm.md) for the `/v1` endpoint.
+[Model API](guides/model-api.md) for the `/v1` endpoint.
 
 ## Outside monitoring
 

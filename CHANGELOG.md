@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Every dependency is on its latest release, clearing two advisories.** `zod` 4.6.7 in the
+  `langgraph-store` extension (through `@langchain/langgraph` 1.5.3) and `@hono/node-server` 2.1.5
+  (within the MCP SDK's declared range) fix GHSA-mrhx-c7xc-m3w5 and GHSA-rmxm-3fg6-px4f, and
+  `bun audit` is clean in the root workspace and all three extensions. The rest are in-range updates
+  and raised pins across the root, dashboard, site, desktop and examples (pi-ai and pi-agent-core
+  1.4, MCP SDK 1.32.2, Claude Agent SDK 0.3.312, better-auth 1.7.14, React 19.3.1, Astro 7.4.4, Vite
+  8.3.5, Vitest 5.0.5, Biome 2.6.4, electrobun 2.0.5, onnxruntime-node 1.31.1). Biome's
+  configuration moves to `preset: "recommended"` and keeps Markdown out of formatting (#668).
+
 - **An imported bundle's seed no longer picks a model without a local person.** Upstream seeds
   for default slots that choose a model (every slot class except `memory-ranking`:
   `role-model:*`, `verify:checker`, `forecast-config*`, crew slots, run-target slots) are withheld
@@ -89,11 +98,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The dead Delphi settlement shadow is removed.** `src/arena/settlement-shadow.ts` replayed a
+  recorded Delphi trace under other settlement weights and was never wired into a filing, a shadow
+  pass or a report; the learned move weight (`applyMoveWeight`) is the live mechanism for that
+  question. The "Settlement replays" paragraph leaves the arena guide (#698).
+
+- **A resumed agent is told what is already in hand.** The orientation turn after a restart appends
+  an ALREADY IN HAND block (`describeLoadedState`: the focus and the loop preferences the adapter
+  has already restored) and says not to read them again. During that turn only, up to six read-only
+  orientation calls (`look`, `brief`, `recall`, `recap`, `work`, `task list|info`, `tell inbox`,
+  `channel history`, `chronicle pending`, `memory get`, memory `get|recall|list`) do not count
+  against the per-run tool cap; writes, sends and spends always count (#703).
+
+- **A lesson's evidence is kept apart from its rule.** The lesson writer may return an optional
+  `evidence` field with the numbers behind a rule. It is clipped like the rule, stored in the
+  record's metadata, shown to the judge beside the rule (numbers in either must match the case),
+  discarded with the rule when it quotes the case, and never served as part of the rule (#701).
+
+- **Formations judge moves on the series' own scale; the library route fallback is on by default.**
+  The numeric formation combiner bounds a member's move by the series' move scale
+  (`seriesMoveScale`: the larger of the 90th-percentile one-step change over the last 30 values and
+  the latest change, never below the sd) instead of the start's sd; the arena filing service puts it
+  on the start it hands a formation (`withSeriesMoveScale`), and a formation called without one is
+  unchanged. The move-weight → error-floor → calibration order lives in one function
+  (`finishForecast`). `MARINA_MODEL_ROUTE_FALLBACK`, the same-model OpenRouter route for in-process
+  library calls while a first-party key is usage-limited, is now on unless set to `off` (#693).
+
+- **GitHub Actions updates.** `actions/upload-artifact` 7.0.2, `actions/setup-node` 7.1.0,
+  `actions/setup-java` 6.1.0, `actions/download-artifact` 8.0.2, `docker/setup-buildx-action` 4.4.1,
+  `docker/build-push-action` 7.4.0 and `anchore/sbom-action/download-syft` 0.24.3, still pinned by
+  commit (#594).
+
+- **The tables kept unbounded are named.** The header of `src/engine/retention.ts` lists
+  `channel_messages`, `coding_artifacts`, `coding_sessions`, revoked `principal_credentials` and
+  `routing_sessions` as unbounded by design, each with its reason. Comment only (#682).
+
+- **`numeric_notes` reads two stored facts instead of resolving every row.** Migration 187 stores
+  `content_id` (the resolved content note) and `version_note` (the note is a canonical version) on
+  `notes`, kept current by six `numeric_resolution_*` triggers on the projection, record and version
+  tables and backfilled from the original derivation; the view becomes one self-join with no
+  correlated subquery, and no writer changes. `notes_au` now re-indexes a note's FTS row only when
+  its `content` changes, not on a recall's `last_accessed` touch (#681).
+
+- **One home for percentile, median, quantile and FNV-1a.** `src/stats` gains `percentileCeil`,
+  `median`, `quantileInterpolated`, `fnv1a32` (over code points) and `fnv1a32CodeUnits` (over UTF-16
+  code units, kept apart because it shards a stored corpus); the copies in trace analytics, decision
+  qualification, evolution analysis, the arena wiki specialist, novelty, replicates and two
+  benchmarks use them, each held bit-identical to its frozen original by
+  `test/stats-equivalence.test.ts` (#680).
+
+- **The dashboard's first paint no longer loads the editor.** React, `scheduler` and the
+  `use-sync-external-store` shim get their own `vendor-react` chunk, so the tiptap/ProseMirror chunk
+  is no longer preloaded, and the canvas `DocumentNode` is lazy-loaded behind Suspense as `PdfNode`
+  already was (#679).
+
+- **Indexes for queries that scanned or sorted a growing table.** Migration 186 adds eleven indexes:
+  channel, board and group lookups by name, a `NOCASE` index for the agent-config name lookup on
+  every spawn-lineage walk, tasks by creator, the board archive sweep, the chronicle supersession
+  chain, the board page, the latest session, submitted claims and channel messages by time.
+  `CREATE INDEX IF NOT EXISTS` only; the install baseline is unchanged (#678).
+
+- **The per-principal memory budget paces network clients only.** The memory service API applies its
+  request budget only when a listener passed a client address; an in-process caller (a resident's
+  own memory operation, lessons recall, the asset-memory indexer, tick jobs) is Marina's own code
+  and is no longer queued behind a token. A network client is still refused past its burst with
+  `retry_after_ms` (#676).
+
+- **Fewer statements on hot paths.** A recall marks its hits accessed in one statement
+  (`touchNotes`) instead of one commit per hit, `novelty suggest` scores each capability once
+  instead of on every comparison, `/v1` reads its endpoint settings in one query
+  (`SettingsStore.getSettings`), the per-command model-availability check asks whether any key
+  exists instead of decrypting every key, and a `feed_event` is stored in `feed_events` only, no
+  longer copied into `event_log` (#675).
+
+- **One commit per command; WAL checkpoints between commands.** The command phase commits its
+  bookkeeping (activity, usage and event rows) in one transaction, and `appendRoomLog` inserts and
+  trims in one. `MarinaDB` opens with `wal_autocheckpoint` at 64 MiB as a backstop, and a
+  `wal-checkpoint` tick job (every 10 ticks) runs `PRAGMA wal_checkpoint(PASSIVE)`, which never
+  waits on a reader or writer, so checkpoints happen between commands instead of inside a write
+  (#674).
+
+- **Marina requires Bun 1.4.4.** The release carries upstream fixes in TLS, HTTP, WebSocket, the
+  database clients, `node:` modules, `fetch` and `bun install`. `.bun-version`, `engines.bun`,
+  `packageManager`, `@types/bun`, the Dockerfile's `oven/bun` stages and the documented minimum move
+  together (#669).
+
+- **Setup connects a model first, and every guide is brought up to date.** `marina init` asks for
+  the model first, offers a `local` option that probes an Ollama, llama.cpp, LM Studio or vLLM
+  server and writes its `OLLAMA_*` or `LLAMA_*` settings, and no longer echoes a pasted API key.
+  With no provider key and no local runtime, a folder session's card opens with **Connect a model
+  first** and the idle label reads `no model`; a configured local runtime counts as a model and a
+  pinned local model becomes the default. The card links the session's dashboard; `marina connect`
+  shows the server's http address; `marina --help` opens with a "Start here" block.
+  `configuration.md` gains "Connect a model", and the README, getting started, troubleshooting and
+  the site lead with `setup:cli` → `marina init` → `marina` (#665).
+
 - **A pool listing points at the whole note.** `pool <name> list` and `pool <name> recall` show
   the first 60 characters of each note; a longer note now ends in an ellipsis and names
   `pool <name> show <id>`, a new read form that prints it whole. Seen in a recorded session: the
   reviewer approved a submission "having read only the first ~60 chars" of the note it cited,
-  because the listing was all it had and nothing said there was more.
+  because the listing was all it had and nothing said there was more (#711).
 
 - **The front door shows a real world running.** The site's landing page, the overview, the
   README and a new "tour, in pictures" page are built on a recorded session in the default
@@ -107,7 +211,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one run instead of going stale. The site serves `docs/assets/` itself (the guides' pictures
   were sent to GitHub `blob` pages and rendered broken), redeploys when an asset changes, and
   `test/docs-images.test.ts` holds every image reference in the public docs to a real file.
-  Landing-page counts (commands, guides) are read from the generated registries at build time.
+  Landing-page counts (commands, guides) are read from the generated registries at build time
+  (#710, #711).
 
 - **Model helpers share the configured output allowance.** Text and JSON helpers use
   `MARINA_DEFAULT_MAX_TOKENS` (default 16,384, bounded by model capacity) instead of small,
@@ -371,6 +476,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A task verdict is no longer held by the decision gate.** `task approve|reject <id>` classifies
+  as `communicate`, like an answer to a held action: the task command already refuses a verdict from
+  anyone but the task's creator, so the gate added no authority and only kept a reviewer from
+  closing the loop. `task claim|submit|cancel|create` stay `mutate`. `focus` and `review` join the
+  agent's own loop keys, so `memory set focus <text>` is self-scoped (#706).
+- **The route-fallback tests' usage-limit reset is in the future again.** The fixture's reset date
+  had passed, so three tests failed in every environment (#694).
+- **Fresh task reviews retry a transient transport failure; malformed handoff input is refused with
+  the contract.** The prose and artifact model reviews post to the local `/v1` with their own
+  `fetch`; their HTTP leg now gets one bounded retry within `MARINA_MODEL_RETRIES` for a network
+  failure or a 408/429/5xx reply (honouring `Retry-After`, up to 30 s), never on an abort, the
+  call's own timeout, or a truncated or malformed reply. A malformed handoff publication says which
+  field is the journal (`expected`) and which the deliverable (`deliverable.expected`) instead of
+  throwing a `TypeError`, and the file audit's stale-read refusal names both versions and says no
+  audit ran (#689).
+- **`task submit` states unmet evidence obligations; references say why they are unavailable.** The
+  submit reply now carries every unmet evidence obligation at that revision and the next calls,
+  still advisory, and says how to create an artifact when the task has none. A prose review is
+  `unverified` only when something was not checked (an unreadable source or an unplaced claim), with
+  `unavailableReasons` per source; listed limitations ride along with `no-findings`. A malformed
+  evidence reference is named as malformed, while a missing record and one the actor may not read
+  stay one answer, so a reference cannot probe existence (#688).
+- **A stale-read refusal on task work names the field, both versions and the next call.**
+  `staleFileRefusal` states the object (journal or deliverable), the field the caller filled
+  (`expected` vs `deliverable.expected`), supplied and current version and hash, the call to make
+  next, and the two usual causes (a stale version after a write; the journal's metadata given for
+  the deliverable). Artifact handoff and native edit races quote both revisions, and a repeated
+  identical publication returns a `note` saying nothing changed and no peer was woken (#687).
+- **A caught failure is a refusal, not a successful message.** Thirty-one command sites that replied
+  to a caught error with `ctx.send` now use `refuseCommand`, so usage and activity record a failure
+  and an agent's tool call rejects on `ok: false`; the text is unchanged.
+  `test/lint-send-error.test.ts` holds the rule (`// allow-send-error: <reason>` opts a line out)
+  (#685).
+- **Library model calls get the provider-level, `Retry-After`-aware retries agents get.**
+  `src/model/call.ts` passes `PROVIDER_MAX_RETRIES` to the provider, which retries 408/409/429/5xx
+  inside one request and honours `Retry-After` / `retry-after-ms` (bounded at 60 s); Marina's outer
+  bounded retry is unchanged. `MARINA_PROVIDER_MAX_RETRIES` now covers both paths (#684).
+- **Bun's "The connection was closed." is a transient network failure.** The model retry classifier
+  now recognises Bun's exact wording, so one closed connection is retried within
+  `MARINA_MODEL_RETRIES` instead of failing the call (#683).
+- **A one-shot or piped `marina connect` exits shortly after its reply.** `lingerForQuiet` took its
+  output snapshot after the command's reply had arrived, so it never saw output and every one-shot
+  and pipe run waited the full `--wait` cap. The snapshot is now taken before the command, and the
+  documented 2.5 s quiet rule holds (#677).
+- **The investigation qualification gates on Marina's overhead, not the disk.**
+  `scripts/qualify-investigations.ts` also commits the same 2 MiB into a bare SQLite database under
+  the same pragmas and gates the capture p95 on `max(200 ms, 3 × bare commit p95)`, so a slow runner
+  disk no longer fails it while an overhead regression still does; the report records
+  `rawWriteP95Ms` and `captureWriteLimitMs` (#673).
+- **An arena round with no published history can be refreshed.** A research answer with no anchor
+  (`anchor: "none"`) on a series with no history now passes the freshness audit with a warning
+  instead of a refusal, so `arena submit due` no longer fails on it daily; an undated reading in a
+  series that has history is still refused (#671).
+- **Dashboard accessible names contain the visible label (WCAG 2.5.3).** The header search, health
+  badge, theme switcher, layer chips, entity panel header and command-search options are renamed so
+  speech-input users can say what they see; keyboard hints move to `aria-keyshortcuts`, and
+  `@axe-core/playwright` moves to 4.14 (#670).
+- **`project join <name>` works, and MCP clients get a config that needs no PATH.** Verb-first
+  project forms resolve as `project <name> <action>` when the leading tokens name no project (a
+  project named after a verb still works). `marina mcp-stdio --print-config` prints a ready-to-paste
+  `mcpServers` entry whose `command` is an absolute path (the running Bun and the script, or the
+  compiled binary), since desktop MCP clients start servers with a minimal `PATH` (#667).
+- **Small fixes from auditing the guides.** The SDK greeter example matches `arrive` and `connect`
+  room messages; Telegram's `/start` reply says to send `help` after logging in; `task list <word>`
+  with a word that is neither a status nor a group is refused with the usage line; and a leading `|`
+  in `board post` and `channel send` is treated as the separator, with an empty post refused (#666).
+- **The folder session opens on the welcome card without a `Starting Marina` line.** The line is
+  skipped only when the card is drawn; `--print`, `--tui` and non-TTY output are unchanged (#663).
 - **Incomplete model turns stay incomplete across API adapters and internal helpers.** Length
   stops, refusals, interrupted streams and partial tool arguments cannot become successful answers,
   verification results or executable tool requests.
@@ -732,6 +905,196 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A Claude Code plugin: `/plugin install marina`, with a world started on demand.**
+  `plugins/claude-code` and a root `.claude-plugin/marketplace.json` (`/plugin install marina
+  --marketplace h2oai/marina`) ship one MCP server (`marina mcp-stdio --start`), a `world` skill,
+  `marina-memory` and five built-in procedures, and the commands `/marina:status`,
+  `/marina:remember`, `/marina:recall` and `/marina:handoff`. `marina mcp-stdio --start [--idle <d>]
+  [--data-dir <dir>]` adopts the instance recorded in the data directory (default `~/.marina/mcp`)
+  or starts one there on free loopback ports, with telnet and the log viewer off, `MARINA_DATA_DIR`
+  rooting its database and keys, and `MARINA_IDLE_SHUTDOWN` (30m) so it exits by itself; every
+  client launched this way shares that world, and `--url` / `MARINA_MCP_URL` still win and start
+  nothing. `bun run plugin:sync [--check]` regenerates the copied skills and the plugin version. The
+  plugin needs `marina` on PATH (`bun run setup:cli`) (#721).
+- **`recall … episodes` reads the agent's own journal; `memory dream restore` undoes one op.**
+  `recall <query> episodes` (and `memory recall … episodes`) scans the caller's own continuity
+  journal newest first for every term of the query and returns up to 10 excerpts; it honours the
+  as-of fence and is evidence for the owner alone, never another agent's journal and never served
+  into context or `[evidence]`. `memory dream restore <dream> <n>` (and `pool <name> dream restore`
+  for a ratifier) reverses one applied op with the same reversal a rollback uses while the rest
+  stands: the op is marked `reverted`, its judge opinion settles as a fail, the dream becomes
+  `rolled_back` when nothing applied or pending remains, and one chronicle `memory.dream.restore`
+  event records it (#720).
+- **A dream pass that never starts is visible.** `memory dream why [entity]` and
+  `pool <name> dream why` report the mode, any budget block, the schedule gate as it stands
+  (cooldown, material, quiet), a pending compaction request, the utility-curve guard, the last dream
+  and the records since, and how the dreamer's model key resolves; another entity's readout is an
+  operator's. Both dream jobs log counts of skip reasons that are not schedule gates (`no model`,
+  `model:`, `budget:`, an empty window) as a warning. An in-process library call to this Marina's
+  own `/v1` (`setLoopbackModelKey`, `src/model/access.ts`) takes the serving process's internal
+  token when no `MODEL_API_KEYS` is set; an operator key still wins, and `marina/<model>@<host>`
+  gets no internal token (#719).
+- **The dreamer calls its own `/v1` with the internal token and an automatic output cap.** Inside
+  the serving process the dream pass's cheap-tier call carries the internal model token when no
+  operator key is set (`selfModelToken`), as room agents and the lessons writer do, instead of being
+  skipped for want of a key. The pass no longer sets an explicit `maxTokens`, so the automatic cap
+  leaves reasoning headroom, grows once on truncation and is bounded by `cheapTierOutputCap` (#718).
+- **The five-minute dream job runs the full schedule.** `memory-dream-quiet` (formerly
+  `memory-dream-requested`) takes every candidate agent and pool through the material, quiet,
+  cooldown and budget gates, SQL-only until one passes, then runs any compaction request the
+  candidate list did not reach, so a 30-minute quiet window anywhere in the hour produces a dream;
+  the hourly job is unchanged, and the cooldown keeps the two from dreaming the same entity twice
+  (#717).
+- **The Dreams panel.** Admin → Memory gains a Dreams section between Jobs and Resolutions: the
+  `MARINA_DREAMING` mode, the held-out verdict, agents paused by the utility-curve guard, and one
+  line per dream with region size, accepted and rejected ops by kind and refusing check, applied
+  ops, pending proposals, probes before and after, model and spend — ids, counts and hashes only,
+  never note or proposal text. It reads `GET /api/memory/dreams?limit=&entity=`, observer-scoped
+  like every memory observability route (a resident sees its own dreams). An observed or dry-run
+  dream no longer keeps the rolled-back view's `applied` footprints on its row (#716).
+- **Sleep-time precompute.** On the first idle cycle of a stretch, an agent with a standing focus
+  (never a crew responder) warms its next prompt context: the same query and byte budget the prompt
+  build uses, sent as `context_preview` with `warm: true`. A precomputed entry lives 6 h
+  (`CONTEXT_PRECOMPUTE_TTL_MS`) instead of 5 s, is never part of the cache key, and is invalidated
+  by any memory write like every entry; `contextCacheStats()` adds `precomputed` and
+  `precomputedHits` (#715).
+- **The journal as dream evidence; the compaction-event trigger.** An entity dream reads the owner's
+  own continuity journal for its window (never another's, never a pool's region) and shows the
+  newest parts to the model as `Episodes`; the faithfulness check accepts a number or name grounded
+  in them, and the row keeps counts only. Journaled bytes count as material (≥ 64 KB since the last
+  dream). After a compaction of ≥ 8 messages is archived, the adapter files
+  `memory dream request <reason>` (also a command for the agent), which waives the material and
+  cooldown gates but never quiet or budget; a new five-minute job dreams requested entities once
+  quiet with trigger `compaction` (migration 190 widens the trigger check) (#714).
+- **Cross-agent dreaming over pools.** The dream pass also runs over a shared pool, recorded under
+  `pool:<name>`: its region is the pool's live fact-like records written or served to any member,
+  with pooled use evidence. A pool dream proposes `merge`, `link` and `decay` only and never applies
+  anything: every op is filed as a proposal. `pool <name> dream ratify <dream> [n]` needs standing ≥
+  15 (or a sovereign, or the ungated local operator) and a caller who wrote none of the notes the op
+  touches; it re-checks the op against the pool as it is then and applies it (a cross-author merge
+  through `consolidatePoolNotes`). `dismiss` is the ratifier's no and `rollback` reverses a ratified
+  dream; the hourly job also dreams pools written to in the last day. Every filed op is now a judge
+  opinion. Surface: `pool <name> dream [now|dry-run|log|show
+  <id>|proposals|ratify|dismiss|rollback]` (#713).
+- **Skills from repeated procedures.** The dream gather stage reads command labels (never arguments)
+  from the usage ledger inside the claim windows of the owner's successful tasks and finds sequences
+  of 2–12 commands that ran in two or more of them and that no skill or macro covers; a dream may
+  `propose-skill` over one, naming and describing it. Adopted, it is a skill draft
+  (`[Skill draft: …]`), listed by `skill list` and never served; `skill compose` now makes a draft
+  too, while `skill store` and `skill import` are served as written. A draft is promoted by a
+  person's `skill verify <id>` (an agent's is refused) or a won `skill trial <id> [role:<r>]
+  [benchmark:<b>]`, which runs the role with and without the skill in a child or parallel world
+  (rank 4, the `agent.spawn` gate, one trial per world, sharing the lock with `evolve trial`).
+  `memory dream rollback` retires an adopted draft (#712).
+- **The dreamer is a judge, guarded and measured.** Every op an applied dream carried is one opinion
+  in the judge ledger (surface `dream`, per op kind), settled by the owner's act: adopted or left
+  standing seven days is a pass, dismissed or rolled back a fail; `judge stats dream` is the
+  readout. `MARINA_DREAM_JUDGE=off|observe|on` (default `observe`): under `on`, a dreamer that
+  earned an op kind applies it at once with the same footprint and rollback. The utility-curve guard
+  compares ten of the owner's outcomes after an applied dream with the ten before; a fall past 0.1
+  on two consecutive dreams puts that agent's dreams in observe, raises one ops-inbox item and
+  chronicle event, and is cleared by an operator with `memory dream guard clear <entity>`.
+  `memory dream measure [all]` is the held-out readout, and `bun run bench:dream -- --db <path>`
+  replays recorded dreams offline with no model calls. A proposed link that already exists is
+  rejected with its reason (#709).
+- **`tell read <id>` reads a clamped message whole; a resumed agent is not shown its last actions.**
+  When a delivered tell is cut to the perception budget, its line ends with
+  `[read it whole: tell read <id>]`; `tell read` (a read form) prints the whole stored message to
+  its sender or recipient and refuses anyone else. The resume checkpoint summary no longer lists the
+  agent's last actions, which agents re-enacted on every restart; the checkpoint still stores them
+  (#708).
+- **The dream's apply path.** After the checks, the accepted ops are applied inside a transaction
+  and the probes re-run on the result in every mode; a probe lost there rejects the whole set.
+  `observe` always rolls that view back. `MARINA_DREAMING=on` keeps the auto-tier ops (`merge` via
+  `consolidateNotes`, `link`, and `decay` as importance − 2) in one transaction with the dream row
+  and its chronicle event. A `supersede` is filed as a proposal (text in `core_memory` owner
+  `memory:dream`, 7 days, never in the dream row) that the owner takes with
+  `memory dream adopt <dream> [n]`, faithfulness re-checked, or dismisses. Every applied op leaves a
+  footprint, and `memory dream rollback <id>` reverses the whole dream in one transaction without
+  deleting anything. Agents see a `[Dream]` line every 20th cycle (`memory dream brief`) and
+  `memory dream proposals` (#707).
+- **The work pulse announces its task.** After opening a pulse task, the pulse posts it to `general`
+  from the reviewer, addressed to `MARINA_WORK_PULSE_WORKER` (default Builder) with the claim and
+  submit calls, so the worker's attention treats it as owed (#705).
+- **The work pulse: one real, reviewable task a day.** A daily `work-pulse` tick job, when an agent
+  is running and the pulse project (`MARINA_WORK_PULSE_PROJECT`, default "Demo Pulse") has no open
+  pulse task, audits the shared knowledge pool (`MARINA_WORK_PULSE_POOL`, default `guide`) with the
+  `guide audit` auditor and turns the first finding into one task, created by the reviewer account
+  (`MARINA_WORK_PULSE_REVIEWER`, default Critic) so the verdict is an independent party's. A finding
+  is worked once; no model call. `MARINA_WORK_PULSE=off` disables it (#704).
+- **`methods`: one readout of every selector.** The rank-0, read-only `methods` command prints one
+  line per selector (card routing, arena earned routes, the shadow loops, triage, the spread and
+  move calibrators, benchmark route evidence, the judges, the decision gate, the Arbiter): its mode,
+  its evidence and what it has earned. No model call (#702).
+- **The `~meanonly` arena formation variant.** `formation:<pattern>~meanonly:<models>` runs the same
+  members and protocol, then files the members' mean with the start's sd (scalar and per cell) and
+  records the replaced sds under `RoundForecast.meanOnly`. It has its own method key, so the spread
+  calibrator and earned routing learn it apart from the plain formation (#700).
+- **The dream pass, in observe.** While an agent is idle, the hourly `memory-dream` job (or
+  `memory dream now`) runs one checked consolidation over its own fact-like records: gather (written
+  or served in the window, with use evidence), probe-before, one cheap-tier call
+  (`roleModel("dreamer")`, purpose `dream`) proposing typed `merge`, `supersede`, `link` and `decay`
+  ops, mechanical checks (region, taint, coverage, faithfulness, evidence, preservation), and one
+  append-only record (migration 189 `memory_dreams`: ids, hashes, counts and reasons, never text)
+  plus a chronicle `memory.dream` event. `MARINA_DREAMING=off|observe|on` (default `observe`):
+  nothing is applied yet. Gates: ≥ 12 own records since the last dream, no tool call for 30 minutes,
+  an 8 h cooldown, and the spend budget. `memory dream now|dry-run|log|show <id>`; `orient` shows
+  the latest dream (#699).
+- **Operational alerts leave the world through `MARINA_OPS_NOTIFY`.** A warning or critical
+  `ops inbox` alert that opens (or reopens after being resolved) now sends an `alert.opened` notice
+  with its title, remedy, action, category and deadline; repeats of an open alert and `info` rows
+  stay in the inbox. `MarinaDB.onOperationalAlert` is the hook, and a listener's error never fails
+  the write (#697).
+- **The idle turn is append-only.** `[Quiet]` and `[Reflection Due]` ask for one reflection (a
+  reflection-tier `memory note`, citing the ids that moved the agent, which resets the reflection
+  counter), a goal update if it moved, then rest or `brief`; the curation menu (resolve, link,
+  evolve, merge, delete) is gone from the idle turn. `MARINA_IDLE_REFLECTION=append|rest` (default
+  `append`); `rest` offers rest or `brief` alone. The `consolidate-memory` skill is rewritten as
+  generate → reflect → write (#696).
+- **Usefulness raters, the α/β posterior and a bounded shared-ranking factor.** Four mechanical
+  raters record use: `citation` (a note or task submission names a note served to that entity within
+  24 h), `outcome` (a new `usefulness` outcome consumer rates what the owner was served during the
+  work), `explicit` (`memory useful|useless <id>`, on an item served in the last 7 days, once a day)
+  and `unused` (the hourly `memory-usefulness-settle` job rates serves older than 6 h that were
+  never cited). Each item has a posterior mean `(1+α)/(2+α+β)` that excludes the author's own
+  ratings. `MARINA_MEMORY_USEFULNESS_RANKING=off|observe|on` (default `observe`) adds a bounded ±0.1
+  term beside writer standing on shared retrieval only; nothing weights an entity's own notes
+  (#695).
+- **Retrieval telemetry and `memory usefulness`.** `buildUnifiedContext` records one `memory_served`
+  row per served item (migration 188: surface, arm, tier, rank, record id and a query hash, never
+  text; cache hits included; pruned after 30 days), and `memory_ratings` holds append-only
+  usefulness evidence written only through `applyUsefulness`. A fact-like note that nearly restates
+  the writer's own recent same-tier note is stored and rates the earlier one `repeat`, with the
+  reply `Nearly the same as #N`; an exact duplicate replies `Note #N already holds this.`
+  `memory usefulness [window]` shows the entity's serves by surface, arm and tier and its
+  most-served items with their evidence (#692).
+- **Shared task work: the journal is the record, prose is audited against evidence.**
+  `task work <id> prose-audit` runs the evidence audit's requirements and fact bundles over prose (a
+  fact is supported when the prose quotes its bound selection verbatim);
+  `task work <id> journal <revision>` appends an immutable entry that handoff snapshots and prose
+  reviews carry; a fresh prose review's verdict is recorded as a judge opinion settled by the
+  creator's next verdict, never delivered until earned; a `task submit` reply naming unmet evidence
+  opens one obligation in the agent's ledger, settled by a later clean submission. A refused
+  reconnect names its reason (unknown, idle-expired or lifetime-expired), and an external
+  participant's declared model (`MarinaClient` `model` → `declared_model`) rides with its task
+  outcomes as evidence, never authority (#691).
+- **A prose review reads the record by access.** `task work <id> prose-review` no longer needs
+  listed `refs`: its packet holds every source the caller lists, every reference the prose names
+  (`note:N`, `task:N`, `chronicle:N`, `asset:<id>`), every source the task's work cites, the task
+  itself, and its recorded history (recent revisions, claims and submissions), each resolved with
+  the reviewer's own access. An unreadable source is listed with its reason and no text; the report
+  gains `references` with each source's origin and status (#690).
+- **Task work instruments for shared deliverables.** Evidence audits check each decision's citations
+  against bound source selections and a predeclared fact bundle; scoped edits change the deliverable
+  under revision, version and hash guards; handoff snapshots follow the deliverable's revision;
+  source-based artifact and prose reviews (model review only on request) and advisory completion
+  feedback after submission. `scripts/qualify-task-completion.ts` is the no-provider qualification
+  runner (#686).
+- **The `run-marina` Claude Code skill.** `.claude/skills/run-marina/` lets an agent build, run and
+  drive Marina from a clean machine: `driver.mjs` boots an isolated instance on its own port and
+  database with no provider keys, runs world commands over the WebSocket, screenshots the dashboard
+  with headless Chromium, reads the dashboard API and runs a `smoke` check; `engine-probe.ts` runs
+  commands against an in-process engine with no server (#672).
 - **Optional shared task work.** `task work` records revisioned drafts, proposals, source-version
   citations and reusable advisory checks. Structured edits can render or write the deliverable
   directly; source-coverage rules, context-scoped projections and separate evidence assessments

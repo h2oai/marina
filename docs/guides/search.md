@@ -211,7 +211,7 @@ The data verbs are the `data` command's sources (see [Commands](commands.md#stru
 cached per query for ten minutes when live and six hours for a past `asof:`.
 
 A world can also add a dedicated room, `searchRoom({ exits })`, whose verbs are `search`, `fetch`,
-`wiki` and `sources`. To mount the tool on any existing room under verbs of your choosing, use
+`wiki`, `sources` and the data verbs `markets`, `odds` and `series`. To mount the tool on any existing room under verbs of your choosing, use
 `searchToolCommands({ verbs })`. Both are in `src/world/rooms/search-room.ts`.
 
 - **Caching:** replies are cached in the room's KV store per (engine, query, bound) for six hours.

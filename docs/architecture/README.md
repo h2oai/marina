@@ -4,11 +4,11 @@ These pages are the design and reference material for contributors: how each sub
 
 | Page | Covers |
 |---|---|
-| [civic-substrate.md](civic-substrate.md) | Standing ledger and decay, rank derivation, the 15 safety gates, trust profile (`local` / `shared` / `public`), autonomy posture and witness ladder, exec-approver chain, Code Mode dispatch, Flywheel sandbox boundary |
+| [civic-substrate.md](civic-substrate.md) | Standing ledger and decay, rank derivation, the 15 safety gates, trust profile (`local` / `shared` / `public`), autonomy posture and the retired witness ladder, challenges, the as-of fence, exec-approver chain, Code Mode dispatch, Flywheel sandbox boundary |
 | [chronicle.md](chronicle.md) | Chronicle table, read/write commands, Chronicler agent, citation as recognition (not standing), `/who/<name>` pages |
 | [worlds.md](worlds.md) | World templates and the `MARINA_WORLD` catalogue, `seed()` semantics, room-agent spawning, auth, and cost control |
 | [agent-cognition.md](agent-cognition.md) | Identity and principles, the cadenced continuation prompt, tool profiles and prompt budget, role composition and PRISM gating, in-world trait/role editing, fast crew dispatch, platform-level cognitive commands |
-| [memory.md](memory.md) | Legacy notes vs. durable service, unified context tiers, legacy bridge and twins, hygiene and dispatch ticks, adoption/ratification, reputation-weighted retrieval, retrieval quality, gateway/receipts/response cache, contradiction `resolve`, workflows, benchmarks |
+| [memory.md](memory.md) | Canonical records and numeric compatibility, unified context tiers, retrieval telemetry and usefulness evidence, the dream pass (consolidation, skill drafts, judge, guard), hygiene and dispatch ticks, adoption/ratification, reputation-weighted retrieval, retrieval quality, gateway/receipts/response cache, contradiction `resolve`, workflows, benchmarks, outcome lessons and admission ranking, memory over media, learned bundles |
 | [orchestration.md](orchestration.md) | The 16 orchestration patterns, members-only crew pools, crew briefs and formation mediators |
 | [dashboard.md](dashboard.md) | Canvas intents, WebSocket event taxonomy, layer toggles, MEMORY layer, Admin → Memory tab, memory observability API and hygiene ratios (user guide: [`docs/guides/dashboard.md`](../guides/dashboard.md)) |
 | [resolvers.md](resolvers.md) | Resolver primitive and sample taxonomy, `probe`/`watch`, calibration finder registry, `position` invariants, SDK client, TabH2O integration |

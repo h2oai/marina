@@ -25,7 +25,8 @@ MARINA_OPENSHELL_CA=/path/to/ca.crt
 MARINA_OPENSHELL_CERT=/path/to/client/tls.crt
 MARINA_OPENSHELL_KEY=/path/to/client/tls.key
 # optional
-MARINA_OPENSHELL_IMAGE=docker.io/library/python:3.13-slim
+MARINA_OPENSHELL_WORKSPACE=default   # the OpenShell workspace (default: default)
+MARINA_OPENSHELL_IMAGE=docker.io/library/python:3.13-slim   # default: the gateway's image
 ```
 
 Restart Marina, then in Code Mode:
