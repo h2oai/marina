@@ -47,6 +47,7 @@ WebSocket), so it works with almost anything you already use.
 | --- | --- |
 | [Choose an integration](integrations.md) | Pick the protocol your tool already speaks, and keep its credentials and sessions separate. |
 | [Coding agents & editors](coding-agent-integrations.md) | Claude Code, Codex, Cursor and ACP editors such as Zed, JetBrains and Neovim. |
+| [Codex plugin](codex-plugin.md) | Build and install Marina's memory and optional world tools with bundled workflow skills. |
 | [MCP](mcp-integration.md) | Connect Claude Desktop, Claude Code and any other MCP client. |
 | [OpenAI-compatible model API](model-api.md) | Point any OpenAI client at `http://localhost:3300/v1`. |
 | [Memory API](memory-api.md) | Durable memory for any agent over REST: notes, recall, knowledge graph and pools. |

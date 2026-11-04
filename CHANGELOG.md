@@ -732,6 +732,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Marina plugin for Codex.** `bun run build:codex-plugin` builds an installable local
+  marketplace with durable memory, setup and memory skills, and optional world access.
+  The package bundles its MCP adapters and references private credential files without
+  copying secrets. Failed world authentication now closes the stdio bridge promptly.
+
 - **Optional shared task work.** `task work` records revisioned drafts, proposals, source-version
   citations and reusable advisory checks. Structured edits can render or write the deliverable
   directly; source-coverage rules, context-scoped projections and separate evidence assessments
