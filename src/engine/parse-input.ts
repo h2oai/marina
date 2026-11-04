@@ -63,9 +63,18 @@ function cachedPattern(
   return pattern;
 }
 
-/** Cached pattern matching `key value` or `--key value` at the end of a string. */
+/**
+ * Cached pattern matching a trailing modifier in every spelling of the one
+ * grammar (`parseModifiers`): `key:value` (canonical), `key=value`,
+ * `--key=value`, `key value` and `--key value`. The `:`/`=` forms must start
+ * a token, so a trailing URL such as `…?type=fact` is never split.
+ */
 export function modifierPattern(key: string): RegExp {
-  return cachedPattern(modifierPatterns, key, (k) => `(?:--|\\b)${k}\\s+(\\S+)\\s*$`);
+  return cachedPattern(
+    modifierPatterns,
+    key,
+    (k) => `(?:(?:^|(?<=\\s))(?:--)?${k}[:=]|(?:--|\\b)${k}\\s+)(\\S+)\\s*$`,
+  );
 }
 
 /** Cached pattern matching `flag` or `--flag` at the end of a string. */
@@ -82,7 +91,7 @@ export function regexCacheSizes(): { modifiers: number; flags: number } {
  * Extract trailing key-value modifiers from text.
  * Scans for known modifier names at the end of the string.
  *
- * Example: extractModifiers("some text importance 7 type fact", ["importance", "type"])
+ * Example: extractModifiers("some text importance:7 type fact", ["importance", "type"])
  *   → { text: "some text", modifiers: { importance: "7", type: "fact" } }
  */
 export function extractModifiers(

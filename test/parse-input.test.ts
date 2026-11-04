@@ -166,6 +166,33 @@ describe("parse-input existing helpers", () => {
     expect(modifiers.type).toBe("fact");
   });
 
+  it("extractModifiers accepts every spelling of the one modifier grammar", () => {
+    for (const input of [
+      "some text importance:7 type:fact",
+      "some text importance=7 type=fact",
+      "some text --importance=7 --type=fact",
+      "some text --importance 7 --type fact",
+      "some text importance:7 type fact",
+    ]) {
+      const { text, modifiers } = extractModifiers(input, ["importance", "type"]);
+      expect({ input, text, modifiers }).toEqual({
+        input,
+        text: "some text",
+        modifiers: { importance: "7", type: "fact" },
+      });
+    }
+  });
+
+  it("extractModifiers never splits a word or a URL on `:` or `=`", () => {
+    for (const input of [
+      "see https://example.org/?type=fact",
+      "ratio:type:3 done",
+      "subtype:fact",
+    ]) {
+      expect(extractModifiers(input, ["type"])).toEqual({ text: input, modifiers: {} });
+    }
+  });
+
   it("extractFlags pulls trailing boolean flags", () => {
     const { text, flags } = extractFlags("query text recent", ["recent", "important"]);
     expect(text).toBe("query text");
