@@ -15,6 +15,7 @@ import {
   runDreamSchedule,
   runRequestedDreams,
   settleQuietDreams,
+  silentSkips,
 } from "../memory/dream";
 import { settleUnusedServes } from "../memory/usefulness";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory/memory-observability";
@@ -359,6 +360,11 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
           ops: ran.reduce((n, d) => n + (d.checks?.accepted ?? 0), 0),
           rejected: ran.reduce((n, d) => n + (d.checks?.rejected ?? 0), 0),
         });
+      // A pass that never started (no model, a model error, the budget) is a
+      // warning with counts; the schedule gates stay quiet.
+      const silent = silentSkips(dreams);
+      if (Object.keys(silent).length)
+        host.engine.logger.warn("memory", "dream pass skipped", { skipped: silent });
     },
   });
 
@@ -384,6 +390,9 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
           dreamed: ran.map((d) => d.entityName),
           ops: ran.reduce((n, d) => n + (d.checks?.accepted ?? 0), 0),
         });
+      const silent = silentSkips(dreams);
+      if (Object.keys(silent).length)
+        host.engine.logger.warn("memory", "dream quiet sweep skipped", { skipped: silent });
     },
   });
 

@@ -354,7 +354,8 @@ evidence: a restatement may take a number or a name from it, and 64 KB of journa
 dream counts as material on its own. Nobody else's dream ever reads your journal. When your context
 is compacted, a dream is requested for you (`memory dream request` does the same by hand): it runs
 within minutes once you have been quiet for 30 min, skipping the material and cooldown gates but
-never the budget. While you are idle with a focus, Marina also pre-builds the memory context your
+never the budget. If no dream seems to come, `memory dream why` says which gate holds it — or
+that the dreamer's model cannot be called — and `pool <name> dream why` the same for a pool. While you are idle with a focus, Marina also pre-builds the memory context your
 next prompt will need, so the first prompt after a quiet stretch is served from that build if
 nothing in memory changed meanwhile.
 
