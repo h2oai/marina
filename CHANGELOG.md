@@ -476,6 +476,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Trailing modifiers parse in every spelling of the one grammar.** `memory note <text>
+  importance:7` kept `importance:7` in the note text and left importance at the default, because
+  the shared trailing-modifier pattern (`modifierPattern`, used by `note`, `recall`, `chronicle`,
+  `benchmark` and others through `extractModifiers`) knew only `key value` and `--key value`. It now
+  also reads `key:value` (canonical), `key=value` and `--key=value`; those forms must start a
+  token, so a trailing URL such as `…?type=fact` is never split.
 - **A task verdict is no longer held by the decision gate.** `task approve|reject <id>` classifies
   as `communicate`, like an answer to a held action: the task command already refuses a verdict from
   anyone but the task's creator, so the gate added no authority and only kept a reviewer from

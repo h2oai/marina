@@ -109,6 +109,40 @@ describe("memory family (engine)", () => {
     expect(note?.content).toBe("my focus moved from parsing to retrieval");
   });
 
+  it("`memory note … importance:7` sets importance and leaves the modifier out of the text", async () => {
+    const fay = world.login("Fay");
+    for (const [raw, text, importance, type] of [
+      [
+        "memory note the north gate opens at dawn importance:7",
+        "the north gate opens at dawn",
+        7,
+        "observation",
+      ],
+      [
+        "memory note the west gate is locked importance=8 type:decision",
+        "the west gate is locked",
+        8,
+        "decision",
+      ],
+    ] as const) {
+      const reply = (await run(fay, raw)).join("\n");
+      const id = Number(/Note #(\d+) saved/.exec(reply)?.[1]);
+      const note = world.db.getNote(id);
+      expect({
+        content: note?.content,
+        importance: note?.importance,
+        type: note?.note_type,
+      }).toEqual({
+        content: text,
+        importance,
+        type,
+      });
+    }
+    const listed = (await run(fay, "memory note list")).join("\n");
+    expect(listed).not.toContain("importance:");
+    expect(listed).not.toContain("importance=");
+  });
+
   it("legacy spellings still parse through both doors", async () => {
     const dave = world.login("Dave");
     await run(dave, "memory note claim the sky is blue confidence 0.9 source https://example.org");
