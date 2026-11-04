@@ -4,6 +4,7 @@
 import type { TaskManager } from "../../coordination/task-manager";
 import { fencedNoteRecall } from "../../memory/as-of";
 import { memoryNoteResults, memoryResult } from "../../memory/command-result";
+import { searchEpisodes } from "../../memory/dream";
 import {
   expandedFtsQueries,
   expansionForEntityCached,
@@ -79,6 +80,7 @@ function detectIntent(query: string): {
 /** `recall` forms; `memory recall …` (src/engine/command-families.ts) shares them. */
 export const RECALL_USAGE: CommandUsage[] = [
   { syntax: "recall <query> [recent | important] [type <type>]", effect: "read" },
+  { syntax: "recall <query> episodes", effect: "read" },
   {
     syntax:
       "recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]",
@@ -97,7 +99,7 @@ export function recallCommand(deps: {
     usage: RECALL_USAGE,
     name: "recall",
     aliases: [],
-    help: "Scored, provenance-aware retrieval. Usage: recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]\n  all — unified tiers: skills, [trusted], [evidence] (durable records + sources), [proposal] (assistance answers), [unverified]\n  evidence — durable tiers only",
+    help: "Scored, provenance-aware retrieval. Usage: recall <query> [recent|important|trusted|explain|evidence|all|episodes] [type <type>] [budget <bytes>]\n  all — unified tiers: skills, [trusted], [evidence] (durable records + sources), [proposal] (assistance answers), [unverified]\n  evidence — durable tiers only\n  episodes — your own journal (what you said, were told and saw), newest first; evidence for you alone, never served to anyone",
     // Synchronous for plain recall (callers that don't await processCommand —
     // quest tracking, cognitive-provenance capture, the SDK reply window — rely
     // on the reply landing in the same tick). Only the unified `all|evidence`
@@ -145,6 +147,7 @@ export function recallCommand(deps: {
         "explain",
         "evidence",
         "all",
+        "episodes",
       ]);
       // A bare modifier word is a query, not a modifier: `recall evidence`
       // searches for "evidence" rather than failing with an empty query.
@@ -185,6 +188,33 @@ export function recallCommand(deps: {
       const weights = { weightImportance, weightRecency, weightRelevance };
       // The as-of fence (src/engine/evidence-fence.ts): only memory known by the cutoff.
       const asOf = currentEvidenceCutoffMs();
+
+      // ── `recall <q> episodes`: the agent's OWN journal — evidence for it
+      // alone, never served into context, never anyone else's (journal.ts).
+      if (flags.has("episodes")) {
+        const hits = searchEpisodes(db, entity.name, query, {
+          ...(asOf !== undefined ? { asOf } : {}),
+        });
+        const lines = [header(`Recall (episodes): "${query}"`), separator()];
+        if (!hits.length) lines.push(`  No episode of yours mentions "${query}".`);
+        for (const h of hits)
+          lines.push(
+            `  ${new Date(h.at).toISOString().slice(0, 16).replace("T", " ")} ${h.role}: ${h.excerpt}`,
+          );
+        lines.push(
+          "",
+          dim(
+            "Your own journal, newest first — evidence for you alone; nothing here is a note, and nobody else is served it.",
+          ),
+        );
+        ctx.send(
+          input.entity,
+          lines.join("\n"),
+          undefined,
+          memoryResult("recall", { success: true, notes: [] }),
+        );
+        return;
+      }
 
       // ── Unified surface: `recall <q> all` (every tier) / `recall <q> evidence`
       // (durable tiers only). Same builder the continuation prompt, /mem/context,

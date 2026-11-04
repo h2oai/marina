@@ -579,6 +579,98 @@ export function dismissProposal(
 
 // ─── Rollback ─────────────────────────────────────────────────────────────
 
+/**
+ * Reverse ONE applied op from its footprint: a merged-away note reopens as
+ * its author, a decay's importance returns, a link is removed, a restatement
+ * steps aside (the original is current again), a skill draft is retired.
+ * True when the store changed; a note that moved on since is skipped.
+ */
+function revertOne(db: MarinaDB, entityName: string, op: StoredDreamOp): boolean {
+  const applied = op.applied;
+  if (!applied) return false;
+  switch (applied.kind) {
+    case "merge": {
+      if (op.op !== "merge") return false;
+      let done = false;
+      for (const id of op.into)
+        done =
+          db.restoreSupersededNote(
+            authorOf(db, id, entityName),
+            op.keep,
+            id,
+            applied.prior[String(id)] ?? "unverified",
+          ) || done;
+      return done;
+    }
+    case "decay":
+      return op.op === "decay"
+        ? db.setNoteImportance(authorOf(db, op.id, entityName), op.id, applied.priorImportance)
+        : false;
+    case "link":
+      return op.op === "link" ? db.removeNoteLink(op.from, op.to, op.relation) : false;
+    case "supersede":
+      return op.op === "supersede"
+        ? db.revertRevision(entityName, applied.newId, op.id, applied.prior)
+        : false;
+    case "propose-skill":
+      return op.op === "propose-skill" ? db.deleteNote(applied.newId, entityName) : false;
+  }
+}
+
+export type RestoreOutcome =
+  | { ok: true; op: DreamOpKind; remaining: number; rolledBack: boolean }
+  | { ok: false; reason: string };
+
+/**
+ * The owner's per-op undo (`memory dream restore <dream> <n>`): reverse ONE
+ * applied op of an applied dream with the same reversal a rollback uses, and
+ * leave the rest standing. The op's judge opinion settles as a fail (the
+ * owner disagreed with that one). When nothing applied remains and no
+ * proposal is pending, the dream is as rolled back. A pending proposal is
+ * dismissed, not restored.
+ */
+export function restoreDreamOp(
+  db: MarinaDB,
+  row: DreamRow,
+  n: number,
+  now = Date.now(),
+): RestoreOutcome {
+  if (row.state === "rolled_back") return { ok: false, reason: "already rolled back" };
+  if (row.state !== "applied")
+    return { ok: false, reason: "observed, not applied: nothing to undo" };
+  const entityName = row.entity_name;
+  const ops = parseDreamJson<StoredDreamOp[]>(row.ops_json, []);
+  const op = ops[n];
+  if (!op) return { ok: false, reason: `no op ${n} in this dream` };
+  if (op.proposal === "pending")
+    return { ok: false, reason: `op ${n} is a pending proposal: dismiss it instead` };
+  if (!op.applied) return { ok: false, reason: `op ${n} was not applied` };
+  if (op.reverted) return { ok: false, reason: `op ${n} is already restored` };
+  let rolledBack = false;
+  let remaining = 0;
+  db.transaction(() => {
+    revertOne(db, entityName, op);
+    ops[n] = { ...op, reverted: true };
+    remaining = ops.filter((o) => o.applied && !o.reverted).length;
+    const pending = ops.some((o) => o.proposal === "pending");
+    rolledBack = remaining === 0 && !pending;
+    db.updateDream(row.id, {
+      ops,
+      ...(rolledBack ? { state: "rolled_back", rolledBackAt: now } : {}),
+    });
+  });
+  settleDreamOp(db, row.id, n, false, now);
+  db.appendChronicle({
+    kind: "event",
+    source: "memory",
+    title: "memory.dream.restore",
+    body: `${entityName}: op ${n} (${op.op}) of dream #${row.id} restored — ${remaining} applied op(s) still stand${rolledBack ? "; the dream is as rolled back" : ""}`,
+    participants: [entityName],
+    refs: [`dream:${row.id}`],
+  });
+  return { ok: true, op: op.op, remaining, rolledBack };
+}
+
 export type RollbackOutcome =
   | { ok: true; reverted: number; dismissed: number }
   | { ok: false; reason: string };
@@ -608,41 +700,8 @@ export function rollbackDream(db: MarinaDB, row: DreamRow, now = Date.now()): Ro
         ops[i] = { ...op, proposal: "dismissed" };
         continue;
       }
-      const applied = op.applied;
-      if (!applied || op.reverted) continue;
-      let done = false;
-      switch (applied.kind) {
-        case "merge":
-          if (op.op === "merge")
-            for (const id of op.into)
-              done =
-                db.restoreSupersededNote(
-                  authorOf(db, id, entityName),
-                  op.keep,
-                  id,
-                  applied.prior[String(id)] ?? "unverified",
-                ) || done;
-          break;
-        case "decay":
-          if (op.op === "decay")
-            done = db.setNoteImportance(
-              authorOf(db, op.id, entityName),
-              op.id,
-              applied.priorImportance,
-            );
-          break;
-        case "link":
-          if (op.op === "link") done = db.removeNoteLink(op.from, op.to, op.relation);
-          break;
-        case "supersede":
-          if (op.op === "supersede")
-            done = db.revertRevision(entityName, applied.newId, op.id, applied.prior);
-          break;
-        case "propose-skill":
-          if (op.op === "propose-skill") done = db.deleteNote(applied.newId, entityName);
-          break;
-      }
-      if (done) reverted++;
+      if (!op.applied || op.reverted) continue;
+      if (revertOne(db, entityName, op)) reverted++;
       ops[i] = { ...op, reverted: true };
     }
     db.updateDream(row.id, { state: "rolled_back", ops, rolledBackAt: now });

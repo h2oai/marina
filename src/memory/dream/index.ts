@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-export type { AdoptOutcome, DreamProposal } from "./apply";
+export type { AdoptOutcome, DreamProposal, RestoreOutcome } from "./apply";
 export {
   adoptProposal,
   applyOps,
@@ -12,6 +12,7 @@ export {
   PROPOSAL_TTL_MS,
   pendingProposals,
   procedureCovered,
+  restoreDreamOp,
   rollbackDream,
 } from "./apply";
 export { checkOps, leavingIds, opIds } from "./check";
@@ -26,7 +27,7 @@ export {
   guardState,
   guardTripped,
 } from "./guard";
-export type { JournalEpisode } from "./journal";
+export type { EpisodeHit, JournalEpisode } from "./journal";
 export {
   DREAM_JOURNAL_MAX_BYTES,
   DREAM_MIN_JOURNAL_BYTES,
@@ -35,6 +36,7 @@ export {
   parseEpisode,
   renderEpisodes,
   residentSpaceIds,
+  searchEpisodes,
 } from "./journal";
 export {
   DREAM_SETTLE_MS,

@@ -428,6 +428,8 @@ Each recipe auto-creates: memory pool, group (with channel + board), project wit
 > skill trial 4 role:scout           Validate a skill in a child world: role with it vs without; a win promotes a draft
 > memory dream request               Ask for a dream once you are quiet (material and cooldown waived; a compaction does this for you)
 > memory dream why [entity]          Why the next sweep would or would not dream: every gate, any request, the guard, the model's key (another entity: operator)
+> memory dream restore 3 1          Reverse ONE applied op of dream 3 (op 1); the rest stands
+> recall quartz build episodes       Your own journal, every term, newest first — yours alone, never served to anyone
 > skill import ./path/to/SKILL.md    Import a markdown skill package
 > skill builtin [name]               Skills shipped with the server (quantitative-estimates, intake-triage,
                                      decompose-multihop, solve-math, answer-request, chronicling,

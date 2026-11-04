@@ -22,6 +22,7 @@ import {
   pendingProposals,
   poolScopeName,
   renderDreamExplanation,
+  restoreDreamOp,
   rollbackDream,
   runDream,
 } from "../../memory/dream";
@@ -44,6 +45,7 @@ const VERBS = [
   "ratify",
   "dismiss",
   "rollback",
+  "restore",
   "why",
 ];
 
@@ -56,7 +58,7 @@ export async function runPoolDreamCommand(
   tokens: readonly string[],
 ): Promise<void> {
   const name = poolScopeName(pool.name);
-  const usage = `Usage: pool ${pool.name} dream [now|dry-run|log|show <id>|proposals|ratify <id> [n]|dismiss <id> [n]|rollback <id>|why]`;
+  const usage = `Usage: pool ${pool.name} dream [now|dry-run|log|show <id>|proposals|ratify <id> [n]|dismiss <id> [n]|rollback <id>|restore <id> <n>|why]`;
   const verb = canonicalSub(tokens[0], VERBS) ?? "log";
   const dreamOf = () => {
     const id = Number.parseInt(tokens[1] ?? "", 10);
@@ -217,6 +219,37 @@ export async function runPoolDreamCommand(
     ctx.send(
       entityId,
       `Ratified: ${out.kind === "op" ? out.op : out.kind} applied to pool "${pool.name}" (${who.basis}). pool ${pool.name} dream rollback ${row.id} reverses the whole dream.`,
+    );
+    return;
+  }
+  if (verb === "restore") {
+    const row = dreamOf();
+    if (!row) {
+      refuseCommand(
+        ctx,
+        entityId,
+        `No dream #${tokens[1] ?? "?"} of pool "${pool.name}". ${usage}`,
+      );
+      return;
+    }
+    const n = Number.parseInt(tokens[2] ?? "", 10);
+    if (!Number.isInteger(n) || n < 0) {
+      refuseCommand(ctx, entityId, `Usage: pool ${pool.name} dream restore <id> <n>`);
+      return;
+    }
+    const who = ratifier();
+    if (!who.ok) {
+      refuseCommand(ctx, entityId, who.reason);
+      return;
+    }
+    const out = restoreDreamOp(db, row, n);
+    if (!out.ok) {
+      refuseCommand(ctx, entityId, `Dream #${row.id} op ${n}: ${out.reason}.`);
+      return;
+    }
+    ctx.send(
+      entityId,
+      `Restored op ${n} (${out.op}) of pool "${pool.name}" dream #${row.id}; ${out.remaining} ratified op(s) still stand${out.rolledBack ? " — none, so the dream is as rolled back" : ""}.`,
     );
     return;
   }

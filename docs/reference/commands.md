@@ -6419,6 +6419,13 @@ Effect: write.
 
 - `field-0` (`id`): text, required.
 
+### `memory dream restore <id> <n>`
+
+Effect: write.
+
+- `field-0` (`id`): text, required.
+- `field-1` (`n`): number, required.
+
 ### `memory dream measure [all]`
 
 Effect: read.
@@ -6706,6 +6713,12 @@ Effect: read.
 - `field-2` (`type`): text, optional group `option-1`.
 - Group `option-0`: `recent | important`.
 - Group `option-1`: `type type`.
+
+### `memory recall <query> episodes`
+
+Effect: read.
+
+- `field-0` (`query`): text, required.
 
 ### `memory recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]`
 
@@ -7575,6 +7588,14 @@ Effect: write.
 - `field-0` (`name`): text, required.
 - `field-1` (`id`): text, required.
 
+### `pool <name> dream restore <id> <n>`
+
+Effect: write.
+
+- `field-0` (`name`): text, required.
+- `field-1` (`id`): text, required.
+- `field-2` (`n`): number, required.
+
 ### `pool <name> dream why`
 
 Effect: read.
@@ -8315,9 +8336,10 @@ Effect: read.
 
 ## recall
 
-Scored, provenance-aware retrieval. Usage: recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]
+Scored, provenance-aware retrieval. Usage: recall <query> [recent|important|trusted|explain|evidence|all|episodes] [type <type>] [budget <bytes>]
   all — unified tiers: skills, [trusted], [evidence] (durable records + sources), [proposal] (assistance answers), [unverified]
   evidence — durable tiers only
+  episodes — your own journal (what you said, were told and saw), newest first; evidence for you alone, never served to anyone
 
 Category: Memory. Minimum rank: 0.
 Aliases: none.
@@ -8331,6 +8353,12 @@ Effect: read.
 - `field-2` (`type`): text, optional group `option-1`.
 - Group `option-0`: `recent | important`.
 - Group `option-1`: `type type`.
+
+### `recall <query> episodes`
+
+Effect: read.
+
+- `field-0` (`query`): text, required.
 
 ### `recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]`
 
