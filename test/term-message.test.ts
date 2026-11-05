@@ -49,7 +49,9 @@ describe("message bodies", () => {
     expect(plainText(lines[0]!)).toMatch(/^● Critic #general {2}\d\d:\d\d$/);
     const body = lines.slice(1).map(plainText);
     expect(body.every((l) => l.startsWith("▎ "))).toBe(true);
-    expect(body).toContain("▎ 1. The cursor parameter is named cursor and is parsed by the service.");
+    expect(body).toContain(
+      "▎ 1. The cursor parameter is named cursor and is parsed by the service.",
+    );
     expect(body.some((l) => l.startsWith("▎ Not claimed: any conclusion"))).toBe(true);
     for (const l of lines) expect(visibleWidth(l)).toBeLessThanOrEqual(MESSAGE_MEASURE + 2);
   });
@@ -114,9 +116,13 @@ describe("message bodies", () => {
   test("with colour off a message is its text, markers kept, no escapes", () => {
     const lines = messageLines("**Done:** run `look` (now)", plain, { chips: true }, { width: 80 });
     expect(lines).toEqual(["**Done:** run `look` (now)"]);
-    const rendered = renderPerception(channelMsg("Critic", long), { ...opts, theme: plain }, {
-      own: false,
-    });
+    const rendered = renderPerception(
+      channelMsg("Critic", long),
+      { ...opts, theme: plain },
+      {
+        own: false,
+      },
+    );
     expect(rendered.join("")).not.toContain(ESC);
   });
 });
