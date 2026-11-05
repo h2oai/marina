@@ -179,7 +179,7 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
             `Valid — ${score.steps.length} step(s) in ${topoLayers(score).length} layer(s).`,
           );
         } catch (e) {
-          ctx.send(input.entity, e instanceof ScoreError ? e.message : String(e));
+          refuseCommand(ctx, input.entity, e instanceof ScoreError ? e.message : String(e));
         }
         return;
       }
@@ -220,7 +220,7 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
             `Score "${name}" created — ${score.steps.length} step(s), ${topoLayers(score).length} layer(s). Inspect with 'conduct show ${name}'.`,
           );
         } catch (e) {
-          ctx.send(input.entity, e instanceof ScoreError ? e.message : String(e));
+          refuseCommand(ctx, input.entity, e instanceof ScoreError ? e.message : String(e));
         }
         return;
       }

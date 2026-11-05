@@ -33,6 +33,7 @@ import {
   listAnswerable,
   operatorRequiredRefusal,
 } from "../challenges";
+import { refuseCommand } from "../command-response";
 import { sanitizeEntityName } from "../entity-name";
 import {
   gateNextStep,
@@ -82,6 +83,7 @@ export function witnessCommand(deps: {
       if (!actor) return;
       const db = deps.db;
       const reply = (text: string) => ctx.send(input.entity, text);
+      const refuse = (text: string) => refuseCommand(ctx, input.entity, text);
       const sub = input.tokens[0]?.toLowerCase();
       const unknownGate = (gateId: string) =>
         `Unknown gate "${gateId}". Gates: ${Object.keys(SAFETY_GATES).join(", ")}`;
@@ -89,7 +91,7 @@ export function witnessCommand(deps: {
       if (sub === "request") {
         const gateId = input.tokens[1] ?? "";
         const gate = SAFETY_GATES[gateId];
-        if (!gate) return reply(unknownGate(gateId));
+        if (!gate) return refuse(unknownGate(gateId));
         if (isOperatorGrantGate(gateId)) {
           return reply(
             `${gateId} is operator-grant: an operator grants it (\`gate grant\`), or approves a single held run. ` +
@@ -108,7 +110,7 @@ export function witnessCommand(deps: {
         const targetName = input.tokens[1] ?? "";
         const gateId = input.tokens[2] ?? "";
         if (!targetName || !SAFETY_GATES[gateId]) {
-          return reply("Usage: witness grant <entity> <gate>");
+          return refuse("Usage: witness grant <entity> <gate>");
         }
         const held = listAnswerable(actor).filter(
           (c) =>
@@ -169,18 +171,18 @@ export function witnessCommand(deps: {
       if (sub === "attest" || sub === "reject") {
         const id = Number(input.tokens[1]);
         if (!Number.isInteger(id)) {
-          return reply(`Usage: witness ${sub} <id>${sub === "reject" ? " [reason]" : ""}`);
+          return refuse(`Usage: witness ${sub} <id>${sub === "reject" ? " [reason]" : ""}`);
         }
         const row = db.getWitnessRow(id);
         if (row?.status !== "open" || row.kind !== "pending") {
-          return reply(`No open pending demonstration #${id}.`);
+          return refuse(`No open pending demonstration #${id}.`);
         }
         const target = rowEntity(row);
         if (row.entity_id === db.durableEntityKey(String(actor.id)) || target?.id === actor.id) {
-          return reply("You cannot review your own demonstration.");
+          return refuse("You cannot review your own demonstration.");
         }
         if (!isOperatorPrincipal(actor)) {
-          return reply(
+          return refuse(
             operatorRequiredRefusal(
               actor,
               "Reviewing a demonstration",
@@ -189,7 +191,7 @@ export function witnessCommand(deps: {
           );
         }
         if (!target) {
-          return reply(
+          return refuse(
             `#${id} belongs to an account that is not in the world right now; review it later.`,
           );
         }
@@ -203,7 +205,7 @@ export function witnessCommand(deps: {
           return reply(`Demonstration #${id} rejected.`);
         }
         if (!approvalDemonstrates(actor, target, row.gate)) {
-          return reply(
+          return refuse(
             `${target.name} is in your own lineage (or ${row.gate} is operator-grant): your review cannot build its gate.`,
           );
         }

@@ -646,6 +646,7 @@ export function skillCommand(deps: {
           })
             .then((result) => say(renderSkillTrial(result)))
             .catch((err) =>
+              // allow-send-error: the trial runs on after the command completed (a later world event)
               say(`Skill trial #${id} failed: ${err instanceof Error ? err.message : String(err)}`),
             )
             .finally(() => endTrial());
@@ -689,7 +690,7 @@ export function skillCommand(deps: {
             // LOCAL profile: any readable path (the operator's own files).
             parsed = loadSkillFile(isLocalUngated() ? path : resolveConfinedSkillPath(path));
           } catch (err) {
-            ctx.send(input.entity, err instanceof Error ? err.message : String(err));
+            refuseCommand(ctx, input.entity, err instanceof Error ? err.message : String(err));
             return;
           }
           const content = formatSkillContent(parsed);

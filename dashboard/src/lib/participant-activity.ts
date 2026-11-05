@@ -148,6 +148,18 @@ export function participantActivity(
     ) {
       previous!.text = (previous!.text ?? "") + payload.text;
       previous!.events.push(event);
+    } else if (
+      // A runtime repeats its state (idle, idle, idle…) with the same folder: one
+      // entry with a count, every source event kept, so the output stays visible.
+      event.kind === "runtime.state" &&
+      last?.kind === "runtime.state" &&
+      event.sessionId === last.sessionId &&
+      payload.status === before.status &&
+      payload.cwd === before.cwd &&
+      payload.error === before.error
+    ) {
+      previous!.events.push(event);
+      previous!.title = `Runtime · ${String(payload.status)} ×${previous!.events.length}`;
     } else blocks.push({ ...describeEvent(event), events: [event] });
   }
   return blocks;

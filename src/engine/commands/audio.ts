@@ -20,7 +20,7 @@ import type { AssetRow } from "../../persistence/db-assets";
 import { normalizeAssetMime } from "../../storage/asset-mime";
 import type { CommandDef, Entity, EntityId } from "../../types";
 import { canvasReaderFor, mayReadAsset } from "../canvas-access";
-import { withoutRefusal } from "../command-response";
+import { refuseCommand, withoutRefusal } from "../command-response";
 import type { Engine } from "../engine";
 import { getErrorMessage } from "../errors";
 import { ingestAsset } from "../media/asset-library";
@@ -296,7 +296,7 @@ export function audioCommand(engine: Engine): CommandDef {
         return;
       }
       if (!entity) {
-        ctx.send(input.entity, "Couldn't find you in this space — reconnect and retry.");
+        refuseCommand(ctx, input.entity, "Couldn't find you in this space — reconnect and retry.");
         return;
       }
       const rest = input.args.replace(/^\s*\S+\s*/, "");

@@ -16,6 +16,7 @@ import {
 } from "../../world/adoption";
 import { type ChildFetch, runInChild } from "../../world/child-bridge";
 import type { WorldCollectiveManager } from "../../world/world-collective-manager";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
 import { evidenceSplit, judgedOn } from "./evolve";
@@ -77,6 +78,7 @@ export function worldCommand(deps: {
       const actor = deps.getEntity(input.entity);
       if (!actor) return;
       const reply = (text: string) => ctx.send(input.entity, text);
+      const refuse = (text: string) => refuseCommand(ctx, input.entity, text);
       const sub = canonicalSub(input.tokens[0]?.toLowerCase() ?? "list", SUBS);
       const find = (ref: string | undefined): WorldVariantRow | undefined =>
         ref ? deps.db.listWorldVariants().find((v) => v.name === ref || v.id === ref) : undefined;
@@ -97,7 +99,7 @@ export function worldCommand(deps: {
       }
 
       if (sub === "adopt") {
-        return handleAdopt(deps, actor, input.tokens.slice(1), reply);
+        return handleAdopt(deps, actor, input.tokens.slice(1), reply, refuse);
       }
 
       if (sub === "create") {
@@ -106,7 +108,7 @@ export function worldCommand(deps: {
           .split("|")
           .map((s) => s.trim());
         const [name, template = "empty"] = head.split(/\s+/);
-        if (!name) return reply(USAGE);
+        if (!name) return refuse(USAGE);
         try {
           const v = deps.manager().create({
             name,
@@ -118,12 +120,12 @@ export function worldCommand(deps: {
             `Created child world ${bold(v.name)} (${v.world_template}, port ${v.ws_port}). Start it: world start ${v.name}`,
           );
         } catch (err) {
-          return reply(`Not created: ${getErrorMessage(err)}`);
+          return refuse(`Not created: ${getErrorMessage(err)}`);
         }
       }
 
       const v = find(input.tokens[1]);
-      if (!v) return reply(input.tokens[1] ? `No child world "${input.tokens[1]}".` : USAGE);
+      if (!v) return refuse(input.tokens[1] ? `No child world "${input.tokens[1]}".` : USAGE);
 
       if (sub === "start" || sub === "stop") {
         try {
@@ -133,19 +135,21 @@ export function worldCommand(deps: {
             `Child world ${bold(v.name)}: ${row?.status ?? "unknown"}${row?.last_error ? ` — ${row.last_error}` : ""}`,
           );
         } catch (err) {
-          return reply(`Could not ${sub} ${v.name}: ${getErrorMessage(err)}`);
+          return refuse(`Could not ${sub} ${v.name}: ${getErrorMessage(err)}`);
         }
       }
 
       if (v.status !== "running") {
-        return reply(`Child world ${v.name} is ${v.status}; start it first: world start ${v.name}`);
+        return refuse(
+          `Child world ${v.name} is ${v.status}; start it first: world start ${v.name}`,
+        );
       }
 
       if (sub === "run") {
         const command = input.tokens.slice(2).join(" ").trim();
-        if (!command) return reply(USAGE);
+        if (!command) return refuse(USAGE);
         const r = await runInChild(v.ws_port, actor.name, command, { fetcher: deps.fetcher });
-        if (!r.ok) return reply(`${v.name}: ${r.error}`);
+        if (!r.ok) return refuse(`${v.name}: ${r.error}`);
         const text = r.text.length > MAX_REPLY ? `${r.text.slice(0, MAX_REPLY)}\n…` : r.text;
         return reply(`${dim(`[${v.name}] ${command}`)}\n${text}`);
       }
@@ -153,7 +157,7 @@ export function worldCommand(deps: {
       if (sub === "seed-role") {
         const roleName = input.tokens[2];
         const bundle = roleName ? exportRoleBundle(deps.db, roleName) : undefined;
-        if (!bundle) return reply(roleName ? `Role "${roleName}" not found here.` : USAGE);
+        if (!bundle) return refuse(roleName ? `Role "${roleName}" not found here.` : USAGE);
         const r = await runInChild(
           v.ws_port,
           actor.name,
@@ -162,7 +166,7 @@ export function worldCommand(deps: {
             fetcher: deps.fetcher,
           },
         );
-        if (!r.ok) return reply(`${v.name}: ${r.error}`);
+        if (!r.ok) return refuse(`${v.name}: ${r.error}`);
         const missing = missingTraits(bundle);
         return reply(
           `${dim(`[${v.name}]`)} ${r.text.trim()}${missing.length ? `\n${dim(`Not found here, so not sent: trait(s) ${missing.join(", ")}`)}` : ""}`,
@@ -183,6 +187,7 @@ async function handleAdopt(
   actor: Entity,
   tokens: string[],
   reply: (text: string) => void,
+  refuse: (text: string) => void,
 ): Promise<void> {
   const action = tokens[0]?.toLowerCase();
   const agents = deps.listAgents?.() ?? [];
@@ -203,14 +208,14 @@ async function handleAdopt(
   }
   if (action === "approve" || action === "reject" || action === "rollback") {
     const id = Number(tokens[1]);
-    if (!Number.isInteger(id)) return reply(`Usage: world adopt ${action} <id>`);
+    if (!Number.isInteger(id)) return refuse(`Usage: world adopt ${action} <id>`);
     const r =
       action === "approve"
         ? approveAdoption(deps.db, id, actor, agents)
         : action === "reject"
           ? rejectAdoption(deps.db, id, actor, tokens.slice(2).join(" ") || "no reason given")
           : rollbackAdoption(deps.db, id, actor, agents);
-    if ("reason" in r) return reply(`Not done: ${r.reason}`);
+    if ("reason" in r) return refuse(`Not done: ${r.reason}`);
     const target = r.into ?? r.role;
     return reply(
       r.status === "applied"
@@ -222,14 +227,15 @@ async function handleAdopt(
   const [childRef, role, ...rest] = tokens;
   const into = rest.find((t) => t.startsWith("into:"))?.slice("into:".length);
   const v = deps.db.listWorldVariants().find((x) => x.name === childRef || x.id === childRef);
-  if (!v || !role) return reply(USAGE);
-  if (v.status !== "running") return reply(`Child world ${v.name} is ${v.status}; start it first.`);
+  if (!v || !role) return refuse(USAGE);
+  if (v.status !== "running")
+    return refuse(`Child world ${v.name} is ${v.status}; start it first.`);
   const res = await runInChild(v.ws_port, actor.name, `evolve adoption ${role}`, {
     fetcher: deps.fetcher,
   });
-  if (!res.ok) return reply(`${v.name}: ${res.error}`);
+  if (!res.ok) return refuse(`${v.name}: ${res.error}`);
   const offer = parseAdoptionReply(res.text);
-  if ("reason" in offer) return reply(`${v.name}: ${offer.reason}`);
+  if ("reason" in offer) return refuse(`${v.name}: ${offer.reason}`);
   const rec = requestAdoption(deps.db, {
     child: v.name,
     role,
@@ -237,7 +243,7 @@ async function handleAdopt(
     requestedBy: actor.name,
     offer,
   });
-  if ("reason" in rec) return reply(`Not requested: ${rec.reason}`);
+  if ("reason" in rec) return refuse(`Not requested: ${rec.reason}`);
   const e = offer.evidence;
   return reply(
     [

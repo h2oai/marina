@@ -295,6 +295,7 @@ export async function handleWorktree(
       hostExecForbidden,
     });
     if (!created) {
+      // allow-send-error: a fallback, not a failure — the session stays on the shared root
       ctx.send(
         eid,
         `Could not create a worktree (no commits yet, or git error). Staying on the shared root: ${session.workspace_root}`,

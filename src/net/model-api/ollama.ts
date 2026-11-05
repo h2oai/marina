@@ -22,7 +22,12 @@ import {
   passthruUpstreamHints,
   preparePassthru,
 } from "./passthru";
-import { type RouteOptions, routeToChannel, routeToChannelStreaming } from "./routing";
+import {
+  passthruHint,
+  type RouteOptions,
+  routeToChannel,
+  routeToChannelStreaming,
+} from "./routing";
 import {
   COMPAT_ALIASES,
   errorJson,
@@ -501,7 +506,7 @@ export async function handleOllamaChat(
     if (body.options?.num_predict !== undefined)
       return unsupportedParam(
         "options.num_predict",
-        "In-world agent routing cannot enforce output-token limits; use the passthru endpoint mode.",
+        `In-world agent routing cannot enforce output-token limits. ${passthruHint(model)}`,
       );
     if (hasOllamaImages(body)) return refuseRoutedImages("messages[].images");
 
@@ -583,7 +588,7 @@ export async function handleOllamaGenerate(
     if (body.options?.num_predict !== undefined)
       return unsupportedParam(
         "options.num_predict",
-        "In-world agent routing cannot enforce output-token limits; use the passthru endpoint mode.",
+        `In-world agent routing cannot enforce output-token limits. ${passthruHint(model)}`,
       );
     if (hasOllamaImages(body)) return refuseRoutedImages("images");
 

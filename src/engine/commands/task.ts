@@ -318,7 +318,16 @@ export function taskCommand(
                   ? ` ${fmtStatus(`bounty${t.standing > 0 ? ` !${t.standing}` : ""}`, "warn")}`
                   : "";
               const prio = t.priority > 0 ? ` ${fmtStatus(`p${t.priority}`, "info")}` : "";
-              return `  ${fmtId(t.id)} ${t.title}${bounty}${prio} ${dim(`— ${t.creatorName}`)}${group}`;
+              // A bounty stays open while people work it: show who holds or has
+              // submitted a claim, so work in progress never reads as untouched.
+              const active = tasks
+                .getClaims(t.id)
+                .filter((c) => c.status === "claimed" || c.status === "submitted");
+              const work =
+                active.length > 0
+                  ? ` · ${active.map((c) => `${c.entityName} ${c.status}`).join(", ")}`
+                  : "";
+              return `  ${fmtId(t.id)} ${t.title}${bounty}${prio} ${dim(`— by ${t.creatorName}${work}`)}${group}`;
             }),
           ];
           if (hidden > 0) {

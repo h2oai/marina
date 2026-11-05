@@ -83,7 +83,7 @@ export function gatewayCommand(deps: {
           // refused; loopback peers only under the `local` trust profile.
           const urlError = await validateGatewayUrl(url);
           if (urlError) {
-            ctx.send(input.entity, `Refused gateway URL: ${urlError}`);
+            refuseCommand(ctx, input.entity, `Refused gateway URL: ${urlError}`);
             return;
           }
 

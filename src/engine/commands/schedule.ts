@@ -14,6 +14,7 @@ import {
   type Trigger,
 } from "../../schedules/trigger";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { canonicalSub, parseModifiers, splitOnTerminator, unknownSubcommand } from "../parse-input";
 import { getRank } from "../permissions";
 import { requiresPersistence } from "./command-messages";
@@ -94,15 +95,17 @@ export function scheduleCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       const say = (text: string) => ctx.send(input.entity, text);
+      // A refusal fails the command (an SDK or schedule caller sees it); `say` is a reply.
+      const refuse = (text: string) => refuseCommand(ctx, input.entity, text);
       if (!deps.db) {
-        say(requiresPersistence("schedules"));
+        refuse(requiresPersistence("schedules"));
         return;
       }
       const db = deps.db;
       // A schedule belongs to an account (the durable key), never to a transient entity.
       const user = db.getUserByName(entity.name);
       if (!user) {
-        say("schedule: schedules belong to an account; this entity has none.");
+        refuse("schedule: schedules belong to an account; this entity has none.");
         return;
       }
       const [head, command] = splitOnTerminator(input.args);
@@ -121,28 +124,28 @@ export function scheduleCommand(deps: {
       const name = tokens[1];
       const own = (): ScheduleRow | undefined => {
         if (!name) {
-          say(`schedule ${sub}: name the schedule.`);
+          refuse(`schedule ${sub}: name the schedule.`);
           return undefined;
         }
         const row = db.getScheduleByName(user.id, name);
-        if (!row) say(`schedule: you have no schedule named "${name}".`);
+        if (!row) refuse(`schedule: you have no schedule named "${name}".`);
         return row;
       };
 
       switch (sub) {
         case "add": {
           if (!name || !NAME_RE.test(name)) {
-            say("schedule add: give a name (letters, digits, - or _; up to 40).");
+            refuse("schedule add: give a name (letters, digits, - or _; up to 40).");
             return;
           }
           if (!command) {
-            say(
+            refuse(
               "schedule add: put the command after -- (e.g. schedule add digest daily:08:00 -- brief full).",
             );
             return;
           }
           if (command.length > COMMAND_MAX_CHARS) {
-            say(`schedule add: the command is longer than ${COMMAND_MAX_CHARS} characters.`);
+            refuse(`schedule add: the command is longer than ${COMMAND_MAX_CHARS} characters.`);
             return;
           }
           const { values, rest, errors } = parseModifiers(tokens.slice(2), {
@@ -155,7 +158,9 @@ export function scheduleCommand(deps: {
             "max-runs": { type: "int", aliases: ["max"] },
           });
           if (errors.length || rest.length) {
-            say(`schedule add: ${[...errors, ...rest.map((r) => `unexpected "${r}"`)].join("; ")}`);
+            refuse(
+              `schedule add: ${[...errors, ...rest.map((r) => `unexpected "${r}"`)].join("; ")}`,
+            );
             return;
           }
           const trigger = parseTrigger({
@@ -166,14 +171,14 @@ export function scheduleCommand(deps: {
             lead: values.lead as string | undefined,
           });
           if ("error" in trigger) {
-            say(`schedule add: ${trigger.error}`);
+            refuse(`schedule add: ${trigger.error}`);
             return;
           }
           if (trigger.kind === "before" && trigger.ref) {
             const at = await resolveDeadline(trigger.ref);
             if (at === undefined) {
               const kinds = deadlineKinds();
-              say(
+              refuse(
                 `schedule add: could not find the deadline of ${trigger.ref}${kinds.length ? ` (known references: ${kinds.map((k) => `${k}:<id>`).join(", ")})` : " (no deadline references are available here)"}.`,
               );
               return;
@@ -182,19 +187,19 @@ export function scheduleCommand(deps: {
           }
           const catchUp = (values["catch-up"] as string | undefined)?.toLowerCase() ?? "once";
           if (catchUp !== "once" && catchUp !== "none") {
-            say("schedule add: catch-up is once or none.");
+            refuse("schedule add: catch-up is once or none.");
             return;
           }
           const maxRuns = values["max-runs"] as number | undefined;
           if (maxRuns !== undefined && maxRuns < 1) {
-            say("schedule add: max-runs is at least 1.");
+            refuse("schedule add: max-runs is at least 1.");
             return;
           }
           // A capped session (a passwordless remote login holds less than the
           // account's stored rank) cannot arrange runs at the account's full rank.
           const rank = getRank(entity);
           if (rank < user.rank) {
-            say(
+            refuse(
               `schedule add: this session holds rank ${rank}, below your account's rank ${user.rank}. Sign in with your account to schedule work.`,
             );
             return;
@@ -202,26 +207,26 @@ export function scheduleCommand(deps: {
           const interval = intervalMs(trigger);
           const minInterval = scheduleMinIntervalMs();
           if (interval !== undefined && interval < minInterval) {
-            say(
+            refuse(
               `schedule add: the shortest repeat is ${formatMs(minInterval)} (MARINA_SCHEDULE_MIN_INTERVAL).`,
             );
             return;
           }
           const cap = schedulesPerEntity();
           if (cap > 0 && db.countSchedules(user.id) >= cap) {
-            say(
+            refuse(
               `schedule add: you have ${cap} schedules, the limit (MARINA_SCHEDULES_PER_ENTITY). Delete one first.`,
             );
             return;
           }
           if (db.getScheduleByName(user.id, name)) {
-            say(`schedule add: you already have a schedule named "${name}".`);
+            refuse(`schedule add: you already have a schedule named "${name}".`);
             return;
           }
           const now = Date.now();
           const next = firstRun(trigger, now);
           if (next === null) {
-            say("schedule add: that time has already passed.");
+            refuse("schedule add: that time has already passed.");
             return;
           }
           db.createSchedule({
@@ -292,7 +297,7 @@ export function scheduleCommand(deps: {
           const now = Date.now();
           const next = firstRun(JSON.parse(row.trigger_json) as Trigger, now);
           if (next === null) {
-            say(`schedule ${row.name}: its time has passed; delete it or add a new one.`);
+            refuse(`schedule ${row.name}: its time has passed; delete it or add a new one.`);
             return;
           }
           db.setScheduleEnabled(row.id, true, next);

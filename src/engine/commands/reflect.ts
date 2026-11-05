@@ -653,7 +653,8 @@ export function reflectCommand(deps: {
             runTemplate(topic, false);
             return;
           }
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             `Could not file the reflection request: ${formatMemoryFailure(error)}`,
           );
@@ -697,7 +698,11 @@ export function reflectCommand(deps: {
           }
           ctx.send(input.entity, lines.join("\n"));
         } catch (error) {
-          ctx.send(input.entity, `Could not list reflector jobs: ${formatMemoryFailure(error)}`);
+          refuseCommand(
+            ctx,
+            input.entity,
+            `Could not list reflector jobs: ${formatMemoryFailure(error)}`,
+          );
         }
       };
 
@@ -723,7 +728,11 @@ export function reflectCommand(deps: {
             await residentMemoryOperation(db, entity.name, { operation: "assist_get", id: jobId })
           ).result as MemoryAssistanceJob;
         } catch (error) {
-          ctx.send(input.entity, `Could not read job ${jobId}: ${formatMemoryFailure(error)}`);
+          refuseCommand(
+            ctx,
+            input.entity,
+            `Could not read job ${jobId}: ${formatMemoryFailure(error)}`,
+          );
           return;
         }
         if (job.state !== "answered" || !job.result || job.result.status !== "answered") {
@@ -782,7 +791,8 @@ export function reflectCommand(deps: {
           const result = adopted.result as MemoryAdoptResult;
           receipt = result;
         } catch (error) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             `Could not write the adopted reflection to durable memory: ${formatMemoryFailure(error)}`,
           );

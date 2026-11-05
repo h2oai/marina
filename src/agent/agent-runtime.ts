@@ -134,6 +134,10 @@ export function getInternalModelToken(): string {
  * command can clamp per-parent budgets to it, so agent-initiated spawning
  * stays inside the global limit. */
 export const MAX_AGENTS = Number(process.env.MAX_AGENTS) || 30;
+/** Minimum gap between two interactive spawns. */
+const SPAWN_SPACING_MS = 1_000;
+/** The longest an interactive spawn waits for its slot before it is refused. */
+const SPAWN_QUEUE_MAX_MS = 30_000;
 const MAX_AGENT_UPTIME_MS = Number(process.env.MAX_AGENT_UPTIME_MS) || 24 * 60 * 60 * 1000;
 
 /** Rolling-hour USD spend ceilings; undefined = unlimited (unset / 0 / invalid). */
@@ -459,6 +463,10 @@ export class AgentRuntime {
    * window inside spawn(). */
   private spawnsInFlight = new Set<string>();
   private lastSpawnAt = 0;
+  /** The earliest start an interactive spawn may take next (see {@link spawnSlot}). */
+  private nextSpawnSlotAt = 0;
+  /** The pause before a paced spawn; replaced in tests so they never sleep. */
+  private waitMs = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   private db?: MarinaDB;
   private wsPort: number;
   private uptimeCheckInterval: ReturnType<typeof setInterval> | null = null;
@@ -659,6 +667,24 @@ export class AgentRuntime {
   }
 
   /**
+   * Reserve the next interactive spawn slot and return how long to wait for it:
+   * at least SPAWN_SPACING_MS after the last successful spawn and after every
+   * slot already handed out. Throws when the queue is longer than
+   * SPAWN_QUEUE_MAX_MS.
+   */
+  private spawnSlot(): number {
+    const now = Date.now();
+    const at = Math.max(now, this.lastSpawnAt + SPAWN_SPACING_MS, this.nextSpawnSlotAt);
+    if (at - now > SPAWN_QUEUE_MAX_MS) {
+      throw new Error(
+        `Spawn queue full — ${Math.ceil((at - now) / 1000)} s of spawns are already waiting; try again shortly.`,
+      );
+    }
+    this.nextSpawnSlotAt = at + SPAWN_SPACING_MS;
+    return at - now;
+  }
+
+  /**
    * Spawn a new agent. Connects via WebSocket and starts autonomous loop.
    */
   async spawn(
@@ -689,14 +715,11 @@ export class AgentRuntime {
       );
     }
 
-    // Spawn cooldown — prevent thundering herd. Only the *check* runs here;
-    // lastSpawnAt is set on the success path (after start) so a spawn that
-    // fails validation/start doesn't burn the window and reject the operator's
-    // immediate corrected retry.
-    const now = Date.now();
-    if (!opts.systemRespawn && now - this.lastSpawnAt < 1000) {
-      throw new Error("Spawn cooldown — wait 1 second between spawns.");
-    }
+    // Spawn pacing — prevent a thundering herd. An interactive spawn that
+    // arrives inside the window takes the next free slot and waits for it,
+    // instead of failing (three `agent spawn` lines in a row all start, one a
+    // second). A queue longer than SPAWN_QUEUE_MAX_MS is refused.
+    const slotDelay = opts.systemRespawn ? 0 : this.spawnSlot();
 
     // Reserve the name synchronously, before any awaits, so a second
     // concurrent spawn with the same name fails fast at the guard above
@@ -707,6 +730,7 @@ export class AgentRuntime {
     const savedPolicy = this.db?.getAgentConfig(config.name);
     let issuedCredentialId: string | undefined;
     try {
+      if (slotDelay > 0) await this.waitMs(slotDelay);
       // Resolve role prompt from DB. PRISM-style task-conditional
       // gating: infer the agent's primary task category from its goal
       // string and pass it to getRolePrompt so traits that declared
@@ -1273,10 +1297,6 @@ export class AgentRuntime {
     const saved = this.db?.getAgentConfig(key);
     const config = this.restartConfig(key, status, saved, this.launchConfigs.get(key), opts?.model);
     await this.stop(key, { keepConfig: true });
-    const cooldownRemaining = 1_000 - (Date.now() - this.lastSpawnAt);
-    if (cooldownRemaining > 0) {
-      await new Promise((resolve) => setTimeout(resolve, cooldownRemaining));
-    }
     const restarted = await this.spawn(config);
     if (status.focus) restarted.setFocus(status.focus);
     return restarted;

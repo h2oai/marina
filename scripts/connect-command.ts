@@ -22,6 +22,16 @@ export interface RunOptions {
   onResult?: (perceptions: Perception[]) => void;
 }
 
+/**
+ * How long the terminal client waits for a command's result. The SDK default
+ * (2 min) cut off long model-backed commands — a typed `forecast` runs 2–7 min —
+ * so one-shot mode printed nothing and exited 1. A longer `--wait` raises it.
+ */
+export const COMMAND_COMPLETION_MS = 15 * 60_000;
+export function commandCompletionMs(maxLingerMs: number): number {
+  return Math.max(COMMAND_COMPLETION_MS, maxLingerMs);
+}
+
 export async function runCliCommand(
   agent: CommandSender,
   input: string,

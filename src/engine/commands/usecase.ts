@@ -1268,6 +1268,7 @@ async function spawnUseCaseAgents(
         timestamp: Date.now(),
       });
     } catch (err) {
+      // allow-send-error: one agent of several failed; the launch continues and reports the rest
       ctx.send(
         requesterId,
         `Warning: failed to spawn agent "${spec.name}": ${err instanceof Error ? err.message : err}`,
@@ -1531,7 +1532,8 @@ Examples:
         ];
         ctx.send(input.entity, lines.join("\n"));
       } catch (err) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           `Use case launch failed: ${err instanceof Error ? err.message : err}`,
         );

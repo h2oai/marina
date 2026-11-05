@@ -235,6 +235,7 @@ export function patternCommand(deps: PatternCommandDeps = {}): CommandDef {
               concurrency: members.length,
             }),
             signal: deadline,
+            today: new Date(),
           });
           ctx.send(eid, renderPatternRun(result));
           const db = deps.db?.();

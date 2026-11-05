@@ -455,7 +455,8 @@ async function ensureSessionAgent(
     });
     return handle.name;
   } catch (err) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       fmtError(
         `Could not launch a coding agent: ${err instanceof Error ? err.message : String(err)}`,
