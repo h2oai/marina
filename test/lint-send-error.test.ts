@@ -44,7 +44,10 @@ function* sendCalls(source: string): Generator<{ line: number; call: string }> {
   const aliases = [...source.matchAll(/const (\w+) = \([^)]*\)\s*=>\s*ctx\.send\(/g)].map(
     (m) => m[1]!,
   );
-  const callee = new RegExp(`(?<![\\w.])(?:ctx\\.send|${["", ...aliases].join("|").slice(1) || "(?!)"})\\(`, "g");
+  const callee = new RegExp(
+    `(?<![\\w.])(?:ctx\\.send|${["", ...aliases].join("|").slice(1) || "(?!)"})\\(`,
+    "g",
+  );
   for (const m of source.matchAll(callee)) {
     const before = source.slice(Math.max(0, m.index - 12), m.index);
     if (/const \w+ = $/.test(before) || /=>\s*$/.test(before)) continue; // the helper's own body

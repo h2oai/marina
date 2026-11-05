@@ -2430,9 +2430,11 @@ it("resident routing refuses output-token controls it cannot enforce", async () 
 });
 
 it("an agent-route refusal names the direct route for the model the caller sent", async () => {
-  const message = async (body: Record<string, unknown>) =>
-    ((await rejectUnsupportedForAgents(body)?.json()) as { error: { message: string } }).error
-      .message;
+  const message = async (body: Record<string, unknown>) => {
+    const response = rejectUnsupportedForAgents(body);
+    if (!response) throw new Error("expected a refusal");
+    return ((await response.json()) as { error: { message: string } }).error.message;
+  };
   const bare = await message({ model: "claude-sonnet-5-5", max_tokens: 200 });
   expect(bare).toContain('send model "anthropic/claude-sonnet-5-5"');
   expect(bare).toContain("Admin → Endpoint");
