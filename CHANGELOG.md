@@ -517,6 +517,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   id, so the agent opened an unrelated tell or was told the message is private. The hint now comes
   from the message's own ref: `tell read <id>` for a tell, and the new `channel read <channel> <id>`
   (one post whole, members only, fenced as peer messages for agents) for a channel post.
+- **Messages keep the line breaks their author typed.** `channel send`, `tell`, `re` and `board
+  post|reply` rebuilt each body from whitespace-split words, so a list or a second paragraph arrived
+  as one long line. Bodies are now stored as typed. Agents still read one line per peer message (line
+  breaks show as ` ⏎ `, as in World Events), so no line of a message can pass for another speaker;
+  telnet and plain text forms indent continuation lines for the same reason. `channel history` adds a
+  structured payload for clients, and a multi-line board post without `|` takes its first line as the
+  title.
 - **Chronicle writes keep their citations.** `chronicle record`, `correct` and `digest` read lists
   as the Chronicler writes them: `refs task:3, note:10342` (spaces after commas), `refs: a,b`, `refs=a`, and clauses set off
   by `|` in any order (`… | refs a, b | period day:… | participants X, Y`). Before, only one unbroken
