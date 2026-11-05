@@ -309,9 +309,14 @@ export const PLAYBOOK: readonly PlaybookUseCase[] = [
     title: "Comparing two models on hard questions",
     needs: ["model", "network", "long"],
     steps: [
+      // A fresh install has no dataset yet: fetch it (a background download),
+      // then retry the run until the download has landed.
+      { command: "benchmark fetch hle-verified-gold" },
       {
         command: "benchmark run hle-verified-gold model:marina/cheap --limit 10",
         contains: ["Benchmark run started"],
+        untilSeconds: 600,
+        everySeconds: 20,
       },
       {
         command: "benchmark runs --limit 1",
