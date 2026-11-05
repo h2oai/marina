@@ -26,13 +26,13 @@
 | Slate | storage |
 | Grey | programs and services outside Marina |
 
-Solid boxes are parts of Marina; dashed outlines group the things that connect to it. Arrows point the way data or control moves, and a label on an arrow says what moves.
+Solid boxes are parts of Marina; dashed outlines group the things that connect to it. Arrows point the way data or control moves, and a label on an arrow says what moves. Select a diagram to open it full size.
 
 ---
 
 ## 1. Marina at a glance
 
-![System context: people, programs and agents connect to one Marina server process over WebSocket/HTTP, MCP and chat bridges; the engine admits, authorizes and runs every command, calls subsystems, persists to one SQLite database, and reaches model providers, sandboxes, web data and operator alerts outside.](../assets/architecture-system.svg)
+[![System context: people, programs and agents connect to one Marina server process over WebSocket/HTTP, MCP and chat bridges; the engine admits, authorizes and runs every command, calls subsystems, persists to one SQLite database, and reaches model providers, sandboxes, web data and operator alerts outside.](../assets/architecture-system.svg)](../assets/architecture-system.svg)
 
 Marina is **one Bun process and one SQLite file per world**. Three kinds of participant reach it:
 
@@ -48,7 +48,7 @@ Details: [worlds.md](worlds.md) · [security.md](security.md) · [persistence.md
 
 ## 2. Where the code lives
 
-![Code map: directories grouped by role — interfaces, network edge, engine, agents and coordination, knowledge and learning, persistence, and shared foundations.](../assets/architecture-code-map.svg)
+[![Code map: directories grouped by role — interfaces, network edge, engine, agents and coordination, knowledge and learning, persistence, and shared foundations.](../assets/architecture-code-map.svg)](../assets/architecture-code-map.svg)
 
 The repository grouped by what each directory is for, from the surfaces people open at the top to the code everything shares at the bottom. It is a map, not a layering rule: modules do import across bands (persistence uses engine types, memory uses persistence), so read it as "where do I look", not "what may import what".
 
@@ -62,7 +62,7 @@ Details: [`CLAUDE.md` → Key Files](../../CLAUDE.md#key-files) · [Contributor 
 
 ## 3. The life of a command
 
-![Command lifecycle: ingress, admission into the entity's FIFO queue, resolution, the as-of evidence fence, and authority. A held command becomes a challenge that returns at once and re-runs in the requester's slot when a person approves. An allowed command runs its handler, writes through the MarinaDB facade, emits one engine event, and sends perceptions to people and agents.](../assets/architecture-command-flow.svg)
+[![Command lifecycle: ingress, admission into the entity's FIFO queue, resolution, the as-of evidence fence, and authority. A held command becomes a challenge that returns at once and re-runs in the requester's slot when a person approves. An allowed command runs its handler, writes through the MarinaDB facade, emits one engine event, and sends perceptions to people and agents.](../assets/architecture-command-flow.svg)](../assets/architecture-command-flow.svg)
 
 Every action — a person typing, an agent's tool call, an MCP request, a schedule firing — takes this path. Follow the numbers:
 
@@ -81,7 +81,7 @@ Details: [civic-substrate.md](civic-substrate.md) (gates, challenges, the as-of 
 
 ## 4. How a resident agent thinks
 
-![Agent loop: perceive, attend, compose, think, act, record. Perceptions arrive over WebSocket; a pure attention function decides what wakes the agent; the prompt combines a cached system prompt with a budgeted continuation prompt and recalled memory; one model turn runs; tool calls pass a policy check, an optional decision gate and an argument check, then reach the server as world commands under the same gates as a person; every message is journaled.](../assets/architecture-agent-loop.svg)
+[![Agent loop: perceive, attend, compose, think, act, record. Perceptions arrive over WebSocket; a pure attention function decides what wakes the agent; the prompt combines a cached system prompt with a budgeted continuation prompt and recalled memory; one model turn runs; tool calls pass a policy check, an optional decision gate and an argument check, then reach the server as world commands under the same gates as a person; every message is journaled.](../assets/architecture-agent-loop.svg)](../assets/architecture-agent-loop.svg)
 
 A resident is a participant, not an assistant: it runs continuously and acts on its own goals. Each cycle:
 
@@ -98,7 +98,7 @@ Details: [agent-cognition.md](agent-cognition.md) · [Agent development](../guid
 
 ## 5. Memory: one history, one retrieval surface
 
-![Memory architecture: six write paths land in one canonical versioned record history with numeric handles in the same transaction, an FTS5 index and access scopes. One retrieval surface serves five fixed-order tiers within a byte budget. Each serve is logged; mechanical raters build a per-item posterior that, when ranking is on, re-ranks shared retrieval by at most 0.1. An hourly dream pass proposes typed consolidation ops, checks them, applies them in a transaction and rolls back in observe mode.](../assets/architecture-memory.svg)
+[![Memory architecture: six write paths land in one canonical versioned record history with numeric handles in the same transaction, an FTS5 index and access scopes. One retrieval surface serves five fixed-order tiers within a byte budget. Each serve is logged; mechanical raters build a per-item posterior that, when ranking is on, re-ranks shared retrieval by at most 0.1. An hourly dream pass proposes typed consolidation ops, checks them, applies them in a transaction and rolls back in observe mode.](../assets/architecture-memory.svg)](../assets/architecture-memory.svg)
 
 - **Writes.** Memory commands, MCP memory tools, the REST APIs, the agent's journal, judged lessons and text extracted from media all land in **one canonical record history**. A correction is a new version; `resolve` closes the losing record but keeps it readable. The numeric `note #N` handles that older integrations use are written in the same SQLite transaction, never as a second store.
 - **Reads.** `buildUnifiedContext` is the only retrieval surface. It returns five tiers in a fixed order — `[skills]`, `[trusted]`, `[evidence]`, `[proposal]`, `[unverified]` — within one byte budget, so the agent prompt, `recall`, `GET /mem/context`, MCP context and passthru injection all see the same thing for the same query. Under an as-of fence it serves only what was known at the cutoff. Retrieval is lexical (FTS5) by default; embeddings stay off until evidence earns them.
@@ -109,7 +109,7 @@ Details: [memory.md](memory.md) · [Memory](../guides/memory.md) · [Memory work
 
 ## 6. Trust: standing is earned, gates are proven
 
-![Civic substrate: work verified by another account earns standing in an append-only ledger with a 60-day half-life; standing gives a descriptive rank 0 to 4 and meets the floors of earnable gates. A gated command either runs or is held as a challenge; a person answers, and a once-approval from outside the requester's lineage is a demonstration that eventually makes the gate solo.](../assets/architecture-civic.svg)
+[![Civic substrate: work verified by another account earns standing in an append-only ledger with a 60-day half-life; standing gives a descriptive rank 0 to 4 and meets the floors of earnable gates. A gated command either runs or is held as a challenge; a person answers, and a once-approval from outside the requester's lineage is a demonstration that eventually makes the gate solo.](../assets/architecture-civic.svg)](../assets/architecture-civic.svg)
 
 Two separate questions, two mechanisms:
 
@@ -122,7 +122,7 @@ Details: [civic-substrate.md](civic-substrate.md) · [Civic substrate guide](../
 
 ## 7. The model gateway: `/v1`
 
-![Model gateway: callers pass the host allowlist, bearer auth, rate limit and daily spend cap. In passthru mode tier aliases resolve per request and identified callers get the instrument stack before the upstream call, which avoids rate-limited routes and falls back to the same model via OpenRouter, labelled. In agents mode residents answer. Every response records its spend once and emits trace events.](../assets/architecture-model-gateway.svg)
+[![Model gateway: callers pass the host allowlist, bearer auth, rate limit and daily spend cap. In passthru mode tier aliases resolve per request and identified callers get the instrument stack before the upstream call, which avoids rate-limited routes and falls back to the same model via OpenRouter, labelled. In agents mode residents answer. Every response records its spend once and emits trace events.](../assets/architecture-model-gateway.svg)](../assets/architecture-model-gateway.svg)
 
 `/v1` speaks the OpenAI, Anthropic and Ollama wire formats, so an existing app can point at Marina unchanged. Marina's own agents call it too when they run on a `marina/*` model; an agent with its own provider key calls the provider directly. Either way, every model dollar is recorded once in the same spend ledger.
 
@@ -136,7 +136,7 @@ Details: [passthru.md](passthru.md) · [traces.md](traces.md) · [Model API](../
 
 ## 8. How Marina learns
 
-![Learning loops: task verdicts, Code Mode checks and resolved forecasts each become one append-only outcomes row, and patterns from agents' own work go straight to the lesson learner; durable deliveries feed a judged lessons consumer, a usefulness consumer and forecast history; lessons are served back to the next attempt. Defaults change only on a held-out win past the fishing margin, and every surface reads defaults through one resolver.](../assets/architecture-learning.svg)
+[![Learning loops: task verdicts, Code Mode checks and resolved forecasts each become one append-only outcomes row, and patterns from agents' own work go straight to the lesson learner; durable deliveries feed a judged lessons consumer, a usefulness consumer and forecast history; lessons are served back to the next attempt. Defaults change only on a held-out win past the fishing margin, and every surface reads defaults through one resolver.](../assets/architecture-learning.svg)](../assets/architecture-learning.svg)
 
 **Every outcome teaches.** A task verdict, a Code Mode check or a resolved forecast becomes **one append-only outcomes row** — numbers and labels, never the question's text. A recurring pattern in an agent's own work (tool errors, gate holds, bounced submissions) skips the row and goes straight to the same judged lesson learner. Each outcomes row is delivered durably to its consumers:
 

@@ -61,6 +61,34 @@ describe("docs images", () => {
     expect(rewriteGuideLinks("[g](dashboard.md)", guides)).toBe("[g](../dashboard/)");
   });
 
+  it("a published page outside the guides resolves its links from where it lives", () => {
+    const guides = new Set(["dashboard.md"]);
+    const assets = new Set(["architecture-system.svg"]);
+    const pages = new Set(["docs/architecture/overview.md"]);
+    const from = "docs/architecture";
+    const md =
+      "![System](../assets/architecture-system.svg) [guide](../guides/dashboard.md#x) [deep dive](memory.md#y) [rules](../../CLAUDE.md#key-files)";
+    expect(
+      rewriteGuideLinks(md, { guides, assets, assetsBase: "/marina/assets/", pages, from }),
+    ).toBe(
+      "![System](/marina/assets/architecture-system.svg) [guide](../../guides/dashboard/#x) [deep dive](https://github.com/h2oai/marina/blob/main/docs/architecture/memory.md#y) [rules](https://github.com/h2oai/marina/blob/main/CLAUDE.md#key-files)",
+    );
+    // …and a guide that links to it reaches its site page.
+    expect(rewriteGuideLinks("[d](../architecture/overview.md#z)", { guides, pages })).toBe(
+      "[d](../../architecture/overview/#z)",
+    );
+  });
+
+  it("every image a published architecture page references is one the site build copies", () => {
+    const assets = new Set(readdirSync(join(ROOT, "docs", "assets")));
+    const file = join(ROOT, "docs", "architecture", "overview.md");
+    const stray = imageRefs(readFileSync(file, "utf8")).filter((ref) => {
+      const m = ref.match(/^\.\.\/assets\/([^/]+)$/);
+      return !m || !assets.has(m[1]!);
+    });
+    expect(stray).toEqual([]);
+  });
+
   it("every image a guide references is one the site build copies (docs/assets, image type)", () => {
     const assets = new Set(readdirSync(join(ROOT, "docs", "assets")));
     const stray: string[] = [];
