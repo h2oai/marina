@@ -166,6 +166,17 @@ describe("blocks", () => {
     expect(spansRaw(last.label!)).toBe("Not claimed:");
   });
 
+  it("a numbered item whose text starts with a label stays an item", () => {
+    const line =
+      "Reviewed the note against the newer text first. Two findings from my seat: 1. The cursor parameter is named cursor and is parsed (request 03a35b94). 2. Staleness is not self-inflicted: another write moved the generation. Not claimed: anything about gates.";
+    const { blocks } = parseMessage(line);
+    const list = blocks.find((b) => b.kind === "list") as Extract<Block, { kind: "list" }>;
+    expect(list.items.map((i) => i.n)).toEqual([1, 2]);
+    expect(spansRaw(list.items[1]!.label!)).toBe("Staleness is not self-inflicted:");
+    const last = blocks.at(-1) as Extract<Block, { kind: "paragraph" }>;
+    expect(spansRaw(last.label!)).toBe("Not claimed:");
+  });
+
   it("an in-sentence (1) (2) (3) list ends with its sentence", () => {
     const line =
       "So your planned fix needs a new note that (1) quotes the offending phrase, (2) states field = value as you describe, and (3) names the superseded id explicitly. Two constraints bite on this pool specifically and they matter.";

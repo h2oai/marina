@@ -463,11 +463,14 @@ function splitSequence(t: string, at: (n: number) => RegExp, tail: boolean): str
 function recoverStructure(line: string): string {
   if (line.length < 80) return line;
   let t = line;
+  // Numbered items first: a label pass that ran earlier would put its break
+  // between "2." and the item's text and hide the marker.
+  t = splitSequence(t, (n) => new RegExp(`(^|[\\s:;.${NEW}])${n}[.)] (?=[A-Z\`"“#(@*])`), false);
+  // "Label: …" after a sentence end, never after an item number ("2. Label: …").
   t = t.replace(
-    /([.!?]["”)]?) (?=(?:[A-Z][\w'#-]*)(?: [\w'#()+-]+){0,5}: \S)/g,
+    /(?<![\s(\u0000]\d{1,3})([.!?]["”)]?) (?=(?:[A-Z][\w'#-]*)(?: [\w'#()+-]+){0,5}: \S)/g,
     (_m, end: string) => `${end} ${NEW}`,
   );
-  t = splitSequence(t, (n) => new RegExp(`(^|[\\s:;.${NEW}])${n}[.)] (?=[A-Z\`"“#(@*])`), false);
   t = splitSequence(t, (n) => new RegExp(`(^|[\\s${NEW}])\\(${n}\\) (?=\\S)`), true);
   if ((t.match(/[.:;] - (?=\S)/g) ?? []).length >= 2) {
     t = t.replace(/([.:;]) (- (?=\S))/g, (_m, end: string, dash: string) => `${end} ${NEW}${dash}`);
