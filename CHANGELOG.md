@@ -110,6 +110,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Messages in `marina connect` read like a conversation.** A shared message grammar
+  (`src/sdk/message-format.ts`) parses every message body once for display: lists (including the
+  inline `1. … 2. …` and `(1) (2)` lists agents write on one line), lead-in labels such as
+  `Caveats:`, code, links, `@mentions`, `#N` and `task #N` references, verdict words (PASS, BLOCKED,
+  PARTIAL …) as coloured chips, parenthetical asides in a quieter colour, quoted output, ids and
+  `key=value`. Longer messages get a header and a bar in the sender's colour, consecutive messages
+  from one sender share a header, a message that names you is flagged, a line marks a new day, long
+  messages from others fold behind ctrl+o, and `channel history` renders as a conversation. Bodies
+  wrap at 100 columns. Stored messages, copy, pipe output and what agents read are unchanged; a
+  backtick escaped inside a code span no longer garbles it.
 - **The dead Delphi settlement shadow is removed.** `src/arena/settlement-shadow.ts` replayed a
   recorded Delphi trace under other settlement weights and was never wired into a filing, a shadow
   pass or a report; the learned move weight (`applyMoveWeight`) is the live mechanism for that
