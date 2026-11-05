@@ -460,23 +460,25 @@ describe("long exchanges between two agents", () => {
 describe("a person's message is unaffected", () => {
   it("a person keeps getting answers however long the conversation runs", () => {
     const bea = world.add("Bea", answers, undefined, { mode: "enforce", threshold: 2 });
-    const jeff = world.person("Jeff");
+    const rowan = world.person("Rowan");
     for (let i = 0; i < 6; i++) {
-      world.tell(jeff, "Bea", `Question ${i}: which source backs item ${i}?`);
+      world.tell(rowan, "Bea", `Question ${i}: which source backs item ${i}?`);
       world.run();
     }
-    const fromJeff = world.log.filter((t) => t.from === "Jeff");
-    const toJeff = world.log.filter((t) => t.to === "Jeff");
-    expect(fromJeff.every((t) => t.depth === 0)).toBe(true);
-    expect(toJeff).toHaveLength(6);
-    expect(bea.decisions.filter((d) => d.from === "Jeff").every((d) => d.decision.owed)).toBe(true);
+    const fromRowan = world.log.filter((t) => t.from === "Rowan");
+    const toRowan = world.log.filter((t) => t.to === "Rowan");
+    expect(fromRowan.every((t) => t.depth === 0)).toBe(true);
+    expect(toRowan).toHaveLength(6);
+    expect(bea.decisions.filter((d) => d.from === "Rowan").every((d) => d.decision.owed)).toBe(
+      true,
+    );
   });
 
   it("a person's 'no reply needed' line owes nothing, but their question still does", () => {
     const bea = world.add("Bea", () => undefined);
-    const jeff = world.person("Jeff");
-    world.tell(jeff, "Bea", "FYI the run finished, no reply needed.");
-    world.tell(jeff, "Bea", "Did the run finish?");
+    const rowan = world.person("Rowan");
+    world.tell(rowan, "Bea", "FYI the run finished, no reply needed.");
+    world.tell(rowan, "Bea", "Did the run finish?");
     bea.turn();
     expect(bea.decisions.map((d) => d.decision.owed)).toEqual([false, true]);
   });

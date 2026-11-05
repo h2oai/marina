@@ -43,8 +43,8 @@ const prior = process.env.MARINA_ATTENTION_JUDGE;
 
 beforeEach(() => {
   db = new MarinaDB(":memory:");
-  db.saveAgentConfig({ name: "Wren", model: "m", spawnedBy: "jeff" });
-  db.saveAgentConfig({ name: "Fern", model: "m", spawnedBy: "jeff" });
+  db.saveAgentConfig({ name: "Wren", model: "m", spawnedBy: "rowan" });
+  db.saveAgentConfig({ name: "Fern", model: "m", spawnedBy: "rowan" });
 });
 
 afterEach(() => {
@@ -172,8 +172,8 @@ describe("converge judge", () => {
     db.createDirectMessage({
       correlationId: "c",
       dedupeKey: "d",
-      senderId: "e_jeff",
-      senderName: "jeff",
+      senderId: "e_rowan",
+      senderName: "rowan",
       targetId: "e_Wren",
       targetName: "Wren",
       content: "stop going around in circles",
@@ -205,7 +205,7 @@ describe("review judges", () => {
         snapshots: [],
         verdicts: verdicts.map((v) => ({ ...v, by: "Fern", at: 1, findingsId: findings.id })),
       },
-      createdBy: "jeff",
+      createdBy: "rowan",
     });
   }
 
@@ -240,7 +240,7 @@ describe("review judges", () => {
     });
     observeAttentionJudgeEvent(db, {
       type: "review_closed",
-      entity: "e_jeff" as EntityId,
+      entity: "e_rowan" as EntityId,
       reviewId: row.id,
       author: "Wren",
       outcome: "merged",

@@ -117,7 +117,7 @@ describe("agent config persistence — thinking level", () => {
       role: "architect",
       goal: "build",
       room: "workbench",
-      spawnedBy: "Jeffy",
+      spawnedBy: "Rowanne",
       thinkingLevel: "low",
     });
     const runtime = new AgentRuntime({ db, wsPort: 0 });
@@ -129,7 +129,7 @@ describe("agent config persistence — thinking level", () => {
       "architect",
       "build",
       "workbench",
-      "Jeffy",
+      "Rowanne",
       "low",
     ]);
     expect(runtime.reconfigureSaved("Nobody", { model: "marina/cheap" })).toBe(false);
