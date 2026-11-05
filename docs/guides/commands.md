@@ -802,6 +802,11 @@ Replayed terminal events do not retrain twice. Directly addressed events always 
 > agent config Scout key my-key               Reconfigure agent API key
 ```
 
+Agent names take letters, digits and underscores (20 at most); a refused name gets the nearest
+valid spelling (`Red-Actor` — try `Red_Actor`), and `tell` finds an agent typed with a hyphen.
+Spawns in quick succession start one second apart (a queue longer than 30 s is refused). A
+`budget <N>` reply says roughly how long N model calls last for an active agent.
+
 The native agent supervisor (Claude Code, Codex, pi) can run inside the server, so no
 `marina supervise` process has to stay open. A person starts it in a configured code root. It holds
 a routing-only credential issued to that person, and launches go through

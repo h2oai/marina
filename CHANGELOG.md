@@ -944,6 +944,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A use-cases guide.** `docs/guides/use-cases.md` (on the docs site under Get things done)
+  lists ten things to do with Marina, easiest first, each as the commands the playbook runs; the
+  forecasting, connecting, commands, model API and SDK pages now describe the behaviour the
+  use-case fixes changed (forecast timing, `-c` waiting for the command, agent names and spawn
+  pacing, the agents-mode refusal hint, refusals rejecting in the SDK).
 - **`bun run playbook`: Marina's use cases as executable checks.** `scripts/playbook/catalog.ts`
   lists the use cases (memory, forecasting, research, plan stress-tests, scheduled briefings,
   tabletop exercises, governance, analyst teams, model comparison) as the commands a person types,

@@ -131,6 +131,8 @@ recall launch   # tomorrow: what did we learn?
 
 Not admin features: commands. A person types them, an agent calls them, an MCP client invokes
 them, under the same permissions and the same spend cap.
+[What you can do with Marina](docs/guides/use-cases.md) walks through ten use cases, easiest
+first, each as the commands to type.
 
 **Forecast anything.** Ask a question and get a probability, a number or a ranked answer. Several
 models research it independently, every citation is checked before it counts, and when the

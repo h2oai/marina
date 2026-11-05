@@ -53,7 +53,8 @@ bun run src/sdk/examples/explorer.ts
 On current servers, `command(text, signal?)` waits for an explicit server completion and returns only that command’s
 perceptions. Concurrent commands from one entity execute in order; unrelated world events continue
 through perception listeners. Command failures reject with `CommandError`, which retains any partial
-perceptions. Timeout, disconnect, or cancellation means the outcome is unknown: inspect state before
+perceptions. A refused command (bad usage, no such target, not permitted, wrong state) is a failure
+too, even when the server's reply reads like an explanation. Timeout, disconnect, or cancellation means the outcome is unknown: inspect state before
 retrying a mutation. `commandTimeout` defaults to 120000 ms. The returned array has a
 `completion: "confirmed"` property (non-enumerable, preserving its existing JSON shape).
 

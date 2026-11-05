@@ -182,6 +182,10 @@ marina status                                  # is a Marina running? health + r
 marina status --port 3420                      # same, for another port (or --url; honors WS_PORT)
 ```
 
+A one-shot `-c` waits for the command itself to finish, up to 15 minutes (or `--wait`, if longer),
+so a forecast or a research brief is not cut off; it then lingers until output has been quiet for
+2.5 s.
+
 `marina <word>` without `connect` is the coding flow and only accepts a directory (`.`, `/abs`,
 `./rel`, or an existing folder) — a bare name is rejected with a pointer to `marina connect <name>`.
 
