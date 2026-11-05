@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { flattenPeerText, isPeerSpeech } from "../../agent/peer-text";
 import type { RateLimiter } from "../../auth/rate-limiter";
 import { commandManifest } from "../../engine/command-manifest";
 import { previewParticipantContext } from "../../engine/commands/context";
@@ -9,7 +10,7 @@ import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
 import { buildUnifiedContext, renderUnifiedContext } from "../../memory/unified-context";
 import type { MemoryOperationResult } from "../../sdk/memory-operations";
-import type { EntityId } from "../../types";
+import type { EntityId, Perception } from "../../types";
 import { formatPerception } from "../formatter";
 import { receiptForUnifiedContext } from "../memory/memory-receipt";
 import { mcpAdmission } from "./mcp-admission";
@@ -18,10 +19,20 @@ import { errorText, type McpResult, type McpSession, text } from "./mcp-types";
 
 const logger = new Logger();
 
+/**
+ * A perception as an MCP agent reads it: the shared Markdown form, with a
+ * peer's message on ONE line (its line breaks as ` ⏎ `), as the in-process
+ * agents read it (`src/agent/tools/shared.ts`).
+ */
+function agentPerceptionText(p: Perception): string {
+  const text = formatPerception(p, "markdown");
+  return isPeerSpeech(p) ? flattenPeerText(text) : text;
+}
+
 export function drainPerceptions(session: McpSession): string {
   const perceptions = session.perceptionBuffer.splice(0);
   if (perceptions.length === 0) return "(no output)";
-  return perceptions.map((p) => formatPerception(p, "markdown")).join("\n\n");
+  return perceptions.map((p) => agentPerceptionText(p)).join("\n\n");
 }
 
 /**
@@ -151,8 +162,7 @@ export async function cmdTool(
     const memory = perceptions.map((p) => p.data?.memory).findLast(Boolean) as
       | Record<string, unknown>
       | undefined;
-    const rendered =
-      perceptions.map((p) => formatPerception(p, "markdown")).join("\n\n") || "(no output)";
+    const rendered = perceptions.map((p) => agentPerceptionText(p)).join("\n\n") || "(no output)";
     const result: McpResult =
       envelope && !inspection
         ? memoryMcpResult(envelope)

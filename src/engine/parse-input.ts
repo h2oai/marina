@@ -20,6 +20,27 @@ export function rest(input: CommandInput, skip: number): string {
 }
 
 /**
+ * The text after N tokens AS TYPED: a message body keeps its line breaks and
+ * spacing (`rest` rejoins tokens with single spaces, which flattens a list
+ * into one paragraph). Line endings normalise to `\n`, trailing spaces on a
+ * line go, and runs of blank lines collapse to one. Use it for message bodies
+ * (channel posts, tells, board posts); arguments still come from `tokens`.
+ */
+export function restRaw(input: Pick<CommandInput, "args">, skip: number): string {
+  let text = input.args;
+  for (let i = 0; i < skip; i++) {
+    const word = /^\s*\S+/.exec(text);
+    if (!word) return "";
+    text = text.slice(word[0].length);
+  }
+  return text
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
  * Split text on a keyword delimiter (case-insensitive).
  * Returns [before, after] or null if delimiter not found.
  *

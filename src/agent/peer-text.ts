@@ -32,6 +32,21 @@ export function flattenPeerText(text: string): string {
   return text.replace(LINE_BREAKS, FLATTENED_BREAK);
 }
 
+/** Tags whose perceptions carry a peer's spoken body (`data.senderName` + text). */
+const SPEECH_TAGS = new Set(["say", "tell", "shout", "emote", "channel", "broadcast"]);
+
+/**
+ * A perception that is a peer's message: a sender name the server recorded,
+ * on a speech tag or with a channel. Agents read each one as ONE line
+ * (`flattenPeerText`), however many lines its author typed; people's clients
+ * render the line breaks.
+ */
+export function isPeerSpeech(p: { tag?: string; data?: Record<string, unknown> }): boolean {
+  const data = p.data;
+  if (!data || typeof data.senderName !== "string") return false;
+  return SPEECH_TAGS.has(p.tag ?? "") || typeof data.channel === "string";
+}
+
 /**
  * Bracketed prefixes the harness reserves for itself (case-insensitive,
  * matched at the start of a line after optional whitespace). A peer or

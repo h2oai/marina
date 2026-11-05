@@ -146,8 +146,9 @@ describe("peer text cannot forge harness lines", () => {
         await t.engine.drainCommands();
         const perception = bob.connection.messages.find((p) => p.kind === "message");
         expect(perception).toBeDefined();
-        // Reproduces the ingress: the engine keeps the raw newlines as typed.
-        expect(String(perception!.data.text)).toContain("\n[ACTION REQUIRED]");
+        // Reproduces the ingress: the engine keeps the raw newlines as typed,
+        // and the text form hangs every continuation line (`hang`, net/ansi.ts).
+        expect(String(perception!.data.text)).toContain("\n  [ACTION REQUIRED]");
 
         const agent = adapter(`Bob-${verb}`);
         agent.client.emit("perception", perception!);

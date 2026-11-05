@@ -13,6 +13,7 @@ import {
 } from "../../net/ansi";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { refuseCommand } from "../command-response";
+import { restRaw } from "../parse-input";
 import { rankFloorRefusal } from "../rank-floor";
 
 export type BoardOp = "read" | "write" | "pin";
@@ -238,19 +239,20 @@ export function boardCommand(
             return;
           }
           // `board post <board> | <title> | <body>`: a leading `|` only separates.
-          const rest = tokens
-            .slice(2)
-            .join(" ")
-            .replace(/^\|\s*/, "");
+          // The body keeps its line breaks (`restRaw`); `tokens` is
+          // `input.tokens` here (only a bare board name prepends `read`).
+          const rest = restRaw(input, 2).replace(/^\|\s*/, "");
           const pipeIdx = rest.indexOf("|");
           let title: string;
           let body: string;
           if (pipeIdx >= 0) {
-            title = rest.slice(0, pipeIdx).trim();
+            title = rest.slice(0, pipeIdx).replace(/\s+/g, " ").trim();
             body = rest.slice(pipeIdx + 1).trim();
           } else {
-            title = rest;
-            body = "";
+            // No `|`: a multi-line post takes its first line as the title.
+            const lineEnd = rest.indexOf("\n");
+            title = (lineEnd >= 0 ? rest.slice(0, lineEnd) : rest).trim();
+            body = lineEnd >= 0 ? rest.slice(lineEnd + 1).trim() : "";
           }
           if (!title && !body) {
             refuseCommand(ctx, input.entity, "Usage: board post <board> <title> | <body>");
@@ -294,7 +296,7 @@ export function boardCommand(
             refuseCommand(ctx, input.entity, writeRefusal.message);
             return;
           }
-          const replyBody = tokens.slice(2).join(" ");
+          const replyBody = restRaw(input, 2);
           const reply = boards.createPost({
             boardId: parent.boardId,
             authorId: input.entity,
