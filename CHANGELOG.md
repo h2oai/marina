@@ -944,6 +944,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`bun run playbook`: Marina's use cases as executable checks.** `scripts/playbook/catalog.ts`
+  lists the use cases (memory, forecasting, research, plan stress-tests, scheduled briefings,
+  tabletop exercises, governance, analyst teams, model comparison) as the commands a person types,
+  each with success or refusal, a few words the reply must carry, and time and cost ceilings. The
+  model-free slice runs in-process on every test run (`test/playbook.test.ts`); `bun run playbook`
+  boots one isolated server per world (local profile, own database and port, daily cap `--cap`)
+  and reports each step's outcome, time and spend to `~/.marina/playbook/<timestamp>/`. `--free`
+  needs no keys; `--long` adds scheduled runs, model comparison and analyst teams.
+
 - **Marina plugin for Codex.** `bun run build:codex-plugin` builds an installable local
   marketplace with durable memory, setup and memory skills, and optional world access.
   The package bundles its MCP adapters and references private credential files without
