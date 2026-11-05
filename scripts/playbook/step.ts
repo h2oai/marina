@@ -17,11 +17,7 @@ export interface StepOutcome {
   error?: string;
 }
 
-const ANSI = /\x1b\[[0-9;]*m/g;
-
-export function stripAnsi(text: string): string {
-  return text.replace(ANSI, "");
-}
+export { stripAnsi } from "../../src/net/ansi";
 
 /** Every problem with an outcome against its step; empty when the step held. */
 export function judgeStep(step: PlaybookStep, outcome: StepOutcome): string[] {
