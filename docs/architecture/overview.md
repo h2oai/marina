@@ -122,15 +122,15 @@ Details: [civic-substrate.md](civic-substrate.md) · [Civic substrate guide](../
 
 ## 7. The model gateway: `/v1`
 
-[![Model gateway: callers pass the host allowlist, bearer auth, rate limit and daily spend cap. In passthru mode tier aliases resolve per request and identified callers get the instrument stack before the upstream call, which avoids rate-limited routes and falls back to the same model via OpenRouter, labelled. In agents mode residents answer. Every response records its spend once and emits trace events.](../assets/architecture-model-gateway.svg)](../assets/architecture-model-gateway.svg)
+[![Model gateway: callers pass the host allowlist, bearer auth, rate limit and daily usage cap. In passthru mode tier aliases resolve per request and identified callers get the instrument stack before the upstream call, which avoids rate-limited routes and falls back to the same model via OpenRouter, labelled. In agents mode residents answer. Every response records its usage once and emits trace events.](../assets/architecture-model-gateway.svg)](../assets/architecture-model-gateway.svg)
 
-`/v1` speaks the OpenAI, Anthropic and Ollama wire formats, so an existing app can point at Marina unchanged. Marina's own agents call it too when they run on a `marina/*` model; an agent with its own provider key calls the provider directly. Either way, every model dollar is recorded once in the same spend ledger.
+`/v1` speaks the OpenAI, Anthropic and Ollama wire formats, so an existing app can point at Marina unchanged. Marina's own agents call it too when they run on a `marina/*` model; an agent with its own provider key calls the provider directly. Either way, every model call's usage is recorded once in the same ledger.
 
-- **Edge.** Host allowlist, bearer authentication, a per-client rate limit, and the world's daily spend cap (`429 spend_cap_reached`).
+- **Edge.** Host allowlist, bearer authentication, a per-client rate limit, and the world's daily usage cap (a `429` once it is reached).
 - **Two modes.** In *passthru* the request is proxied to a real model, with tier aliases (`marina/cheap`, `marina/strong`) resolved per request. In *agents* mode, the model `marina` is answered by residents in the world. Marina's own agents always take passthru.
 - **Instrument stack.** An identified caller (a bound key, an authorized name mapping, or any caller under the local profile) gets four instruments by default: judged lessons, an obligations ledger, an argument check on write calls, and learning signals. The caller's own memory (`context`) follows its own opt-in rules, and answer verification and the ensemble are opt-in. Anonymous callers get none by default, so their requests pass through byte-identical. A header (`x-marina-stack`) or a model prefix chooses explicitly.
 - **Upstream.** A key past its usage limit is avoided until its reset; meanwhile the **same** model is served via OpenRouter and labelled as such — never a different model.
-- **Records.** Spend is recorded once, where the dollar leaves Marina; each request emits lifecycle trace events and returns its id in `x-request-id`.
+- **Records.** Usage is recorded once, at the upstream call; each request emits lifecycle trace events and returns its id in `x-request-id`.
 
 Details: [passthru.md](passthru.md) · [traces.md](traces.md) · [Model API](../guides/model-api.md)
 

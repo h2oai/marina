@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 548" width="1180" height="548" role="img" aria-label="Model gateway: callers (compatible apps, Marina's own agents, benchmark runs with capped keys) pass the edge checks — host allowlist, bearer auth, rate limit and the daily spend cap. In passthru mode tier aliases resolve per request and identified callers get the instrument stack (lessons, context, obligations, argcheck, verify, learn) before the upstream call, which avoids rate-limited routes and falls back to the same model via OpenRouter, labelled. In agents mode the question is answered by residents in the world. Every response records its spend once and emits trace events.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 548" width="1180" height="548" role="img" aria-label="Model gateway: callers (compatible apps, Marina's own agents, benchmark runs with capped keys) pass the edge checks — host allowlist, bearer auth, rate limit and the daily usage cap. In passthru mode tier aliases resolve per request and identified callers get the instrument stack (by default lessons, obligations, argcheck and learn; context, verify and ensemble on request) before the upstream call, which avoids rate-limited routes and falls back to the same model via OpenRouter, labelled. In agents mode the question is answered by residents in the world. Every response records its usage once and emits trace events.">
 <title>The model gateway: /v1</title>
-<desc>Model gateway: callers (compatible apps, Marina's own agents, benchmark runs with capped keys) pass the edge checks — host allowlist, bearer auth, rate limit and the daily spend cap. In passthru mode tier aliases resolve per request and identified callers get the instrument stack (lessons, context, obligations, argcheck, verify, learn) before the upstream call, which avoids rate-limited routes and falls back to the same model via OpenRouter, labelled. In agents mode the question is answered by residents in the world. Every response records its spend once and emits trace events.</desc>
+<desc>Model gateway: callers (compatible apps, Marina's own agents, benchmark runs with capped keys) pass the edge checks — host allowlist, bearer auth, rate limit and the daily usage cap. In passthru mode tier aliases resolve per request and identified callers get the instrument stack (by default lessons, obligations, argcheck and learn; context, verify and ensemble on request) before the upstream call, which avoids rate-limited routes and falls back to the same model via OpenRouter, labelled. In agents mode the question is answered by residents in the world. Every response records its usage once and emits trace events.</desc>
 <style>
 text{font-family:Inter,"Segoe UI",-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif}
 .mono{font-family:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace}
@@ -34,7 +34,7 @@ text{font-family:Inter,"Segoe UI",-apple-system,BlinkMacSystemFont,Helvetica,Ari
 <text x="58" y="235" text-anchor="start" class="bs ink">internal token</text>
 <rect x="44" y="264" width="212" height="58" rx="9" class="f-client s-client" stroke-width="1.3"/>
 <text x="58" y="286" text-anchor="start" class="t-client bt">Benchmark runs</text>
-<text x="58" y="305" text-anchor="start" class="bs ink">run key with a dollar cap</text>
+<text x="58" y="305" text-anchor="start" class="bs ink">run key with a usage cap</text>
 <rect x="288" y="106" width="220" height="224" rx="14" class="s-net" fill="none" stroke-width="1.4"/>
 <rect x="304" y="95" width="56.760000000000005" height="22" rx="11" class="f-net s-net" stroke-width="1.2"/>
 <text x="332.38" y="110" text-anchor="middle" class="t-net gl">Edge</text>
@@ -52,8 +52,8 @@ text{font-family:Inter,"Segoe UI",-apple-system,BlinkMacSystemFont,Helvetica,Ari
 <text x="312" y="264" text-anchor="start" class="muted bm">per client IP</text>
 <path d="M398,272 L398,280" fill="none" class="ls-net" stroke-width="1.2" marker-end="url(#ah-net)"/>
 <rect x="300" y="280" width="196" height="44" rx="8" class="bg s-net" stroke-width="1"/>
-<text x="312" y="299" text-anchor="start" class="t-net bt">Daily spend cap</text>
-<text x="312" y="316" text-anchor="start" class="muted bm">429 spend_cap_reached</text>
+<text x="312" y="299" text-anchor="start" class="t-net bt">Daily usage cap</text>
+<text x="312" y="316" text-anchor="start" class="muted bm">429 when reached</text>
 <path d="M256,229 L288,229" fill="none" class="ls-client" stroke-width="2" marker-end="url(#ah-client)"/>
 <rect x="552" y="124" width="200" height="96" rx="9" class="f-net s-net" stroke-width="1.3"/>
 <text x="566" y="146" text-anchor="start" class="t-net bt">Passthru</text>
@@ -103,7 +103,7 @@ text{font-family:Inter,"Segoe UI",-apple-system,BlinkMacSystemFont,Helvetica,Ari
 <path d="M990,354 L990,410" fill="none" class="line" stroke-width="1.6" marker-end="url(#ah-line)"/>
 <rect x="300" y="410" width="492" height="110" rx="9" class="f-store s-store" stroke-width="1.3"/>
 <text x="314" y="432" text-anchor="start" class="t-store bt">Every response leaves a record</text>
-<text x="314" y="451" text-anchor="start" class="bs ink">spend recorded once, where the dollar leaves Marina</text>
+<text x="314" y="451" text-anchor="start" class="bs ink">usage recorded once, at the upstream call</text>
 <text x="314" y="467.5" text-anchor="start" class="bs ink">model_request_lifecycle trace events · x-request-id</text>
 <text x="314" y="484" text-anchor="start" class="bs ink">a fallback reply is labelled, never credited to the probed route</text>
 <path d="M832,465 L792,465" fill="none" class="line" stroke-width="1.6" marker-end="url(#ah-line)"/>
