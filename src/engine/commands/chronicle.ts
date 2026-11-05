@@ -6,7 +6,8 @@ import type { MarinaDB } from "../../persistence/database";
 import type { ChronicleEntry, ChronicleKind } from "../../persistence/db-chronicle";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { refuseCommand } from "../command-response";
-import { extractModifiers, type ModifierSpec, parseModifiers, splitOn } from "../parse-input";
+import { type ModifierSpec, parseModifiers, splitOn } from "../parse-input";
+import { escapeRegExp } from "../regexp";
 import { requiresPersistence } from "./command-messages";
 import { formatAge, parseSince } from "./format-duration";
 
@@ -70,6 +71,42 @@ function parseCsv(value: string | undefined): string[] {
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+/**
+ * Pull trailing `refs` / `participants` / `period` clauses off a chronicle write.
+ *
+ * Unlike the one-token `extractModifiers`, a clause's value is a LIST, and the
+ * Chronicler writes it the way prose does — `refs task:3, note:10342`,
+ * `refs: a,b`, `--refs=a`, each clause optionally set off by `|`
+ * (`… | refs a, b | participants X, Y`) and in any order. Clauses are taken
+ * from the end only, so a key word inside the body is left alone unless it is
+ * followed by nothing but a list to the end of the text.
+ */
+export function extractChronicleClauses(
+  text: string,
+  keys: readonly string[],
+): { text: string; modifiers: Record<string, string> } {
+  const modifiers: Record<string, string> = {};
+  let remaining = text.trim();
+  const alternation = keys.map(escapeRegExp).join("|");
+  const clause = new RegExp(
+    `(?:^|\\s|\\|)(?:--)?(${alternation})(?:\\s*[:=]\\s*|\\s+)` +
+      `([^\\s,|]+(?:\\s*,\\s*[^\\s,|]+)*)\\s*,?\\s*$`,
+    "i",
+  );
+  for (;;) {
+    const m = remaining.match(clause);
+    if (!m || m.index === undefined) break;
+    const key = m[1]!.toLowerCase();
+    if (key in modifiers) break;
+    modifiers[key] = m[2]!;
+    remaining = remaining
+      .slice(0, m.index)
+      .replace(/\s*\|\s*$/, "")
+      .trim();
+  }
+  return { text: remaining, modifiers };
 }
 
 /** Format Date as UTC YYYY-MM-DD. */
@@ -379,7 +416,10 @@ export function chronicleCommand(deps: {
           return;
         }
         const rest = tokens.slice(1).join(" ");
-        const { text: titleBody, modifiers } = extractModifiers(rest, ["refs", "participants"]);
+        const { text: titleBody, modifiers } = extractChronicleClauses(rest, [
+          "refs",
+          "participants",
+        ]);
         const parts = splitOn(titleBody, "|");
         if (!parts || parts[0].length === 0) {
           refuseCommand(
@@ -391,9 +431,10 @@ export function chronicleCommand(deps: {
         }
         const refs = parseCsv(modifiers.refs);
         if (refs.length === 0) {
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
-            "A narrative must cite at least one source in refs:. Run `chronicle pending` for source ids.",
+            "A narrative must cite at least one source: end it with `refs feed:N,task:N` (a comma-separated list). Run `chronicle pending` for source ids.",
           );
           return;
         }
@@ -442,7 +483,10 @@ export function chronicleCommand(deps: {
           return;
         }
         const rest = tokens.slice(2).join(" ");
-        const { text: titleBody, modifiers } = extractModifiers(rest, ["refs", "participants"]);
+        const { text: titleBody, modifiers } = extractChronicleClauses(rest, [
+          "refs",
+          "participants",
+        ]);
         const parts = splitOn(titleBody, "|");
         if (!parts || parts[0].length === 0) {
           refuseCommand(
@@ -483,7 +527,7 @@ export function chronicleCommand(deps: {
           return;
         }
         const rest = tokens.slice(2).join(" ");
-        const { text: titleBody, modifiers } = extractModifiers(rest, [
+        const { text: titleBody, modifiers } = extractChronicleClauses(rest, [
           "refs",
           "participants",
           "period",

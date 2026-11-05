@@ -488,6 +488,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Chronicle writes keep their citations.** `chronicle record`, `correct` and `digest` read lists
+  as the Chronicler writes them: `refs task:3, note:10342` (spaces after commas), `refs: a,b`, `refs=a`, and clauses set off
+  by `|` in any order (`… | refs a, b | period day:… | participants X, Y`). Before, only one unbroken
+  trailing token was read, so such corrections and digests were stored with no refs (the text stayed
+  in the body) and such narratives were refused. That refusal is now a recorded failure and shows
+  the form to use. Entries already written are unchanged; the chronicle is append-only.
+
 - **Trailing modifiers parse in every spelling of the one grammar.** `memory note <text>
   importance:7` kept `importance:7` in the note text and left importance at the default, because
   the shared trailing-modifier pattern (`modifierPattern`, used by `note`, `recall`, `chronicle`,
