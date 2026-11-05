@@ -468,6 +468,7 @@ function recoverStructure(line: string): string {
   t = splitSequence(t, (n) => new RegExp(`(^|[\\s:;.${NEW}])${n}[.)] (?=[A-Z\`"“#(@*])`), false);
   // "Label: …" after a sentence end, never after an item number ("2. Label: …").
   t = t.replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: \u0000 is this pass's own break marker (NEW)
     /(?<![\s(\u0000]\d{1,3})([.!?]["”)]?) (?=(?:[A-Z][\w'#-]*)(?: [\w'#()+-]+){0,5}: \S)/g,
     (_m, end: string) => `${end} ${NEW}`,
   );
