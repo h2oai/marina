@@ -286,6 +286,7 @@ function resolveNamedMembers(
     else missing.push(name);
   }
   if (resolved.length === 0) {
+    // allow-send-error: a fallback, not a failure — the crew plan is stored
     ctx.send(
       eid,
       `Could not resolve any named agents (${missing.join(", ")}). Stored the crew plan instead.`,

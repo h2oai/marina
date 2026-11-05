@@ -3,7 +3,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { runCliCommand } from "../scripts/connect-command";
+import {
+  COMMAND_COMPLETION_MS,
+  commandCompletionMs,
+  runCliCommand,
+} from "../scripts/connect-command";
 import { CommandError, type Perception } from "../src/sdk/client";
 
 const refusal = {
@@ -102,5 +106,14 @@ describe("connect CLI command runner", () => {
     // one-shot, pipe, redirected-stdout prompt; the interactive screen.
     expect(source.match(/runCliCommand\(agent,/g)?.length).toBe(3);
     expect(repl.match(/runCliCommand\(agent,/g)?.length).toBe(1);
+  });
+});
+
+describe("terminal command completion window", () => {
+  test("outlasts a long model-backed command, and a longer --wait raises it", () => {
+    // A typed forecast measured 388 s; the SDK's 2-minute default cut it off.
+    expect(commandCompletionMs(20_000)).toBe(COMMAND_COMPLETION_MS);
+    expect(COMMAND_COMPLETION_MS).toBeGreaterThanOrEqual(10 * 60_000);
+    expect(commandCompletionMs(30 * 60_000)).toBe(30 * 60_000);
   });
 });

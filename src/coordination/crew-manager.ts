@@ -1308,6 +1308,12 @@ export class CrewManager {
   private postOrientation(crew: Crew, member: CrewMember): void {
     if (!crew.channelId) return;
     const lines: string[] = [`[orientation:${member.agentName}]`];
+    // Each member's own part, from its spawn goal: a formation shapes the
+    // turns, never who plays which side (a tabletop's attacker kept drifting
+    // into advising the defenders when only the debate rules were stated).
+    const part = (name: string) => clipGoal(this.db?.getAgentConfig(name)?.goal);
+    const own = part(member.agentName);
+    if (own) lines.push(`your part (keep to it; the formation sets turns only): ${own}`);
 
     // Crew pool recall — what we've learned together (persisted crews only).
     if (this.db && crew.poolId) {
@@ -1350,7 +1356,8 @@ export class CrewManager {
           // doesn't track ids — best we can do is degrade gracefully and
           // omit standing when we can't resolve a name → id. Engine-level
           // wiring in a later phase can pass a resolver.
-          lines.push(`  • ${m.agentName} (${m.role})`);
+          const theirs = part(m.agentName);
+          lines.push(`  • ${m.agentName} (${m.role})${theirs ? ` — ${theirs}` : ""}`);
         } catch {
           lines.push(`  • ${m.agentName} (${m.role})`);
         }
@@ -1402,4 +1409,11 @@ export class CrewManager {
       responded_at: invitation.respondedAt ?? null,
     });
   }
+}
+
+/** A member's goal on one orientation line (≤ 140 chars). */
+function clipGoal(goal: string | null | undefined): string | undefined {
+  const text = goal?.replace(/\s+/g, " ").trim();
+  if (!text) return undefined;
+  return text.length > 140 ? `${text.slice(0, 139)}…` : text;
 }

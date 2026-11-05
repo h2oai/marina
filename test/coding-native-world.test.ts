@@ -47,8 +47,8 @@ test("native cognition and world tools remain functional while a coding session 
     );
     expect(entity.properties.active_modal).toBe("code");
     // Explicit world grammar only chooses the command parser. Gates still apply.
-    const refused = await native.command("gate grant NativeCoder code.exec");
-    expect(refused.map((p) => p.data.text).join("\n")).toMatch(
+    // A refusal now fails the command, so the SDK rejects with the reason.
+    await expect(native.command("gate grant NativeCoder code.exec")).rejects.toThrow(
       /rank|admin|permission|gate|capability/i,
     );
     const humanId = human.getSession()!.entityId as EntityId;

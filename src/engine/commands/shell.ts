@@ -353,7 +353,7 @@ async function handleSave(
         (group, member) => !!db.getGroupMember(group, member),
       );
       if (refusal) {
-        ctx.send(eid, refusal.message);
+        refuseCommand(ctx, eid, refusal.message);
         return;
       }
       const postId = db.createBoardPost({

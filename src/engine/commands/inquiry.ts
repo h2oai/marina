@@ -12,6 +12,7 @@ import type { CommandUsage } from "../../sdk/command-forms";
 import { type InvestigationView, investigationAttemptText } from "../../sdk/investigation-text";
 import { INVESTIGATION_SCHEMA, type InvestigationAttempt } from "../../sdk/investigation-types";
 import type { CommandDef, Entity } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { parseModifiers, splitOnTerminator } from "../parse-input";
 
@@ -190,7 +191,7 @@ export function inquiryCommand(deps: {
         } else
           throw new InvestigationError("invalid_request", `Unknown inquiry action.\n${usageText}`);
       } catch (error) {
-        say(`Inquiry: ${getErrorMessage(error)}`);
+        refuseCommand(ctx, input.entity, `Inquiry: ${getErrorMessage(error)}`, "investigation");
       }
     },
   };

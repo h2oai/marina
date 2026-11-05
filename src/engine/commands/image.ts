@@ -87,7 +87,7 @@ export function imageCommand(engine: Engine): CommandDef {
 
       const entity = engine.entities.get(input.entity);
       if (!entity) {
-        ctx.send(input.entity, "Couldn't find you in this space — reconnect and retry.");
+        refuseCommand(ctx, input.entity, "Couldn't find you in this space — reconnect and retry.");
         return;
       }
 

@@ -397,10 +397,10 @@ export function benchmarkCommand(deps: {
           const lines = [
             header(`Benchmarks (${specs.length})`),
             separator(),
-            ...specs.map(
-              (s) =>
-                `  ${category(s.name.padEnd(16))} ${datasetStatus(runner, s.name)}  ${dim(s.description)}`,
-            ),
+            ...specs.map((s) => {
+              const saturated = saturation(db, s.name);
+              return `  ${category(s.name.padEnd(16))} ${datasetStatus(runner, s.name)}  ${dim(s.description)}${saturated ? ` ${fmtStatus(saturated, "warn")}` : ""}`;
+            }),
             "",
             dim("Run one with: benchmark run <name> [--limit N] [--seed N]"),
             dim("Download a dataset with: benchmark fetch <name>"),
@@ -635,7 +635,8 @@ export function benchmarkCommand(deps: {
               `Benchmark run started.\n  ${bold("id")}:       ${fmtId(handle.id)}\n  ${bold("benchmark")}: ${category(name)}\n  ${bold("target")}:    ${measured}\n  ${bold("config")}:    ${handle.configHash}\n\nCheck status with: benchmark result ${handle.id}`,
             );
           } catch (err) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Failed to start: ${err instanceof Error ? err.message : String(err)}`,
             );
@@ -1340,7 +1341,8 @@ export function benchmarkCommand(deps: {
           }
           const why = reason.slice(0, MAX_VALIDITY_REASON);
           const result = setValidity(db, entity, sub, id, why, deps.logEvent);
-          ctx.send(input.entity, result.message);
+          if (result.changed) ctx.send(input.entity, result.message);
+          else refuseCommand(ctx, input.entity, result.message);
           if (result.changed && sub === "invalidate") {
             // Lessons learned from (or comparing against) the run measured the
             // infrastructure, not the target: retire them through the audited path.
@@ -1708,6 +1710,42 @@ function setValidity(
         ? `Invalidated ${runId} (${run.benchmark}, ${runLabel(run)}): ${reason}\n  Its items are kept; every ranking, pooling, comparison, promotion and route evidence now skips it. Audit row ${res.id}.`
         : `Revalidated ${runId} (${run.benchmark}, ${runLabel(run)}): ${reason}\n  It counts again in every ledger reader. Audit row ${res.id}.`,
   };
+}
+
+// ─── Saturation ─────────────────────────────────────────────────────────────
+
+/** A score at or above this tells two models apart no better than chance. */
+const SATURATED_SCORE = 0.95;
+/** Fewest answered items for a local run to count toward saturation. */
+const SATURATION_MIN_ANSWERED = 10;
+
+/**
+ * "saturated" when at least two different models already score ≥ 95 % on a set
+ * — by cited reference scores, or by this world's own completed runs (≥ 10
+ * answered) — so a comparison on it cannot separate models. The marker says
+ * which evidence it rests on.
+ */
+export function saturation(
+  db: Pick<MarinaDB, "leaderboardBenchmark"> | undefined,
+  benchmark: string,
+): string | undefined {
+  const refs = new Set(
+    referenceScoresForBenchmark(benchmark)
+      .filter((r) => r.score >= SATURATED_SCORE)
+      .map((r) => r.modelId),
+  );
+  if (refs.size >= 2) return "saturated (reference scores ≥95%)";
+  const local = new Set<string>();
+  for (const row of db?.leaderboardBenchmark?.(benchmark, 50) ?? []) {
+    if ((row.score ?? 0) < SATURATED_SCORE || row.answered < SATURATION_MIN_ANSWERED) continue;
+    try {
+      const model = (JSON.parse(row.config_json ?? "{}") as { model?: unknown }).model;
+      if (typeof model === "string" && model) local.add(model);
+    } catch {
+      // allow-empty-catch: a run with an unreadable config names no model
+    }
+  }
+  return local.size >= 2 ? "saturated (2+ models ≥95% here)" : undefined;
 }
 
 // ─── Earned promotion of defaults ──────────────────────────────────────────

@@ -102,6 +102,12 @@ export interface RunTextPatternOptions {
   budget: SpendGuard;
   /** The caller's disconnect or the run's overall deadline. */
   signal?: AbortSignal;
+  /**
+   * Today's date, stated under the task so members read a date written without
+   * a year ("launch on March 1") as its next occurrence, not a past one. Omitted:
+   * the task goes out unchanged.
+   */
+  today?: Date;
 }
 
 /** Longest stage text kept in the trace. */
@@ -156,6 +162,13 @@ const PIPELINE_NEXT_SYSTEM =
   "You are a stage in a pipeline. Improve the previous stage's handoff: fix errors, fill gaps, tighten it. Return the full improved answer, not a commentary.";
 
 const taskBlock = (task: string) => `TASK:\n${task}`;
+
+/** The task with today's date under it (see `RunTextPatternOptions.today`). */
+export function datedTask(task: string, today: Date | undefined): string {
+  if (!today) return task;
+  const day = today.toISOString().slice(0, 10);
+  return `${task}\n\n(Today is ${day}. A date written without a year means its next occurrence.)`;
+}
 
 // ─── The run ────────────────────────────────────────────────────────────────
 
@@ -727,7 +740,7 @@ export async function runTextPattern(
   options: RunTextPatternOptions,
 ): Promise<PatternRunResult> {
   if (members.length === 0) throw new Error("runTextPattern needs at least one member");
-  const run = new Run(task, options);
+  const run = new Run(datedTask(task, options.today), options);
   await PROTOCOLS[pattern](run, members);
   return run.finish(pattern);
 }

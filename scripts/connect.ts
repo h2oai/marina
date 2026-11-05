@@ -25,7 +25,7 @@ import { sanitizeEntityName } from "../src/engine/entity-name";
 import { formatPerception } from "../src/net/formatter";
 import type { CommandCatalogEntry } from "../src/sdk/capabilities";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
-import { runCliCommand } from "./connect-command";
+import { commandCompletionMs, runCliCommand } from "./connect-command";
 import { isTransportFailure } from "./connect-errors";
 import { runRelayCli } from "./connect-relay";
 import { runInteractive } from "./connect-repl";
@@ -70,6 +70,7 @@ Flags:
   --wait <sec>     max seconds to linger for asynchronous output (model-backed
                    commands like \`ask\` answer after the ack) in one-shot/pipe
                    mode. Default 20; 0 exits as soon as the command is acked.
+                   A command itself may run up to 15 min (or --wait, if longer).
   --port <n>       server port on localhost (default: WS_PORT or 3300)
   --url <ws-url>   full server URL (a trailing /ws is accepted)
   --color <when>   auto (default), always or never; --no-color = never
@@ -173,6 +174,7 @@ const interactive = !oneShot && !!process.stdin.isTTY;
 const agent = new MarinaAgent(URL, {
   autoReconnect: false,
   principal: interactive ? "person" : "agent",
+  commandTimeout: commandCompletionMs(maxLingerMs),
 });
 
 // Scripted modes (one-shot / pipe) suppress the login burst (welcome text,

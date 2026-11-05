@@ -607,7 +607,7 @@ async function handleOpen(
 
   const result = await attemptOpen(db, entity, { venue, ticker, side, count, priceCents });
   if (!result.ok || !result.record) {
-    ctx.send(eid, result.message);
+    refuseCommand(ctx, eid, result.message);
     return;
   }
   // Record to the audit board under the entity that opened (handleOpen caller).

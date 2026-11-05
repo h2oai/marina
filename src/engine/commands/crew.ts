@@ -358,7 +358,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
             `Crew "${crew.name}" created (${crew.formation}/${crew.lifetime}, ${crew.members.length} active member). ${invitees.length} invitation${invitees.length === 1 ? "" : "s"} pending; dispatch activates only accepted members.`,
           );
         } catch (e) {
-          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          if (e instanceof CrewError) refuseCommand(ctx, input.entity, e.message);
           else throw e;
         }
         return;
@@ -428,7 +428,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           );
           ctx.send(input.entity, `Invited ${agentName} to crew "${crew.name}" as ${role}.`);
         } catch (e) {
-          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          if (e instanceof CrewError) refuseCommand(ctx, input.entity, e.message);
           else throw e;
         }
         return;
@@ -541,7 +541,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
             `Dispatched to crew "${crew.name}"${task ? ` as task #${task.id}` : ""}.`,
           );
         } catch (e) {
-          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          if (e instanceof CrewError) refuseCommand(ctx, input.entity, e.message);
           else throw e;
         }
         return;
@@ -566,7 +566,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           }
           ctx.send(input.entity, `Joined crew "${crew.name}" as ${invitation.role}.`);
         } catch (e) {
-          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          if (e instanceof CrewError) refuseCommand(ctx, input.entity, e.message);
           else throw e;
         }
         return;
@@ -587,7 +587,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           deps.crews.respondToInvitation(crew.id, caller.name, "declined");
           ctx.send(input.entity, `Declined crew "${crew.name}".`);
         } catch (e) {
-          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          if (e instanceof CrewError) refuseCommand(ctx, input.entity, e.message);
           else throw e;
         }
         return;
@@ -609,7 +609,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           deps.crews.removeMember(crew.id, caller.name, "left");
           ctx.send(input.entity, `Left crew "${crew.name}".`);
         } catch (e) {
-          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          if (e instanceof CrewError) refuseCommand(ctx, input.entity, e.message);
           else throw e;
         }
         return;
@@ -646,7 +646,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           deps.crews.setFormation(crew.id, formation);
           ctx.send(input.entity, `Crew "${crew.name}" formation → ${formation}.`);
         } catch (e) {
-          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          if (e instanceof CrewError) refuseCommand(ctx, input.entity, e.message);
           else throw e;
         }
         return;
@@ -679,7 +679,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
             `Crew "${crew.name}" upgraded to persisted (pool: crew:${crew.name}, members-only).`,
           );
         } catch (e) {
-          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          if (e instanceof CrewError) refuseCommand(ctx, input.entity, e.message);
           else throw e;
         }
         return;
@@ -707,7 +707,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           deps.crews.recordStageCompleted(crew.id, stage, caller.name);
           ctx.send(input.entity, `Stage "${stage}" completed for crew "${crew.name}".`);
         } catch (e) {
-          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          if (e instanceof CrewError) refuseCommand(ctx, input.entity, e.message);
           else throw e;
         }
         return;
@@ -754,7 +754,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           ctx.send(input.entity, `Deposited ${kind} artifact "${ref}" to crew "${crew.name}".`);
           review(ctx, caller, crew, ref, kind, true);
         } catch (e) {
-          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          if (e instanceof CrewError) refuseCommand(ctx, input.entity, e.message);
           else throw e;
         }
         return;
@@ -796,7 +796,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
             `Flagged ${agentName} as stalled in "${crew.name}" (offense ${count})${penaltyNote}.`,
           );
         } catch (e) {
-          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          if (e instanceof CrewError) refuseCommand(ctx, input.entity, e.message);
           else throw e;
         }
         return;
@@ -838,7 +838,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           ctx.send(input.entity, `Crew "${crew.name}" completed${noteHint}.${retainedHint}`);
           review(ctx, caller, crew, summary, "completion", false);
         } catch (e) {
-          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          if (e instanceof CrewError) refuseCommand(ctx, input.entity, e.message);
           else throw e;
         }
         return;

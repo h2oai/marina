@@ -488,6 +488,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A refused or failed command now says so to its caller.** Over 100 handler paths (agent spawn,
+  stop and reconfigure, `connect`, `schedule`, `gate`, `witness`, `world`, `supervisor`, `arena`,
+  canvas intents, `evolve`, `inquiry`, `crew`, `forecast`, `benchmark`, `reflect` and others)
+  replied with plain output, so an SDK script, an agent's tool call or a scheduled run saw success.
+  They refuse through `refuseCommand`, and the send-error lint now reads whole statements and local
+  reply helpers. Also: `tell Diligence-Lead` reaches the live `DiligenceLead` (any spelling of a
+  resident's name); a refused spawn name suggests a valid one; a spawn inside the one-second window
+  waits for its slot instead of failing; an owner logging in while their schedule runs takes the
+  account over; `marina connect -c` waits up to 15 minutes for a command's result; a typed forecast
+  says whether its number is a probability or the runs' agreement; `task list` shows who holds each
+  open task; an agent-route `/v1` refusal names the direct route for the model sent; pattern runs
+  state today's date; crew orientation states each member's part; streams fold repeated runtime
+  states; `benchmark list` marks saturated sets; spawn replies say how long a call budget lasts.
+
 - **Chronicle writes keep their citations.** `chronicle record`, `correct` and `digest` read lists
   as the Chronicler writes them: `refs task:3, note:10342` (spaces after commas), `refs: a,b`, `refs=a`, and clauses set off
   by `|` in any order (`… | refs a, b | period day:… | participants X, Y`). Before, only one unbroken

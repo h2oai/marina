@@ -587,7 +587,11 @@ export async function runAssetCommand(
         await removeAsset(library, asset, eid);
       } catch (err) {
         if (!(err instanceof AssetBytesError)) throw err;
-        ctx.send(eid, `${err.message} Try again later; nothing was removed from the library.`);
+        refuseCommand(
+          ctx,
+          eid,
+          `${err.message} Try again later; nothing was removed from the library.`,
+        );
         return;
       }
       ctx.send(

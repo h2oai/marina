@@ -163,7 +163,7 @@ export function connectCommand(deps: {
           // fetch-time check (resolved addresses included), not only the literal one.
           const urlError = await validateFetchUrl(url);
           if (urlError) {
-            ctx.send(input.entity, `Blocked URL: ${urlError}`);
+            refuseCommand(ctx, input.entity, `Blocked URL: ${urlError}`);
             return;
           }
           if (db.getConnectorByName(name)) {
@@ -304,7 +304,7 @@ export function connectCommand(deps: {
             ctx.send(input.entity, lines.join("\n"));
           } catch (err) {
             const msg = getErrorMessage(err);
-            ctx.send(input.entity, `Failed to list tools: ${msg}`);
+            refuseCommand(ctx, input.entity, `Failed to list tools: ${msg}`);
           }
           return;
         }

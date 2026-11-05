@@ -271,7 +271,8 @@ export function decisionCommand(deps: {
             ),
           )
           .catch((err) =>
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Qualification failed: ${err instanceof Error ? err.message : String(err)}`,
             ),
@@ -314,7 +315,7 @@ export function decisionCommand(deps: {
         try {
           images = await Promise.all(refs.map((ref) => deps.loadImage!(input.entity, ref)));
         } catch (err) {
-          ctx.send(input.entity, err instanceof Error ? err.message : String(err));
+          refuseCommand(ctx, input.entity, err instanceof Error ? err.message : String(err));
           return;
         }
         const emit = (event: {

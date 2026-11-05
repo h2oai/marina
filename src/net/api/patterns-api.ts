@@ -233,6 +233,7 @@ export async function handlePatternRun(
         concurrency: members.length,
       }),
       signal,
+      today: new Date(),
     });
   } catch (e) {
     logger.warn("model-api", `pattern run ${pattern} failed: ${getErrorMessage(e)}`);

@@ -1385,7 +1385,7 @@ async function handleAsset(
         const MAX_REMOTE_BYTES = 50 * 1024 * 1024;
         const response = await guardedFetch(url);
         if (response.status >= 400) {
-          ctx.send(eid, `Failed to fetch URL: HTTP ${response.status}`);
+          refuseCommand(ctx, eid, `Failed to fetch URL: HTTP ${response.status}`);
           return;
         }
         const declared = Number(response.headers.get("content-length"));

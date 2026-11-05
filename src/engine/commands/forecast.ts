@@ -242,14 +242,17 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
           !runEnv.OPENROUTER_API_KEY?.trim() &&
           availableModels(runEnv).length === 0
         ) {
-          return ctx.send(
+          return refuseCommand(
+            ctx,
             input.entity,
             `No model is available to forecast with. ${providerSetupHint()} Or name models in MARINA_FORECAST_ANALYSTS.`,
           );
         }
         ctx.send(
           input.entity,
-          dim("Researching, checking sources, asking several models… (~20–60 s)"),
+          dim(
+            `Researching, checking sources, asking several models… (usually ${typed ? "2–7 min" : "1–3 min"})`,
+          ),
         );
         if (typed) {
           return (async () => {
@@ -275,7 +278,8 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
                 (saved === undefined ? "" : `\n${dim(`saved as forecast #${saved}`)}`),
             );
           })().catch((err) =>
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Forecast failed: ${err instanceof Error ? err.message : String(err)}`,
             ),
@@ -313,7 +317,8 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
                 : `\n${dim(`saved as forecast #${saved}${sampleId ? ` · scored when ${sampleId} resolves` : " · forecast track <id> <venue>/<ticker> to score it"}`)}`),
           );
         })().catch((err) =>
-          ctx.send(
+          refuseCommand(
+            ctx,
             input.entity,
             `Forecast failed: ${err instanceof Error ? err.message : String(err)}`,
           ),
@@ -527,8 +532,31 @@ export function scaleNote(scale: ForecastScale): string {
   return scale.tier === "degraded" ? `\n${dim(`degraded: ${scale.notes.join("; ")}`)}` : "";
 }
 
+/**
+ * What the answer's `confidence` number actually is, said in its own words. It
+ * can be a probability (a choice with a distribution), the runs' agreement share
+ * (not a probability: three runs all saying "no" is 1.00 however close the call),
+ * or the critic's confidence when it revised. A number shows its ± instead.
+ */
+export function confidenceNote(a: TypedForecastAnswer): string {
+  if (a.confidence === undefined) return "";
+  const top = a.formatted;
+  const p = top !== undefined ? a.distribution?.[top] : undefined;
+  if (p !== undefined) return ` · probability ${(p * 100).toFixed(0)}%`;
+  if (typeof a.prediction === "number" && a.uncertainty?.sd !== undefined)
+    return ` · ± ${Number(a.uncertainty.sd.toPrecision(2))}`;
+  if (a.combined && Math.abs(a.confidence - a.combined.agreement) < 1e-9) {
+    const ok = a.runs.filter((r) => r.status === "ok").length;
+    return ok > 1
+      ? ` · ${Math.round(a.combined.agreement * ok)} of ${ok} runs agree (agreement, not a probability)`
+      : "";
+  }
+  return ` · critic confidence ${a.confidence.toFixed(2)}`;
+}
+
 export function renderTyped(a: TypedForecastAnswer): string {
-  const conf = a.confidence === undefined ? "" : dim(` · confidence ${a.confidence.toFixed(2)}`);
+  const note = confidenceNote(a);
+  const conf = note ? dim(note) : "";
   return [
     header("Forecast"),
     separator(),

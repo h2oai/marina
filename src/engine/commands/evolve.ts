@@ -398,7 +398,7 @@ function handleEvolutionProtocol(
         options,
       });
     } catch (error) {
-      ctx.send(input.entity, error instanceof Error ? error.message : String(error));
+      refuseCommand(ctx, input.entity, error instanceof Error ? error.message : String(error));
       return;
     }
     db.createEvolutionSession({
@@ -873,6 +873,7 @@ function handleTrial(
   run: { id: number; status: string; candidate_ref: string | null },
 ): void {
   const say = (text: string) => ctx.send(input.entity as never, text);
+  const refuse = (text: string) => refuseCommand(ctx, input.entity as never, text);
   // `… result`: the latest stored outcome. A trial started over `world run`
   // outlives the bridge's short connection, so results are kept, not only sent.
   if (input.tokens[3]?.toLowerCase() === "result") {
@@ -881,7 +882,7 @@ function handleTrial(
     return;
   }
   if (process.env.MARINA_COLLECTIVE_CHILD !== "1" && process.env.MARINA_EVOLVE_TRIALS !== "here") {
-    say(
+    refuse(
       "Trials run in a child or parallel world, never this one. From here: `world run <child> evolve trial …` (seed the roles first with `world seed-role`). A dedicated parallel world can opt in with MARINA_EVOLVE_TRIALS=here.",
     );
     return;
@@ -892,23 +893,23 @@ function handleTrial(
     "evolve trial needs rank 4 (builder): it spawns agents and runs benchmarks, which cost real tokens.",
   );
   if (trialFloor) {
-    say(trialFloor);
+    refuse(trialFloor);
     return;
   }
   if (run.status !== "proposed") {
-    say(`Run ${run.id} is ${run.status}; trials measure a proposal before it is evaluated.`);
+    refuse(`Run ${run.id} is ${run.status}; trials measure a proposal before it is evaluated.`);
     return;
   }
   const candidate = /^role:([A-Za-z0-9][A-Za-z0-9_.-]*)$/.exec(run.candidate_ref ?? "")?.[1];
   if (!candidate) {
-    say(`Run ${run.id}'s candidate is "${run.candidate_ref ?? ""}"; a trial needs role:<name>.`);
+    refuse(`Run ${run.id}'s candidate is "${run.candidate_ref ?? ""}"; a trial needs role:<name>.`);
     return;
   }
   const mods = parseModifiers(input.tokens.slice(3), TRIAL_MODS);
   const incumbent = mods.values.incumbent as string | undefined;
   for (const role of [candidate, incumbent].filter((r): r is string => !!r)) {
     if (!db.getRole(role)) {
-      say(
+      refuse(
         `Role "${role}" does not exist in this world — seed it first (\`world seed-role\` from the parent).`,
       );
       return;
@@ -937,16 +938,18 @@ function handleTrial(
       : "";
   const trialDeps = deps.trialDeps?.(opts);
   if (!trialDeps) {
-    say("Trials need the agent runtime and the benchmark runner, which this world does not have.");
+    refuse(
+      "Trials need the agent runtime and the benchmark runner, which this world does not have.",
+    );
     return;
   }
   const gate = checkGateForExecution(db, entity.id, "agent.spawn");
   if (!gate.ok) {
-    say(gate.reason ?? "agent.spawn refused");
+    refuse(gate.reason ?? "agent.spawn refused");
     return;
   }
   if (!beginTrial()) {
-    say("A trial is already running in this world — one at a time.");
+    refuse("A trial is already running in this world — one at a time.");
     return;
   }
   recordGateExecution(db, entity.id, "agent.spawn", gate, `evolve trial run ${run.id}`);
@@ -1084,8 +1087,9 @@ async function handleReplicate(
   run: { id: number; status: string; candidate_ref: string | null },
 ): Promise<void> {
   const say = (text: string) => ctx.send(input.entity as never, text);
+  const refuse = (text: string) => refuseCommand(ctx, input.entity as never, text);
   if (process.env.MARINA_COLLECTIVE_CHILD !== "1" && process.env.MARINA_EVOLVE_TRIALS !== "here") {
-    say(
+    refuse(
       "Replication runs in a child or parallel world, never this one: `world run <child> evolve replicate …`.",
     );
     return;
@@ -1096,23 +1100,25 @@ async function handleReplicate(
     "evolve replicate needs rank 4 (builder): copies are agents that spend real tokens.",
   );
   if (replicateFloor) {
-    say(replicateFloor);
+    refuse(replicateFloor);
     return;
   }
   if (run.status !== "accepted") {
-    say(
+    refuse(
       `Run ${run.id} is ${run.status}; only an accepted run (decided by an independent reviewer) may replicate.`,
     );
     return;
   }
   const role = /^role:([A-Za-z0-9][A-Za-z0-9_.-]*)$/.exec(run.candidate_ref ?? "")?.[1];
   if (!role || !db.getRole(role)) {
-    say(`Run ${run.id}'s candidate "${run.candidate_ref ?? ""}" is not a role that exists here.`);
+    refuse(
+      `Run ${run.id}'s candidate "${run.candidate_ref ?? ""}" is not a role that exists here.`,
+    );
     return;
   }
   const win = earnedWin(db, sessionId, run.id);
   if (!win.ok) {
-    say(win.reason);
+    refuse(win.reason);
     return;
   }
   const { inc, margin, delta } = win;
@@ -1122,7 +1128,7 @@ async function handleReplicate(
     .filter((n) => n.content.startsWith(replicaTag)).length;
   const r = deps.replicateDeps?.();
   if (!r) {
-    say("Replication needs the agent runtime, which this world does not have.");
+    refuse("Replication needs the agent runtime, which this world does not have.");
     return;
   }
   if (replicating.has(run.id)) {
@@ -1131,12 +1137,12 @@ async function handleReplicate(
   }
   const capped = dailyCapRefusal();
   if (capped) {
-    say(`Not replicating: ${capped}.`);
+    refuse(`Not replicating: ${capped}.`);
     return;
   }
   const gate = checkGateForExecution(db, entity.id, "agent.spawn");
   if (!gate.ok) {
-    say(gate.reason ?? "agent.spawn refused");
+    refuse(gate.reason ?? "agent.spawn refused");
     return;
   }
   const standing = getStanding(db, entity.id);
