@@ -24,11 +24,12 @@ export function channelCommand(
       { syntax: "channel list <name> [args]", effect: "read" },
       { syntax: "channel listall", effect: "read" },
       { syntax: "channel listall <name> [args]", effect: "read" },
+      { syntax: "channel read <name> <id>", effect: "read" },
       { syntax: "channel send <name> <message>", effect: "write" },
     ],
     name: "channel",
     aliases: ["ch"],
-    help: "Real-time messaging channels with persistent history.\nUsage: channel list|listall|join|leave|send|history|create\n\nExamples:\n  channel join research\n  channel send research Found something in the archive\n  channel history research 20\n  channel create alerts",
+    help: "Real-time messaging channels with persistent history.\nUsage: channel list|listall|join|leave|send|read|history|create\n\nExamples:\n  channel join research\n  channel send research Found something in the archive\n  channel history research 20\n  channel read research 3041\n  channel create alerts",
     handler: (ctx: RoomContext, input) => {
       const entity = getEntity(input.entity);
       if (!entity) return;
@@ -129,6 +130,51 @@ export function channelCommand(
           }
           channels.removeMember(ch.id, input.entity);
           ctx.send(input.entity, `Left channel "${name}".`);
+          return;
+        }
+
+        case "read": {
+          // One message whole, by id: what a cut-off World Events line points to.
+          const name = tokens[1];
+          const id = Number((tokens[2] ?? "").replace(/^#/, ""));
+          if (!name || !Number.isSafeInteger(id) || id <= 0) {
+            refuseCommand(ctx, input.entity, "Usage: channel read <name> <id>");
+            return;
+          }
+          const ch = channels.getChannelByName(name);
+          if (!ch) {
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Channel "${name}" not found; \`channel list\` shows channels, \`board list\` boards.`,
+            );
+            return;
+          }
+          if (!channels.isMember(ch.id, input.entity)) {
+            refuseCommand(ctx, input.entity, `You are not in channel "${name}". Join it first.`);
+            return;
+          }
+          const m = channels.getMessage(ch.id, id);
+          if (!m) {
+            ctx.send(input.entity, `No message #${id} in channel "${name}".`);
+            return;
+          }
+          const when = new Date(m.createdAt).toISOString().slice(0, 16).replace("T", " ");
+          // Every body line indented: no line of it can read as another sender's.
+          const body = m.content.replace(/\r\n?/g, "\n").replace(/^/gm, "  ");
+          ctx.send(
+            input.entity,
+            `${header(`#${name} message ${m.id}`)} ${m.senderName} · ${when} UTC\n${body}`,
+            name,
+            {
+              channel: name,
+              senderName: m.senderName,
+              content: m.content,
+              messageId: m.id,
+              messageRef: `channel_msg:${m.id}`,
+              ...(m.cause ? { cause: m.cause } : {}),
+            },
+          );
           return;
         }
 
@@ -272,7 +318,7 @@ export function channelCommand(
         default:
           ctx.send(
             input.entity,
-            "Usage: channel list|listall|join|leave|send|history|create <name> [args]",
+            "Usage: channel list|listall|join|leave|send|read|history|create <name> [args]",
           );
       }
     },

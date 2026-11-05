@@ -33,6 +33,7 @@ import {
   LeanAgentAdapter,
   MANDATORY_SECTION_PRIORITY,
   marinaProxyCompat,
+  readCommandFor,
   resolveModel,
   withPromptCacheKey,
 } from "../src/agent/lean-agent-adapter";
@@ -343,14 +344,30 @@ describe("continuation prompt clamps", () => {
   });
 
   it("a clamped direct message says how to read it whole", () => {
-    const line = clampPerceptionLine(`[message] Critic tells you: ${"z".repeat(3000)}`, true, 6568);
+    const line = clampPerceptionLine(
+      `[message] Critic tells you: ${"z".repeat(3000)}`,
+      true,
+      "tell read 6568",
+    );
     expect(line.length).toBeLessThan(PERCEPTION_DETAIL_MAX_CHARS + 80);
     expect(line).toMatch(/\[…\+\d+ chars\] \[read it whole: tell read 6568\]$/);
     // A line that fits carries no pointer; a line with no stored message carries none either.
-    expect(clampPerceptionLine("[message] Critic tells you: short", true, 6568)).toBe(
+    expect(clampPerceptionLine("[message] Critic tells you: short", true, "tell read 6568")).toBe(
       "[message] Critic tells you: short",
     );
     expect(clampPerceptionLine(`[message] ${"z".repeat(3000)}`, true)).not.toContain("tell read");
+  });
+
+  it("the read-it-whole hint names the command for the message's own kind", () => {
+    expect(readCommandFor({ messageRef: "tell:6568" })).toBe("tell read 6568");
+    // A channel post's id is not a tell id: it is read with `channel read`.
+    expect(readCommandFor({ messageRef: "channel_msg:3041", channel: "general" })).toBe(
+      "channel read general 3041",
+    );
+    expect(readCommandFor({ messageRef: "channel_msg:3041" })).toBeUndefined();
+    expect(readCommandFor({ messageRef: "say:abc", messageId: 4 })).toBeUndefined();
+    expect(readCommandFor({ messageId: 3041, channel: "general" })).toBeUndefined();
+    expect(readCommandFor(undefined)).toBeUndefined();
   });
 
   it("gives model_request payloads the larger clamp so the question survives", () => {

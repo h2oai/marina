@@ -267,6 +267,22 @@ export class ChannelManager {
     return delivered !== false;
   }
 
+  /** One message of a channel by id, or undefined when it is not that channel's. */
+  getMessage(channelId: string, id: number): ChannelMessage | undefined {
+    const row = this.db.getChannelMessage(channelId, id);
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      channelId: row.channel_id,
+      senderId: row.sender_id,
+      senderName: row.sender_name,
+      content: row.content,
+      createdAt: row.created_at,
+      ...(row.cause ? { cause: row.cause } : {}),
+      depth: row.depth ?? 0,
+    };
+  }
+
   getHistory(channelId: string, limit = 20): ChannelMessage[] {
     return this.db
       .getChannelHistory(channelId, limit)

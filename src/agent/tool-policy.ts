@@ -694,7 +694,7 @@ export type ResultTrust = "external_tool" | "world_event" | "memory";
 
 /** Commands whose result text is peer MESSAGES (fenced and labelled). */
 const PEER_MESSAGE_READS: Record<string, (words: string[]) => boolean> = {
-  channel: ([a]) => a === "history",
+  channel: ([a]) => a === "history" || a === "read",
   board: ([a]) => !a || has(["list", "read", "search", "history"], a),
   tell: ([a]) => a === "inbox",
   feed: () => true,
