@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 742" width="1180" height="742" role="img" aria-label="Memory architecture: six write paths (memory commands, MCP tools, REST, the agent journal, judged lessons, media text) land in one canonical versioned record history with numeric handles in the same transaction, an FTS5 index and access scopes. One retrieval surface serves five fixed-order tiers within a byte budget to every reader. Each serve is logged; mechanical raters build a per-item posterior that, when ranking is on, re-ranks shared retrieval by at most 0.1. An hourly dream pass proposes typed consolidation ops, checks them mechanically, applies them in a transaction and rolls back in observe mode.">
+<title>Memory: one history, one retrieval surface</title>
+<desc>Memory architecture: six write paths (memory commands, MCP tools, REST, the agent journal, judged lessons, media text) land in one canonical versioned record history with numeric handles in the same transaction, an FTS5 index and access scopes. One retrieval surface serves five fixed-order tiers within a byte budget to every reader. Each serve is logged; mechanical raters build a per-item posterior that, when ranking is on, re-ranks shared retrieval by at most 0.1. An hourly dream pass proposes typed consolidation ops, checks them mechanically, applies them in a transaction and rolls back in observe mode.</desc>
+<style>
+text{font-family:Inter,"Segoe UI",-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif}
+.mono{font-family:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace}
+.h1{font-size:22px;font-weight:700;letter-spacing:-0.2px}
+.h2{font-size:13.5px;font-weight:500}
+.bt{font-size:14px;font-weight:650}
+.bs{font-size:12px}
+.bm{font-size:11.5px}
+.gl{font-size:11.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase}
+.al{font-size:11.5px;font-weight:600}
+.badge{font-size:12px;font-weight:700}
+.bg{fill:#fbfcfd}.ink{fill:#1f2328}.muted{fill:#59636e}.line{stroke:#6e7781}.ah{fill:#6e7781}.pill{fill:#fbfcfd}.grid{stroke:#eaeef2}
+.f-client{fill:#eef3ff}.s-client{stroke:#4c6ef5}.t-client{fill:#1e3a9a}.a-client{fill:#4c6ef5}.ls-client{stroke:#4c6ef5}.f-net{fill:#e7f6f3}.s-net{stroke:#139a86}.t-net{fill:#0b5e52}.a-net{fill:#139a86}.ls-net{stroke:#139a86}.f-engine{fill:#f1edff}.s-engine{stroke:#7048e8}.t-engine{fill:#46249f}.a-engine{fill:#7048e8}.ls-engine{stroke:#7048e8}.f-agent{fill:#fff4e0}.s-agent{stroke:#e08a00}.t-agent{fill:#7a4a00}.a-agent{fill:#e08a00}.ls-agent{stroke:#e08a00}.f-memory{fill:#e9f7ee}.s-memory{stroke:#2b9a4b}.t-memory{fill:#17602d}.a-memory{fill:#2b9a4b}.ls-memory{stroke:#2b9a4b}.f-civic{fill:#fff0f4}.s-civic{stroke:#d6336c}.t-civic{fill:#8f1a43}.a-civic{fill:#d6336c}.ls-civic{stroke:#d6336c}.f-store{fill:#f1f3f5}.s-store{stroke:#5c6773}.t-store{fill:#343a40}.a-store{fill:#5c6773}.ls-store{stroke:#5c6773}.f-ext{fill:#ffffff}.s-ext{stroke:#8c959f}.t-ext{fill:#3b434b}.a-ext{fill:#8c959f}.ls-ext{stroke:#8c959f}.f-neutral{fill:#ffffff}.s-neutral{stroke:#d0d7de}.t-neutral{fill:#1f2328}.a-neutral{fill:#d0d7de}.ls-neutral{stroke:#d0d7de}
+@media (prefers-color-scheme: dark){
+.bg{fill:#0d1117}.ink{fill:#e6edf3}.muted{fill:#9198a1}.line{stroke:#8b949e}.ah{fill:#8b949e}.pill{fill:#0d1117}.grid{stroke:#1c2128}
+.f-client{fill:#141f3d}.s-client{stroke:#6f8cff}.t-client{fill:#b4c6ff}.a-client{fill:#6f8cff}.ls-client{stroke:#6f8cff}.f-net{fill:#0e2a27}.s-net{stroke:#2ec4ad}.t-net{fill:#8fe3d6}.a-net{fill:#2ec4ad}.ls-net{stroke:#2ec4ad}.f-engine{fill:#1e1838}.s-engine{stroke:#9b82ff}.t-engine{fill:#cdbfff}.a-engine{fill:#9b82ff}.ls-engine{stroke:#9b82ff}.f-agent{fill:#2b2010}.s-agent{stroke:#f2a93b}.t-agent{fill:#f8d596}.a-agent{fill:#f2a93b}.ls-agent{stroke:#f2a93b}.f-memory{fill:#0f2818}.s-memory{stroke:#45c46a}.t-memory{fill:#9de0b0}.a-memory{fill:#45c46a}.ls-memory{stroke:#45c46a}.f-civic{fill:#33141f}.s-civic{stroke:#f06595}.t-civic{fill:#f8b3cb}.a-civic{fill:#f06595}.ls-civic{stroke:#f06595}.f-store{fill:#1b2027}.s-store{stroke:#8b96a3}.t-store{fill:#d0d7de}.a-store{fill:#8b96a3}.ls-store{stroke:#8b96a3}.f-ext{fill:#161b22}.s-ext{stroke:#6e7781}.t-ext{fill:#c9d1d9}.a-ext{fill:#6e7781}.ls-ext{stroke:#6e7781}.f-neutral{fill:#161b22}.s-neutral{stroke:#3d444d}.t-neutral{fill:#e6edf3}.a-neutral{fill:#3d444d}.ls-neutral{stroke:#3d444d}
+}</style>
+<defs><marker id="ah-client" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-client"/></marker><marker id="ah-net" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-net"/></marker><marker id="ah-engine" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-engine"/></marker><marker id="ah-agent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-agent"/></marker><marker id="ah-memory" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-memory"/></marker><marker id="ah-civic" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-civic"/></marker><marker id="ah-store" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-store"/></marker><marker id="ah-ext" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-ext"/></marker><marker id="ah-neutral" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-neutral"/></marker><marker id="ah-line" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="ah"/></marker></defs>
+<rect class="bg" x="0" y="0" width="1180" height="742" rx="14"/>
+<text class="ink h1" x="32" y="44">Memory: one history, one retrieval surface</text>
+<text class="muted h2" x="32" y="66">Every write path lands in one versioned record history; every reader is served through the same five tiers; use is measured and consolidation is checked.</text>
+<rect x="24" y="98" width="236" height="330" rx="14" class="s-client" fill="none" stroke-width="1.4" stroke-dasharray="7 5"/>
+<rect x="40" y="87" width="117.59000000000002" height="22" rx="11" class="f-client s-client" stroke-width="1.2"/>
+<text x="98.79500000000002" y="102" text-anchor="middle" class="t-client gl">Write paths</text>
+
+<rect x="32" y="118" width="220" height="44" rx="8" class="f-client s-client" stroke-width="1.1"/>
+<text x="44" y="137" text-anchor="start" class="t-client bt">memory commands</text>
+<text x="44" y="154" text-anchor="start" class="muted bm">note · kv · reflect</text>
+<rect x="32" y="170" width="220" height="44" rx="8" class="f-client s-client" stroke-width="1.1"/>
+<text x="44" y="189" text-anchor="start" class="t-client bt">MCP memory tools</text>
+<text x="44" y="206" text-anchor="start" class="muted bm">think · memory</text>
+<rect x="32" y="222" width="220" height="44" rx="8" class="f-client s-client" stroke-width="1.1"/>
+<text x="44" y="241" text-anchor="start" class="t-client bt">REST</text>
+<text x="44" y="258" text-anchor="start" class="muted bm">/mem · /v1/memory</text>
+<rect x="32" y="274" width="220" height="44" rx="8" class="f-client s-client" stroke-width="1.1"/>
+<text x="44" y="293" text-anchor="start" class="t-client bt">Agent journal</text>
+<text x="44" y="310" text-anchor="start" class="muted bm">every message</text>
+<rect x="32" y="326" width="220" height="44" rx="8" class="f-client s-client" stroke-width="1.1"/>
+<text x="44" y="345" text-anchor="start" class="t-client bt">Judged lessons</text>
+<text x="44" y="362" text-anchor="start" class="muted bm">from outcomes</text>
+<rect x="32" y="378" width="220" height="44" rx="8" class="f-client s-client" stroke-width="1.1"/>
+<text x="44" y="397" text-anchor="start" class="t-client bt">Media text</text>
+<text x="44" y="414" text-anchor="start" class="muted bm">captions · OCR · PDFs</text>
+<rect x="340" y="112" width="440" height="316" rx="12" class="f-memory s-memory" stroke-width="2"/>
+<text x="358" y="140" text-anchor="start" class="t-memory bt">One canonical record history</text>
+<text x="358" y="159" text-anchor="start" class="mono t-memory bm">src/persistence/db-memory-service.ts</text>
+<rect x="356" y="174" width="408" height="86" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="370" y="196" text-anchor="start" class="t-neutral bt">Versioned records</text>
+<text x="370" y="215" text-anchor="start" class="bs ink">provenance · verification · known-at time</text>
+<text x="370" y="231.5" text-anchor="start" class="bs ink">a correction is a new version; resolve closes the loser</text>
+<text x="370" y="248" text-anchor="start" class="bs ink">tiers: fact · reflection · skill · core · process</text>
+<rect x="356" y="270" width="198" height="70" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="370" y="292" text-anchor="start" class="t-neutral bt">Numeric handles</text>
+<text x="370" y="311" text-anchor="start" class="bs ink">note #N, pools, ACLs</text>
+<text x="370" y="327.5" text-anchor="start" class="bs ink">same SQLite transaction</text>
+<rect x="566" y="270" width="198" height="70" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="580" y="292" text-anchor="start" class="t-neutral bt">FTS5 index</text>
+<text x="580" y="311" text-anchor="start" class="bs ink">lexical by default;</text>
+<text x="580" y="327.5" text-anchor="start" class="bs ink">embeddings evidence-gated</text>
+<rect x="356" y="352" width="408" height="60" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="370" y="374" text-anchor="start" class="t-neutral bt">Access</text>
+<text x="370" y="393" text-anchor="start" class="bs ink">own space · shared pools · members-only crew pools</text>
+<path d="M260,269 L340,269" fill="none" class="ls-client" stroke-width="2.2" marker-end="url(#ah-client)"/>
+<rect x="273.68" y="237" width="52.64" height="20" rx="10" class="pill"/>
+<text x="300" y="251" text-anchor="middle" class=" al t-client">writes</text>
+<rect x="840" y="112" width="308" height="316" rx="12" class="f-agent s-agent" stroke-width="1.6"/>
+<text x="856" y="140" text-anchor="start" class="t-agent bt">One retrieval surface</text>
+<text x="856" y="159" text-anchor="start" class="mono t-agent bm">buildUnifiedContext</text>
+<rect x="856" y="172" width="276" height="24" rx="5" class="bg s-agent" stroke-width="1"/>
+<text x="866" y="188.5" text-anchor="start" class="mono t-agent bm">1  [skills]</text>
+<rect x="856" y="202" width="258" height="24" rx="5" class="bg s-agent" stroke-width="1"/>
+<text x="866" y="218.5" text-anchor="start" class="mono t-agent bm">2  [trusted]</text>
+<rect x="856" y="232" width="240" height="24" rx="5" class="bg s-agent" stroke-width="1"/>
+<text x="866" y="248.5" text-anchor="start" class="mono t-agent bm">3  [evidence]</text>
+<rect x="856" y="262" width="222" height="24" rx="5" class="bg s-agent" stroke-width="1"/>
+<text x="866" y="278.5" text-anchor="start" class="mono t-agent bm">4  [proposal]</text>
+<rect x="856" y="292" width="204" height="24" rx="5" class="bg s-agent" stroke-width="1"/>
+<text x="866" y="308.5" text-anchor="start" class="mono t-agent bm">5  [unverified]</text>
+<text x="856" y="338" text-anchor="start" class="muted bs">fixed order, one byte budget</text>
+<text x="856" y="358" text-anchor="start" class="muted bs">as-of fence: only what was known</text>
+<text x="856" y="384" text-anchor="start" class="ink bs">prompt · recall · /mem/context ·</text>
+<text x="856" y="402" text-anchor="start" class="ink bs">MCP context · passthru injection</text>
+<path d="M780,269 L840,269" fill="none" class="ls-agent" stroke-width="2.2" marker-end="url(#ah-agent)"/>
+<rect x="783.68" y="237" width="52.64" height="20" rx="10" class="pill"/>
+<text x="810" y="251" text-anchor="middle" class=" al t-agent">served</text>
+<rect x="32" y="484" width="520" height="230" rx="14" class="s-memory" fill="none" stroke-width="1.4"/>
+<rect x="348.89" y="473" width="187.11" height="22" rx="11" class="f-memory s-memory" stroke-width="1.2"/>
+<text x="442.445" y="488" text-anchor="middle" class="t-memory gl">Usefulness evidence</text>
+
+<rect x="48" y="506" width="150" height="70" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="62" y="528" text-anchor="start" class="t-neutral bt">Served</text>
+<text x="62" y="547" text-anchor="start" class="bs ink">one row per item</text>
+<text x="62" y="563.5" text-anchor="start" class="mono bm t-neutral" opacity="0.9">memory_served</text>
+<rect x="222" y="506" width="314" height="70" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="236" y="528" text-anchor="start" class="t-neutral bt">Raters (mechanical)</text>
+<text x="236" y="547" text-anchor="start" class="bs ink">citation · outcome · explicit · unused · repeat</text>
+<rect x="48" y="600" width="230" height="96" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="62" y="622" text-anchor="start" class="t-neutral bt">Posterior per item</text>
+<text x="62" y="641" text-anchor="start" class="bs ink">(1+α) / (2+α+β)</text>
+<text x="62" y="657.5" text-anchor="start" class="bs ink">self-ratings excluded</text>
+<text x="62" y="674" text-anchor="start" class="bs ink">for others</text>
+<rect x="302" y="600" width="234" height="96" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="316" y="622" text-anchor="start" class="t-neutral bt">Bounded re-rank</text>
+<text x="316" y="641" text-anchor="start" class="bs ink">±0.1 on shared retrieval when</text>
+<text x="316" y="657.5" text-anchor="start" class="bs ink">ranking is on (observe by</text>
+<text x="316" y="674" text-anchor="start" class="bs ink">default); never own notes</text>
+<path d="M198,541 L222,541" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)"/>
+<path d="M379,576 L379.0,582.0 Q379,588 373.0,588.0 L169.0,588.0 Q163,588 163.0,594.0 L163,600" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)"/>
+<path d="M278,648 L302,648" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)"/>
+<path d="M994,428 L994.0,448.0 Q994,458 984.0,458.0 L133.0,458.0 Q123,458 123.0,468.0 L123,506" fill="none" class="ls-agent" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah-agent)"/>
+<rect x="338.44" y="448" width="323.12" height="20" rx="10" class="pill"/>
+<text x="500" y="462" text-anchor="middle" class=" al t-agent">every serve is logged — exposure, not usefulness</text>
+<rect x="576" y="484" width="572" height="230" rx="14" class="s-memory" fill="none" stroke-width="1.4"/>
+<rect x="592" y="473" width="187.11" height="22" rx="11" class="f-memory s-memory" stroke-width="1.2"/>
+<text x="685.5550000000001" y="488" text-anchor="middle" class="t-memory gl">Dream pass — hourly</text>
+
+<rect x="592" y="506" width="124.5" height="76" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="602" y="528" text-anchor="start" class="t-neutral bt">Gates</text>
+<text x="602" y="547" text-anchor="start" class="bs ink">new notes · quiet</text>
+<text x="602" y="563.5" text-anchor="start" class="bs ink">cooldown · budget</text>
+<path d="M716.5,544 L730.5,544" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)"/>
+<rect x="730.5" y="506" width="124.5" height="76" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="740.5" y="528" text-anchor="start" class="t-neutral bt">Gather</text>
+<text x="740.5" y="547" text-anchor="start" class="bs ink">own notes</text>
+<text x="740.5" y="563.5" text-anchor="start" class="bs ink">+ use evidence</text>
+<path d="M855,544 L869,544" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)"/>
+<rect x="869" y="506" width="124.5" height="76" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="879" y="528" text-anchor="start" class="t-neutral bt">One cheap call</text>
+<text x="879" y="547" text-anchor="start" class="bs ink">proposes typed</text>
+<text x="879" y="563.5" text-anchor="start" class="bs ink">ops on the notes</text>
+<path d="M993.5,544 L1007.5,544" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)"/>
+<rect x="1007.5" y="506" width="124.5" height="76" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="1017.5" y="528" text-anchor="start" class="t-neutral bt">Checks</text>
+<text x="1017.5" y="547" text-anchor="start" class="bs ink">taint · coverage</text>
+<text x="1017.5" y="563.5" text-anchor="start" class="bs ink">faithfulness</text>
+<rect x="592" y="606" width="263" height="90" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="606" y="628" text-anchor="start" class="t-neutral bt">Apply in a transaction</text>
+<text x="606" y="647" text-anchor="start" class="bs ink">re-run probes on that view;</text>
+<text x="606" y="663.5" text-anchor="start" class="bs ink">a lost probe rejects the set</text>
+<text x="606" y="680" text-anchor="start" class="bs ink">observe (default): roll back</text>
+<rect x="869" y="606" width="263" height="90" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="883" y="628" text-anchor="start" class="t-neutral bt">on: keep, or propose</text>
+<text x="883" y="647" text-anchor="start" class="bs ink">merge · link · decay applied</text>
+<text x="883" y="663.5" text-anchor="start" class="bs ink">supersede → owner adopts</text>
+<text x="883" y="680" text-anchor="start" class="bs ink">rollback any time</text>
+<path d="M1069.75,582 L1069.8,588.0 Q1069.75,594 1063.8,594.0 L729.5,594.0 Q723.5,594 723.5,600.0 L723.5,606" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)"/>
+<path d="M855,651 L869,651" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)"/>
+<path d="M720,428 L720,472" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)" marker-start="url(#ah-memory)"/>
+</svg>

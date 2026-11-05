@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 738" width="1180" height="738" role="img" aria-label="Learning loops: task verdicts, Code Mode checks and resolved forecasts each become one append-only outcomes row, while recurring patterns in agents' own work go straight to the lesson learner; durable deliveries feed a judged lessons consumer, a usefulness consumer that rates the memory served during the work, and forecast history for routing; lessons and evidence are served back to agents' prompts, recall, forecasts and the passthru lessons instrument. Defaults change only when evidence shows a held-out win past the fishing margin and the promotion is filed under the role.edit gate, never by the run's author; every surface reads defaults through one resolver.">
+<title>How Marina learns</title>
+<desc>Learning loops: task verdicts, Code Mode checks and resolved forecasts each become one append-only outcomes row, while recurring patterns in agents' own work go straight to the lesson learner; durable deliveries feed a judged lessons consumer, a usefulness consumer that rates the memory served during the work, and forecast history for routing; lessons and evidence are served back to agents' prompts, recall, forecasts and the passthru lessons instrument. Defaults change only when evidence shows a held-out win past the fishing margin and the promotion is filed under the role.edit gate, never by the run's author; every surface reads defaults through one resolver.</desc>
+<style>
+text{font-family:Inter,"Segoe UI",-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif}
+.mono{font-family:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace}
+.h1{font-size:22px;font-weight:700;letter-spacing:-0.2px}
+.h2{font-size:13.5px;font-weight:500}
+.bt{font-size:14px;font-weight:650}
+.bs{font-size:12px}
+.bm{font-size:11.5px}
+.gl{font-size:11.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase}
+.al{font-size:11.5px;font-weight:600}
+.badge{font-size:12px;font-weight:700}
+.bg{fill:#fbfcfd}.ink{fill:#1f2328}.muted{fill:#59636e}.line{stroke:#6e7781}.ah{fill:#6e7781}.pill{fill:#fbfcfd}.grid{stroke:#eaeef2}
+.f-client{fill:#eef3ff}.s-client{stroke:#4c6ef5}.t-client{fill:#1e3a9a}.a-client{fill:#4c6ef5}.ls-client{stroke:#4c6ef5}.f-net{fill:#e7f6f3}.s-net{stroke:#139a86}.t-net{fill:#0b5e52}.a-net{fill:#139a86}.ls-net{stroke:#139a86}.f-engine{fill:#f1edff}.s-engine{stroke:#7048e8}.t-engine{fill:#46249f}.a-engine{fill:#7048e8}.ls-engine{stroke:#7048e8}.f-agent{fill:#fff4e0}.s-agent{stroke:#e08a00}.t-agent{fill:#7a4a00}.a-agent{fill:#e08a00}.ls-agent{stroke:#e08a00}.f-memory{fill:#e9f7ee}.s-memory{stroke:#2b9a4b}.t-memory{fill:#17602d}.a-memory{fill:#2b9a4b}.ls-memory{stroke:#2b9a4b}.f-civic{fill:#fff0f4}.s-civic{stroke:#d6336c}.t-civic{fill:#8f1a43}.a-civic{fill:#d6336c}.ls-civic{stroke:#d6336c}.f-store{fill:#f1f3f5}.s-store{stroke:#5c6773}.t-store{fill:#343a40}.a-store{fill:#5c6773}.ls-store{stroke:#5c6773}.f-ext{fill:#ffffff}.s-ext{stroke:#8c959f}.t-ext{fill:#3b434b}.a-ext{fill:#8c959f}.ls-ext{stroke:#8c959f}.f-neutral{fill:#ffffff}.s-neutral{stroke:#d0d7de}.t-neutral{fill:#1f2328}.a-neutral{fill:#d0d7de}.ls-neutral{stroke:#d0d7de}
+@media (prefers-color-scheme: dark){
+.bg{fill:#0d1117}.ink{fill:#e6edf3}.muted{fill:#9198a1}.line{stroke:#8b949e}.ah{fill:#8b949e}.pill{fill:#0d1117}.grid{stroke:#1c2128}
+.f-client{fill:#141f3d}.s-client{stroke:#6f8cff}.t-client{fill:#b4c6ff}.a-client{fill:#6f8cff}.ls-client{stroke:#6f8cff}.f-net{fill:#0e2a27}.s-net{stroke:#2ec4ad}.t-net{fill:#8fe3d6}.a-net{fill:#2ec4ad}.ls-net{stroke:#2ec4ad}.f-engine{fill:#1e1838}.s-engine{stroke:#9b82ff}.t-engine{fill:#cdbfff}.a-engine{fill:#9b82ff}.ls-engine{stroke:#9b82ff}.f-agent{fill:#2b2010}.s-agent{stroke:#f2a93b}.t-agent{fill:#f8d596}.a-agent{fill:#f2a93b}.ls-agent{stroke:#f2a93b}.f-memory{fill:#0f2818}.s-memory{stroke:#45c46a}.t-memory{fill:#9de0b0}.a-memory{fill:#45c46a}.ls-memory{stroke:#45c46a}.f-civic{fill:#33141f}.s-civic{stroke:#f06595}.t-civic{fill:#f8b3cb}.a-civic{fill:#f06595}.ls-civic{stroke:#f06595}.f-store{fill:#1b2027}.s-store{stroke:#8b96a3}.t-store{fill:#d0d7de}.a-store{fill:#8b96a3}.ls-store{stroke:#8b96a3}.f-ext{fill:#161b22}.s-ext{stroke:#6e7781}.t-ext{fill:#c9d1d9}.a-ext{fill:#6e7781}.ls-ext{stroke:#6e7781}.f-neutral{fill:#161b22}.s-neutral{stroke:#3d444d}.t-neutral{fill:#e6edf3}.a-neutral{fill:#3d444d}.ls-neutral{stroke:#3d444d}
+}</style>
+<defs><marker id="ah-client" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-client"/></marker><marker id="ah-net" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-net"/></marker><marker id="ah-engine" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-engine"/></marker><marker id="ah-agent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-agent"/></marker><marker id="ah-memory" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-memory"/></marker><marker id="ah-civic" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-civic"/></marker><marker id="ah-store" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-store"/></marker><marker id="ah-ext" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-ext"/></marker><marker id="ah-neutral" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-neutral"/></marker><marker id="ah-line" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="ah"/></marker></defs>
+<rect class="bg" x="0" y="0" width="1180" height="738" rx="14"/>
+<text class="ink h1" x="32" y="44">How Marina learns</text>
+<text class="muted h2" x="32" y="66">Outcomes become judged lessons that are served back to the next attempt. Defaults move only on held-out evidence.</text>
+<rect x="32" y="108" width="1116" height="372" rx="14" class="s-memory" fill="none" stroke-width="1.4"/>
+<rect x="48" y="97" width="204.49000000000004" height="22" rx="11" class="f-memory s-memory" stroke-width="1.2"/>
+<text x="150.245" y="112" text-anchor="middle" class="t-memory gl">Every outcome teaches</text>
+
+<rect x="52" y="204" width="220" height="52" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="66" y="226" text-anchor="start" class="t-neutral bt">Task verdicts</text>
+<text x="66" y="245" text-anchor="start" class="bs ink">approve · bounce</text>
+<rect x="52" y="266" width="220" height="52" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="66" y="288" text-anchor="start" class="t-neutral bt">Code Mode checks</text>
+<text x="66" y="307" text-anchor="start" class="bs ink">tests and verification</text>
+<rect x="52" y="328" width="220" height="52" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="66" y="350" text-anchor="start" class="t-neutral bt">Resolved forecasts</text>
+<text x="66" y="369" text-anchor="start" class="bs ink">scored once</text>
+<rect x="312" y="230" width="210" height="124" rx="9" class="f-memory s-memory" stroke-width="2"/>
+<text x="326" y="252" text-anchor="start" class="t-memory bt">One outcomes row</text>
+<text x="326" y="271" text-anchor="start" class="bs ink">append-only, one per subject</text>
+<text x="326" y="287.5" text-anchor="start" class="bs ink">numbers and labels,</text>
+<text x="326" y="304" text-anchor="start" class="bs ink">never question text</text>
+<text x="326" y="320.5" text-anchor="start" class="mono bm t-memory" opacity="0.9">recordResolved</text>
+<path d="M272,292 L312,292" fill="none" class="ls-memory" stroke-width="2" marker-end="url(#ah-memory)"/>
+<rect x="312" y="134" width="210" height="52" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="326" y="156" text-anchor="start" class="t-neutral bt">Lessons from work</text>
+<text x="326" y="175" text-anchor="start" class="bs ink">tool errors · gate holds</text>
+<path d="M522,160 L568,160" fill="none" class="ls-memory" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah-memory)"/>
+<rect x="568" y="136" width="286" height="72" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="582" y="158" text-anchor="start" class="t-neutral bt">lessons</text>
+<text x="582" y="177" text-anchor="start" class="bs ink">one judged, general rule —</text>
+<text x="582" y="193.5" text-anchor="start" class="bs ink">only trusted rules are served</text>
+<path d="M522,292 L534.0,292.0 Q544,292 544.0,282.0 L544.0,182.0 Q544,172 554.0,172.0 L568,172" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)"/>
+<rect x="568" y="220" width="286" height="72" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="582" y="242" text-anchor="start" class="t-neutral bt">usefulness</text>
+<text x="582" y="261" text-anchor="start" class="bs ink">rates the memory that was</text>
+<text x="582" y="277.5" text-anchor="start" class="bs ink">served during the work</text>
+<path d="M522,292 L534.0,292.0 Q544,292 544.0,282.0 L544.0,266.0 Q544,256 554.0,256.0 L568,256" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)"/>
+<rect x="568" y="304" width="286" height="72" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="582" y="326" text-anchor="start" class="t-neutral bt">history</text>
+<text x="582" y="345" text-anchor="start" class="bs ink">forecasts only: formation</text>
+<text x="582" y="361.5" text-anchor="start" class="bs ink">and score, for routing</text>
+<path d="M522,292 L534.0,292.0 Q544,292 544.0,302.0 L544.0,330.0 Q544,340 554.0,340.0 L568,340" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)"/>
+<text x="552" y="392" text-anchor="start" class="muted bm">durable delivery per consumer</text>
+<text x="552" y="410" text-anchor="start" class="muted bm">waits when over budget or a model</text>
+<text x="552" y="428" text-anchor="start" class="muted bm">is down; never dropped</text>
+<rect x="900" y="136" width="228" height="72" rx="9" class="f-agent s-agent" stroke-width="1.3"/>
+<text x="914" y="158" text-anchor="start" class="t-agent bt">Agents and callers</text>
+<text x="914" y="177" text-anchor="start" class="bs ink">[Lessons] prompt line · recall</text>
+<text x="914" y="193.5" text-anchor="start" class="bs ink">· the /v1 lessons instrument</text>
+<path d="M854,172 L900,172" fill="none" class="ls-agent" stroke-width="1.6" marker-end="url(#ah-agent)"/>
+<rect x="900" y="220" width="228" height="72" rx="9" class="f-agent s-agent" stroke-width="1.3"/>
+<text x="914" y="242" text-anchor="start" class="t-agent bt">Shared-recall ranking</text>
+<text x="914" y="261" text-anchor="start" class="bs ink">a bounded term; observe</text>
+<text x="914" y="277.5" text-anchor="start" class="bs ink">mode by default</text>
+<path d="M854,256 L900,256" fill="none" class="ls-agent" stroke-width="1.6" marker-end="url(#ah-agent)"/>
+<rect x="900" y="304" width="228" height="72" rx="9" class="f-agent s-agent" stroke-width="1.3"/>
+<text x="914" y="326" text-anchor="start" class="t-agent bt">Forecast routing</text>
+<text x="914" y="345" text-anchor="start" class="bs ink">which formation to run</text>
+<text x="914" y="361.5" text-anchor="start" class="bs ink">for this kind of question</text>
+<path d="M854,340 L900,340" fill="none" class="ls-agent" stroke-width="1.6" marker-end="url(#ah-agent)"/>
+<path d="M1014,376 L1014.0,440.0 Q1014,450 1004.0,450.0 L172.0,450.0 Q162,450 162.0,440.0 L162,380" fill="none" class="ls-agent" stroke-width="2" marker-end="url(#ah-agent)"/>
+<rect x="358.34" y="440" width="355.32000000000005" height="20" rx="10" class="pill"/>
+<text x="536" y="454" text-anchor="middle" class=" al t-agent">the next attempt starts with what the last one taught</text>
+<rect x="32" y="520" width="1116" height="190" rx="14" class="s-civic" fill="none" stroke-width="1.4"/>
+<rect x="48" y="509" width="369.6" height="22" rx="11" class="f-civic s-civic" stroke-width="1.2"/>
+<text x="232.8" y="524" text-anchor="middle" class="t-civic gl">Defaults change only by earned promotion</text>
+
+<rect x="52" y="548" width="248" height="86" rx="9" class="f-store s-store" stroke-width="1.3"/>
+<text x="66" y="570" text-anchor="start" class="t-store bt">Evidence</text>
+<text x="66" y="589" text-anchor="start" class="bs ink">benchmark ledger (ids and</text>
+<text x="66" y="605.5" text-anchor="start" class="bs ink">numbers only) · live work</text>
+<path d="M300,591 L328,591" fill="none" class="ls-civic" stroke-width="1.6" marker-end="url(#ah-civic)"/>
+<rect x="328" y="548" width="248" height="86" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="342" y="570" text-anchor="start" class="t-neutral bt">Held-out win</text>
+<text x="342" y="589" text-anchor="start" class="bs ink">interval above zero, gain</text>
+<text x="342" y="605.5" text-anchor="start" class="bs ink">past the fishing margin</text>
+<path d="M576,591 L604,591" fill="none" class="ls-civic" stroke-width="1.6" marker-end="url(#ah-civic)"/>
+<rect x="604" y="548" width="248" height="86" rx="9" class="f-civic s-civic" stroke-width="1.3"/>
+<text x="618" y="570" text-anchor="start" class="t-civic bt">Filed under role.edit</text>
+<text x="618" y="589" text-anchor="start" class="bs ink">never by the run's author;</text>
+<text x="618" y="605.5" text-anchor="start" class="bs ink">live role-model: a person</text>
+<path d="M852,591 L880,591" fill="none" class="ls-civic" stroke-width="1.6" marker-end="url(#ah-civic)"/>
+<rect x="880" y="548" width="248" height="86" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="894" y="570" text-anchor="start" class="t-neutral bt">Default slot</text>
+<text x="894" y="589" text-anchor="start" class="bs ink">env › local › family ›</text>
+<text x="894" y="605.5" text-anchor="start" class="bs ink">upstream seed › built-in</text>
+<text x="52" y="664" text-anchor="start" class="ink bs">Every surface reads a default through one traced resolver; an invalid run never frees a promoted slot.</text>
+<text x="52" y="684" text-anchor="start" class="mono t-civic bm">src/engine/default-resolution.ts · src/engine/benchmark-promotion.ts</text>
+</svg>

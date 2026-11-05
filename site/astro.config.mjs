@@ -41,6 +41,7 @@ export default defineConfig({
             { label: "Connecting", slug: "docs/guides/connecting" },
             { label: "Commands", slug: "docs/guides/commands" },
             { label: "How Marina differs", slug: "docs/guides/how-marina-differs" },
+            { label: "Architecture in diagrams", slug: "docs/architecture/overview" },
             { label: "Troubleshooting", slug: "docs/guides/troubleshooting" },
           ],
         },

@@ -4,6 +4,7 @@ These pages are the design and reference material for contributors: how each sub
 
 | Page | Covers |
 |---|---|
+| [overview.md](overview.md) | **Start here.** Eight diagrams of the whole system: who connects, where the code lives, the life of a command, the agent loop, memory, trust, the `/v1` model gateway, and how Marina learns |
 | [civic-substrate.md](civic-substrate.md) | Standing ledger and decay, rank derivation, the 15 safety gates, trust profile (`local` / `shared` / `public`), autonomy posture and the retired witness ladder, challenges, the as-of fence, exec-approver chain, Code Mode dispatch, Flywheel sandbox boundary |
 | [chronicle.md](chronicle.md) | Chronicle table, read/write commands, Chronicler agent, citation as recognition (not standing), `/who/<name>` pages |
 | [worlds.md](worlds.md) | World templates and the `MARINA_WORLD` catalogue, `seed()` semantics, room-agent spawning, auth, and cost control |

@@ -162,4 +162,4 @@ none submits anything by itself.
 - [Authentication](../authentication.md): optional sign-in for shared and public deployments.
 
 Changing Marina itself? Start with [`CLAUDE.md`](../../CLAUDE.md) for the rules every change follows,
-then the [architecture deep dives](../architecture/README.md).
+then [the architecture in diagrams](../architecture/overview.md) and the [architecture deep dives](../architecture/README.md).

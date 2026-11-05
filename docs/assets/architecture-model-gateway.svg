@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 548" width="1180" height="548" role="img" aria-label="Model gateway: callers (compatible apps, Marina's own agents, benchmark runs with capped keys) pass the edge checks — host allowlist, bearer auth, rate limit and the daily usage cap. In passthru mode tier aliases resolve per request and identified callers get the instrument stack (by default lessons, obligations, argcheck and learn; context, verify and ensemble on request) before the upstream call, which avoids rate-limited routes and falls back to the same model via OpenRouter, labelled. In agents mode the question is answered by residents in the world. Every response records its usage once and emits trace events.">
+<title>The model gateway: /v1</title>
+<desc>Model gateway: callers (compatible apps, Marina's own agents, benchmark runs with capped keys) pass the edge checks — host allowlist, bearer auth, rate limit and the daily usage cap. In passthru mode tier aliases resolve per request and identified callers get the instrument stack (by default lessons, obligations, argcheck and learn; context, verify and ensemble on request) before the upstream call, which avoids rate-limited routes and falls back to the same model via OpenRouter, labelled. In agents mode the question is answered by residents in the world. Every response records its usage once and emits trace events.</desc>
+<style>
+text{font-family:Inter,"Segoe UI",-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif}
+.mono{font-family:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace}
+.h1{font-size:22px;font-weight:700;letter-spacing:-0.2px}
+.h2{font-size:13.5px;font-weight:500}
+.bt{font-size:14px;font-weight:650}
+.bs{font-size:12px}
+.bm{font-size:11.5px}
+.gl{font-size:11.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase}
+.al{font-size:11.5px;font-weight:600}
+.badge{font-size:12px;font-weight:700}
+.bg{fill:#fbfcfd}.ink{fill:#1f2328}.muted{fill:#59636e}.line{stroke:#6e7781}.ah{fill:#6e7781}.pill{fill:#fbfcfd}.grid{stroke:#eaeef2}
+.f-client{fill:#eef3ff}.s-client{stroke:#4c6ef5}.t-client{fill:#1e3a9a}.a-client{fill:#4c6ef5}.ls-client{stroke:#4c6ef5}.f-net{fill:#e7f6f3}.s-net{stroke:#139a86}.t-net{fill:#0b5e52}.a-net{fill:#139a86}.ls-net{stroke:#139a86}.f-engine{fill:#f1edff}.s-engine{stroke:#7048e8}.t-engine{fill:#46249f}.a-engine{fill:#7048e8}.ls-engine{stroke:#7048e8}.f-agent{fill:#fff4e0}.s-agent{stroke:#e08a00}.t-agent{fill:#7a4a00}.a-agent{fill:#e08a00}.ls-agent{stroke:#e08a00}.f-memory{fill:#e9f7ee}.s-memory{stroke:#2b9a4b}.t-memory{fill:#17602d}.a-memory{fill:#2b9a4b}.ls-memory{stroke:#2b9a4b}.f-civic{fill:#fff0f4}.s-civic{stroke:#d6336c}.t-civic{fill:#8f1a43}.a-civic{fill:#d6336c}.ls-civic{stroke:#d6336c}.f-store{fill:#f1f3f5}.s-store{stroke:#5c6773}.t-store{fill:#343a40}.a-store{fill:#5c6773}.ls-store{stroke:#5c6773}.f-ext{fill:#ffffff}.s-ext{stroke:#8c959f}.t-ext{fill:#3b434b}.a-ext{fill:#8c959f}.ls-ext{stroke:#8c959f}.f-neutral{fill:#ffffff}.s-neutral{stroke:#d0d7de}.t-neutral{fill:#1f2328}.a-neutral{fill:#d0d7de}.ls-neutral{stroke:#d0d7de}
+@media (prefers-color-scheme: dark){
+.bg{fill:#0d1117}.ink{fill:#e6edf3}.muted{fill:#9198a1}.line{stroke:#8b949e}.ah{fill:#8b949e}.pill{fill:#0d1117}.grid{stroke:#1c2128}
+.f-client{fill:#141f3d}.s-client{stroke:#6f8cff}.t-client{fill:#b4c6ff}.a-client{fill:#6f8cff}.ls-client{stroke:#6f8cff}.f-net{fill:#0e2a27}.s-net{stroke:#2ec4ad}.t-net{fill:#8fe3d6}.a-net{fill:#2ec4ad}.ls-net{stroke:#2ec4ad}.f-engine{fill:#1e1838}.s-engine{stroke:#9b82ff}.t-engine{fill:#cdbfff}.a-engine{fill:#9b82ff}.ls-engine{stroke:#9b82ff}.f-agent{fill:#2b2010}.s-agent{stroke:#f2a93b}.t-agent{fill:#f8d596}.a-agent{fill:#f2a93b}.ls-agent{stroke:#f2a93b}.f-memory{fill:#0f2818}.s-memory{stroke:#45c46a}.t-memory{fill:#9de0b0}.a-memory{fill:#45c46a}.ls-memory{stroke:#45c46a}.f-civic{fill:#33141f}.s-civic{stroke:#f06595}.t-civic{fill:#f8b3cb}.a-civic{fill:#f06595}.ls-civic{stroke:#f06595}.f-store{fill:#1b2027}.s-store{stroke:#8b96a3}.t-store{fill:#d0d7de}.a-store{fill:#8b96a3}.ls-store{stroke:#8b96a3}.f-ext{fill:#161b22}.s-ext{stroke:#6e7781}.t-ext{fill:#c9d1d9}.a-ext{fill:#6e7781}.ls-ext{stroke:#6e7781}.f-neutral{fill:#161b22}.s-neutral{stroke:#3d444d}.t-neutral{fill:#e6edf3}.a-neutral{fill:#3d444d}.ls-neutral{stroke:#3d444d}
+}</style>
+<defs><marker id="ah-client" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-client"/></marker><marker id="ah-net" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-net"/></marker><marker id="ah-engine" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-engine"/></marker><marker id="ah-agent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-agent"/></marker><marker id="ah-memory" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-memory"/></marker><marker id="ah-civic" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-civic"/></marker><marker id="ah-store" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-store"/></marker><marker id="ah-ext" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-ext"/></marker><marker id="ah-neutral" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-neutral"/></marker><marker id="ah-line" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="ah"/></marker></defs>
+<rect class="bg" x="0" y="0" width="1180" height="548" rx="14"/>
+<text class="ink h1" x="32" y="44">The model gateway: /v1</text>
+<text class="muted h2" x="32" y="66">One OpenAI-, Anthropic- and Ollama-compatible endpoint, used by outside apps and by Marina's own agents on marina/* models.</text>
+<rect x="32" y="106" width="236" height="228" rx="14" class="s-client" fill="none" stroke-width="1.4" stroke-dasharray="7 5"/>
+<rect x="48" y="95" width="82.83000000000001" height="22" rx="11" class="f-client s-client" stroke-width="1.2"/>
+<text x="89.415" y="110" text-anchor="middle" class="t-client gl">Callers</text>
+
+<rect x="44" y="124" width="212" height="58" rx="9" class="f-client s-client" stroke-width="1.3"/>
+<text x="58" y="146" text-anchor="start" class="t-client bt">Any compatible app</text>
+<text x="58" y="165" text-anchor="start" class="bs ink">OpenAI · Anthropic · Ollama shapes</text>
+<rect x="44" y="194" width="212" height="58" rx="9" class="f-client s-client" stroke-width="1.3"/>
+<text x="58" y="216" text-anchor="start" class="t-client bt">Marina's own agents</text>
+<text x="58" y="235" text-anchor="start" class="bs ink">internal token</text>
+<rect x="44" y="264" width="212" height="58" rx="9" class="f-client s-client" stroke-width="1.3"/>
+<text x="58" y="286" text-anchor="start" class="t-client bt">Benchmark runs</text>
+<text x="58" y="305" text-anchor="start" class="bs ink">run key with a usage cap</text>
+<rect x="288" y="106" width="220" height="224" rx="14" class="s-net" fill="none" stroke-width="1.4"/>
+<rect x="304" y="95" width="56.760000000000005" height="22" rx="11" class="f-net s-net" stroke-width="1.2"/>
+<text x="332.38" y="110" text-anchor="middle" class="t-net gl">Edge</text>
+
+<rect x="300" y="124" width="196" height="44" rx="8" class="bg s-net" stroke-width="1"/>
+<text x="312" y="143" text-anchor="start" class="t-net bt">Host allowlist</text>
+<text x="312" y="160" text-anchor="start" class="muted bm">421 otherwise</text>
+<path d="M398,168 L398,176" fill="none" class="ls-net" stroke-width="1.2" marker-end="url(#ah-net)"/>
+<rect x="300" y="176" width="196" height="44" rx="8" class="bg s-net" stroke-width="1"/>
+<text x="312" y="195" text-anchor="start" class="t-net bt">Bearer auth</text>
+<text x="312" y="212" text-anchor="start" class="muted bm">keys or internal token</text>
+<path d="M398,220 L398,228" fill="none" class="ls-net" stroke-width="1.2" marker-end="url(#ah-net)"/>
+<rect x="300" y="228" width="196" height="44" rx="8" class="bg s-net" stroke-width="1"/>
+<text x="312" y="247" text-anchor="start" class="t-net bt">Rate limit</text>
+<text x="312" y="264" text-anchor="start" class="muted bm">per client IP</text>
+<path d="M398,272 L398,280" fill="none" class="ls-net" stroke-width="1.2" marker-end="url(#ah-net)"/>
+<rect x="300" y="280" width="196" height="44" rx="8" class="bg s-net" stroke-width="1"/>
+<text x="312" y="299" text-anchor="start" class="t-net bt">Daily usage cap</text>
+<text x="312" y="316" text-anchor="start" class="muted bm">429 when reached</text>
+<path d="M256,229 L288,229" fill="none" class="ls-client" stroke-width="2" marker-end="url(#ah-client)"/>
+<rect x="552" y="124" width="200" height="96" rx="9" class="f-net s-net" stroke-width="1.3"/>
+<text x="566" y="146" text-anchor="start" class="t-net bt">Passthru</text>
+<text x="566" y="165" text-anchor="start" class="bs ink">proxy to a real model;</text>
+<text x="566" y="181.5" text-anchor="start" class="bs ink">tier aliases resolve</text>
+<text x="566" y="198" text-anchor="start" class="bs ink">per request</text>
+<rect x="552" y="244" width="200" height="96" rx="9" class="f-agent s-agent" stroke-width="1.3"/>
+<text x="566" y="266" text-anchor="start" class="t-agent bt">Agents mode</text>
+<text x="566" y="285" text-anchor="start" class="bs ink">model &quot;marina&quot;: residents</text>
+<text x="566" y="301.5" text-anchor="start" class="bs ink">in the world answer it;</text>
+<text x="566" y="318" text-anchor="start" class="bs ink">own agents: always passthru</text>
+<path d="M508,229 L518.0,229.0 Q528,229 528.0,219.0 L528.0,182.0 Q528,172 538.0,172.0 L552,172" fill="none" class="ls-net" stroke-width="1.6" marker-end="url(#ah-net)"/>
+<path d="M528,229 L528.0,282.0 Q528,292 538.0,292.0 L552,292" fill="none" class="ls-agent" stroke-width="1.6" marker-end="url(#ah-agent)"/>
+<text x="538" y="233" text-anchor="start" class="muted bm">endpoint mode</text>
+<rect x="832" y="106" width="316" height="248" rx="14" class="s-memory" fill="none" stroke-width="1.4"/>
+<rect x="848" y="95" width="161.04000000000002" height="22" rx="11" class="f-memory s-memory" stroke-width="1.2"/>
+<text x="928.52" y="110" text-anchor="middle" class="t-memory gl">Instrument stack</text>
+
+<rect x="846" y="132" width="288" height="26" rx="6" class="f-memory s-memory" stroke-width="1.6"/>
+<text x="858" y="149.5" text-anchor="start" class="mono t-memory bm">lessons</text>
+<text x="944" y="149.5" text-anchor="start" class="ink bm">judged rules for the work</text>
+<rect x="846" y="164" width="288" height="26" rx="6" class="bg s-memory" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="858" y="181.5" text-anchor="start" class="mono t-memory bm">context</text>
+<text x="944" y="181.5" text-anchor="start" class="ink bm">the caller's own memory</text>
+<rect x="846" y="196" width="288" height="26" rx="6" class="f-memory s-memory" stroke-width="1.6"/>
+<text x="858" y="213.5" text-anchor="start" class="mono t-memory bm">obligations</text>
+<text x="944" y="213.5" text-anchor="start" class="ink bm">what the turn still owes</text>
+<rect x="846" y="228" width="288" height="26" rx="6" class="f-memory s-memory" stroke-width="1.6"/>
+<text x="858" y="245.5" text-anchor="start" class="mono t-memory bm">argcheck</text>
+<text x="944" y="245.5" text-anchor="start" class="ink bm">write values vs. the chat</text>
+<rect x="846" y="260" width="288" height="26" rx="6" class="bg s-memory" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="858" y="277.5" text-anchor="start" class="mono t-memory bm">verify</text>
+<text x="944" y="277.5" text-anchor="start" class="ink bm">check a final answer</text>
+<rect x="846" y="292" width="288" height="26" rx="6" class="f-memory s-memory" stroke-width="1.6"/>
+<text x="858" y="309.5" text-anchor="start" class="mono t-memory bm">learn</text>
+<text x="944" y="309.5" text-anchor="start" class="ink bm">signals that teach later</text>
+<text x="846" y="342" text-anchor="start" class="muted bm">solid: default · dashed: opt-in</text>
+<path d="M752,172 L832,172" fill="none" class="ls-memory" stroke-width="1.6" marker-end="url(#ah-memory)"/>
+<rect x="752.8" y="140" width="78.4" height="20" rx="10" class="pill"/>
+<text x="792" y="154" text-anchor="middle" class=" al t-memory">identified</text>
+<rect x="832" y="410" width="316" height="110" rx="9" class="f-ext s-ext" stroke-width="1.3"/>
+<text x="846" y="432" text-anchor="start" class="t-ext bt">Upstream</text>
+<text x="846" y="451" text-anchor="start" class="bs ink">route health: avoid a key past its</text>
+<text x="846" y="467.5" text-anchor="start" class="bs ink">usage limit until its reset</text>
+<text x="846" y="484" text-anchor="start" class="bs ink">direct: Anthropic · OpenAI · local</text>
+<text x="846" y="500.5" text-anchor="start" class="bs ink">fallback: the same model via OpenRouter</text>
+<path d="M990,354 L990,410" fill="none" class="line" stroke-width="1.6" marker-end="url(#ah-line)"/>
+<rect x="300" y="410" width="492" height="110" rx="9" class="f-store s-store" stroke-width="1.3"/>
+<text x="314" y="432" text-anchor="start" class="t-store bt">Every response leaves a record</text>
+<text x="314" y="451" text-anchor="start" class="bs ink">usage recorded once, at the upstream call</text>
+<text x="314" y="467.5" text-anchor="start" class="bs ink">model_request_lifecycle trace events · x-request-id</text>
+<text x="314" y="484" text-anchor="start" class="bs ink">a fallback reply is labelled, never credited to the probed route</text>
+<path d="M832,465 L792,465" fill="none" class="line" stroke-width="1.6" marker-end="url(#ah-line)"/>
+<path d="M300,465 L160.0,465.0 Q150,465 150.0,455.0 L150,322" fill="none" class="line" stroke-width="1.6" marker-end="url(#ah-line)"/>
+<rect x="117.24" y="420" width="65.52000000000001" height="20" rx="10" class="pill"/>
+<text x="150" y="434" text-anchor="middle" class=" al muted">response</text>
+<path d="M652,340 L652,410" fill="none" class="ls-agent" stroke-width="1.6" marker-end="url(#ah-agent)"/>
+<rect x="625.68" y="364" width="52.64" height="20" rx="10" class="pill"/>
+<text x="652" y="378" text-anchor="middle" class=" al t-agent">answer</text>
+</svg>
