@@ -238,7 +238,7 @@ the [deployment guide](docs/guides/deployment.md): turn on sign-in first.
 | Run it for a team | [Configuration](docs/guides/configuration.md) · [Deployment](docs/guides/deployment.md) · [Operator runbook](docs/guides/operator-runbook.md) |
 | Know what's stable | [Feature status](docs/reference/feature-status.md) |
 | Fix something | [Troubleshooting](docs/guides/troubleshooting.md) |
-| Look under the hood | [Architecture](docs/architecture/README.md) · [All guides](docs/guides/README.md) |
+| Look under the hood | [Architecture in diagrams](docs/architecture/overview.md) · [Architecture deep dives](docs/architecture/README.md) · [All guides](docs/guides/README.md) |
 
 The complete command reference is generated in [docs/reference/commands.md](docs/reference/commands.md).
 `SKILL.md` is the agent-facing field guide.

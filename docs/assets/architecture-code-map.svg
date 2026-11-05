@@ -1,0 +1,183 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 858" width="1180" height="858" role="img" aria-label="Code map: seven layers from interfaces (dashboard, CLI, SDK, plugins) through the network edge (src/net), the engine (src/engine), agents and coordination, knowledge and learning, persistence (src/persistence) and shared foundations.">
+<title>Where the code lives</title>
+<desc>Code map: seven layers from interfaces (dashboard, CLI, SDK, plugins) through the network edge (src/net), the engine (src/engine), agents and coordination, knowledge and learning, persistence (src/persistence) and shared foundations.</desc>
+<style>
+text{font-family:Inter,"Segoe UI",-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif}
+.mono{font-family:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace}
+.h1{font-size:22px;font-weight:700;letter-spacing:-0.2px}
+.h2{font-size:13.5px;font-weight:500}
+.bt{font-size:14px;font-weight:650}
+.bs{font-size:12px}
+.bm{font-size:11.5px}
+.gl{font-size:11.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase}
+.al{font-size:11.5px;font-weight:600}
+.badge{font-size:12px;font-weight:700}
+.bg{fill:#fbfcfd}.ink{fill:#1f2328}.muted{fill:#59636e}.line{stroke:#6e7781}.ah{fill:#6e7781}.pill{fill:#fbfcfd}.grid{stroke:#eaeef2}
+.f-client{fill:#eef3ff}.s-client{stroke:#4c6ef5}.t-client{fill:#1e3a9a}.a-client{fill:#4c6ef5}.ls-client{stroke:#4c6ef5}.f-net{fill:#e7f6f3}.s-net{stroke:#139a86}.t-net{fill:#0b5e52}.a-net{fill:#139a86}.ls-net{stroke:#139a86}.f-engine{fill:#f1edff}.s-engine{stroke:#7048e8}.t-engine{fill:#46249f}.a-engine{fill:#7048e8}.ls-engine{stroke:#7048e8}.f-agent{fill:#fff4e0}.s-agent{stroke:#e08a00}.t-agent{fill:#7a4a00}.a-agent{fill:#e08a00}.ls-agent{stroke:#e08a00}.f-memory{fill:#e9f7ee}.s-memory{stroke:#2b9a4b}.t-memory{fill:#17602d}.a-memory{fill:#2b9a4b}.ls-memory{stroke:#2b9a4b}.f-civic{fill:#fff0f4}.s-civic{stroke:#d6336c}.t-civic{fill:#8f1a43}.a-civic{fill:#d6336c}.ls-civic{stroke:#d6336c}.f-store{fill:#f1f3f5}.s-store{stroke:#5c6773}.t-store{fill:#343a40}.a-store{fill:#5c6773}.ls-store{stroke:#5c6773}.f-ext{fill:#ffffff}.s-ext{stroke:#8c959f}.t-ext{fill:#3b434b}.a-ext{fill:#8c959f}.ls-ext{stroke:#8c959f}.f-neutral{fill:#ffffff}.s-neutral{stroke:#d0d7de}.t-neutral{fill:#1f2328}.a-neutral{fill:#d0d7de}.ls-neutral{stroke:#d0d7de}
+@media (prefers-color-scheme: dark){
+.bg{fill:#0d1117}.ink{fill:#e6edf3}.muted{fill:#9198a1}.line{stroke:#8b949e}.ah{fill:#8b949e}.pill{fill:#0d1117}.grid{stroke:#1c2128}
+.f-client{fill:#141f3d}.s-client{stroke:#6f8cff}.t-client{fill:#b4c6ff}.a-client{fill:#6f8cff}.ls-client{stroke:#6f8cff}.f-net{fill:#0e2a27}.s-net{stroke:#2ec4ad}.t-net{fill:#8fe3d6}.a-net{fill:#2ec4ad}.ls-net{stroke:#2ec4ad}.f-engine{fill:#1e1838}.s-engine{stroke:#9b82ff}.t-engine{fill:#cdbfff}.a-engine{fill:#9b82ff}.ls-engine{stroke:#9b82ff}.f-agent{fill:#2b2010}.s-agent{stroke:#f2a93b}.t-agent{fill:#f8d596}.a-agent{fill:#f2a93b}.ls-agent{stroke:#f2a93b}.f-memory{fill:#0f2818}.s-memory{stroke:#45c46a}.t-memory{fill:#9de0b0}.a-memory{fill:#45c46a}.ls-memory{stroke:#45c46a}.f-civic{fill:#33141f}.s-civic{stroke:#f06595}.t-civic{fill:#f8b3cb}.a-civic{fill:#f06595}.ls-civic{stroke:#f06595}.f-store{fill:#1b2027}.s-store{stroke:#8b96a3}.t-store{fill:#d0d7de}.a-store{fill:#8b96a3}.ls-store{stroke:#8b96a3}.f-ext{fill:#161b22}.s-ext{stroke:#6e7781}.t-ext{fill:#c9d1d9}.a-ext{fill:#6e7781}.ls-ext{stroke:#6e7781}.f-neutral{fill:#161b22}.s-neutral{stroke:#3d444d}.t-neutral{fill:#e6edf3}.a-neutral{fill:#3d444d}.ls-neutral{stroke:#3d444d}
+}</style>
+<defs><marker id="ah-client" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-client"/></marker><marker id="ah-net" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-net"/></marker><marker id="ah-engine" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-engine"/></marker><marker id="ah-agent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-agent"/></marker><marker id="ah-memory" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-memory"/></marker><marker id="ah-civic" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-civic"/></marker><marker id="ah-store" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-store"/></marker><marker id="ah-ext" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-ext"/></marker><marker id="ah-neutral" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-neutral"/></marker><marker id="ah-line" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="ah"/></marker></defs>
+<rect class="bg" x="0" y="0" width="1180" height="858" rx="14"/>
+<text class="ink h1" x="32" y="44">Where the code lives</text>
+<text class="muted h2" x="32" y="66">Directories grouped by role, from what people open (top) to what every part shares (bottom). A grouping, not a strict layering.</text>
+<rect x="32" y="96" width="1116" height="88" rx="12" class="f-client s-client" stroke-width="1.3"/>
+<rect x="32" y="96" width="236" height="88" rx="12" class="s-client" fill="none" stroke-width="0"/>
+<line x1="268" y1="108" x2="268" y2="172" class="s-client" stroke-width="1" opacity="0.5"/>
+<text x="50" y="122" text-anchor="start" class="t-client bt">Interfaces</text>
+<text x="50" y="142" text-anchor="start" class="ink bs">what people and tools open</text>
+<rect x="288" y="112" width="183.6" height="24" rx="6" class="bg s-client" stroke-width="1"/>
+<text x="379.8" y="128" text-anchor="middle" class="mono bm t-client">dashboard/  React + Vite</text>
+<rect x="479.6" y="112" width="204.29999999999998" height="24" rx="6" class="bg s-client" stroke-width="1"/>
+<text x="581.75" y="128" text-anchor="middle" class="mono bm t-client">marina-desktop/  Electrobun</text>
+<rect x="691.9" y="112" width="169.79999999999998" height="24" rx="6" class="bg s-client" stroke-width="1"/>
+<text x="776.8" y="128" text-anchor="middle" class="mono bm t-client">scripts/marina.ts  CLI</text>
+<rect x="869.6999999999999" y="112" width="218.1" height="24" rx="6" class="bg s-client" stroke-width="1"/>
+<text x="978.7499999999999" y="128" text-anchor="middle" class="mono bm t-client">scripts/connect*.ts  terminal</text>
+<rect x="288" y="144" width="169.79999999999998" height="24" rx="6" class="bg s-client" stroke-width="1"/>
+<text x="372.9" y="160" text-anchor="middle" class="mono bm t-client">src/sdk/  MarinaClient</text>
+<rect x="465.79999999999995" y="144" width="176.7" height="24" rx="6" class="bg s-client" stroke-width="1"/>
+<text x="554.15" y="160" text-anchor="middle" class="mono bm t-client">plugins/  agent plugins</text>
+<rect x="650.5" y="144" width="128.39999999999998" height="24" rx="6" class="bg s-client" stroke-width="1"/>
+<text x="714.7" y="160" text-anchor="middle" class="mono bm t-client">site/  docs site</text>
+<rect x="32" y="198" width="1116" height="91" rx="12" class="f-net s-net" stroke-width="1.3"/>
+<rect x="32" y="198" width="236" height="91" rx="12" class="s-net" fill="none" stroke-width="0"/>
+<line x1="268" y1="210" x2="268" y2="277" class="s-net" stroke-width="1" opacity="0.5"/>
+<text x="50" y="224" text-anchor="start" class="t-net bt">Network edge</text>
+<text x="50" y="244" text-anchor="start" class="ink bs">listeners, protocols,</text>
+<text x="50" y="261" text-anchor="start" class="ink bs">auth and rate limits</text>
+<text x="50" y="282" text-anchor="start" class="mono t-net bm">src/net/</text>
+<rect x="288" y="214" width="149.1" height="24" rx="6" class="bg s-net" stroke-width="1"/>
+<text x="362.55" y="230" text-anchor="middle" class="mono bm t-net">websocket-server.ts</text>
+<rect x="445.1" y="214" width="114.6" height="24" rx="6" class="bg s-net" stroke-width="1"/>
+<text x="502.40000000000003" y="230" text-anchor="middle" class="mono bm t-net">dashboard-api/</text>
+<rect x="567.7" y="214" width="121.5" height="24" rx="6" class="bg s-net" stroke-width="1"/>
+<text x="628.45" y="230" text-anchor="middle" class="mono bm t-net">model-api/  /v1</text>
+<rect x="697.2" y="214" width="45.599999999999994" height="24" rx="6" class="bg s-net" stroke-width="1"/>
+<text x="720" y="230" text-anchor="middle" class="mono bm t-net">mcp/</text>
+<rect x="750.8000000000001" y="214" width="218.1" height="24" rx="6" class="bg s-net" stroke-width="1"/>
+<text x="859.85" y="230" text-anchor="middle" class="mono bm t-net">api/  mem · forecast · assets</text>
+<rect x="976.9000000000001" y="214" width="128.39999999999998" height="24" rx="6" class="bg s-net" stroke-width="1"/>
+<text x="1041.1000000000001" y="230" text-anchor="middle" class="mono bm t-net">telnet-server.ts</text>
+<rect x="288" y="246" width="204.29999999999998" height="24" rx="6" class="bg s-net" stroke-width="1"/>
+<text x="390.15" y="262" text-anchor="middle" class="mono bm t-net">discord · telegram adapters</text>
+<rect x="500.29999999999995" y="246" width="107.7" height="24" rx="6" class="bg s-net" stroke-width="1"/>
+<text x="554.15" y="262" text-anchor="middle" class="mono bm t-net">acp-server.ts</text>
+<rect x="616" y="246" width="142.2" height="24" rx="6" class="bg s-net" stroke-width="1"/>
+<text x="687.1" y="262" text-anchor="middle" class="mono bm t-net">url-guard.ts  SSRF</text>
+<rect x="766.2" y="246" width="135.3" height="24" rx="6" class="bg s-net" stroke-width="1"/>
+<text x="833.85" y="262" text-anchor="middle" class="mono bm t-net">host-allowlist.ts</text>
+<rect x="32" y="303" width="1116" height="120" rx="12" class="f-engine s-engine" stroke-width="1.3"/>
+<rect x="32" y="303" width="236" height="120" rx="12" class="s-engine" fill="none" stroke-width="0"/>
+<line x1="268" y1="315" x2="268" y2="411" class="s-engine" stroke-width="1" opacity="0.5"/>
+<text x="50" y="329" text-anchor="start" class="t-engine bt">Engine</text>
+<text x="50" y="349" text-anchor="start" class="ink bs">composition root and</text>
+<text x="50" y="366" text-anchor="start" class="ink bs">the one command path</text>
+<text x="50" y="387" text-anchor="start" class="mono t-engine bm">src/engine/</text>
+<rect x="288" y="319" width="80.1" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="328.05" y="335" text-anchor="middle" class="mono bm t-engine">engine.ts</text>
+<rect x="376.1" y="319" width="149.1" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="450.65000000000003" y="335" text-anchor="middle" class="mono bm t-engine">auth-coordinator.ts</text>
+<rect x="533.2" y="319" width="169.79999999999998" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="618.1" y="335" text-anchor="middle" class="mono bm t-engine">command-coordinator.ts</text>
+<rect x="711" y="319" width="135.3" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="778.65" y="335" text-anchor="middle" class="mono bm t-engine">command-router.ts</text>
+<rect x="854.3" y="319" width="211.2" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="959.9" y="335" text-anchor="middle" class="mono bm t-engine">command-phase-coordinator.ts</text>
+<rect x="288" y="351" width="231.9" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="403.95" y="367" text-anchor="middle" class="mono bm t-engine">commands/  one file per command</text>
+<rect x="527.9" y="351" width="121.5" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="588.65" y="367" text-anchor="middle" class="mono bm t-engine">safety-gates.ts</text>
+<rect x="657.4" y="351" width="107.7" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="711.25" y="367" text-anchor="middle" class="mono bm t-engine">challenges.ts</text>
+<rect x="773.1" y="351" width="135.3" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="840.75" y="367" text-anchor="middle" class="mono bm t-engine">evidence-fence.ts</text>
+<rect x="288" y="383" width="238.79999999999998" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="407.4" y="399" text-anchor="middle" class="mono bm t-engine">tick-scheduler.ts · tick-jobs.ts</text>
+<rect x="534.8" y="383" width="121.5" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="595.55" y="399" text-anchor="middle" class="mono bm t-engine">spend-ledger.ts</text>
+<rect x="664.3" y="383" width="100.8" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="714.6999999999999" y="399" text-anchor="middle" class="mono bm t-engine">readiness.ts</text>
+<rect x="773.0999999999999" y="383" width="287.09999999999997" height="24" rx="6" class="bg s-engine" stroke-width="1"/>
+<text x="916.6499999999999" y="399" text-anchor="middle" class="mono bm t-engine">src/world/ · worlds/  world definitions</text>
+<rect x="32" y="437" width="1116" height="120" rx="12" class="f-agent s-agent" stroke-width="1.3"/>
+<rect x="32" y="437" width="236" height="120" rx="12" class="s-agent" fill="none" stroke-width="0"/>
+<line x1="268" y1="449" x2="268" y2="545" class="s-agent" stroke-width="1" opacity="0.5"/>
+<text x="50" y="463" text-anchor="start" class="t-agent bt">Agents &amp; coordination</text>
+<text x="50" y="483" text-anchor="start" class="ink bs">residents, crews, tasks,</text>
+<text x="50" y="500" text-anchor="start" class="ink bs">formations, code work</text>
+<rect x="288" y="453" width="287.09999999999997" height="24" rx="6" class="bg s-agent" stroke-width="1"/>
+<text x="431.54999999999995" y="469" text-anchor="middle" class="mono bm t-agent">src/agent/  runtime · attention · tools</text>
+<rect x="583.0999999999999" y="453" width="314.7" height="24" rx="6" class="bg s-agent" stroke-width="1"/>
+<text x="740.4499999999999" y="469" text-anchor="middle" class="mono bm t-agent">src/coordination/  tasks · crews · channels</text>
+<rect x="288" y="485" width="287.09999999999997" height="24" rx="6" class="bg s-agent" stroke-width="1"/>
+<text x="431.54999999999995" y="501" text-anchor="middle" class="mono bm t-agent">src/orchestration/  formation catalogue</text>
+<rect x="583.0999999999999" y="485" width="252.6" height="24" rx="6" class="bg s-agent" stroke-width="1"/>
+<text x="709.3999999999999" y="501" text-anchor="middle" class="mono bm t-agent">src/coding/  Code Mode · sandboxes</text>
+<rect x="843.6999999999999" y="485" width="273.29999999999995" height="24" rx="6" class="bg s-agent" stroke-width="1"/>
+<text x="980.3499999999999" y="501" text-anchor="middle" class="mono bm t-agent">src/routing/  native agent supervisor</text>
+<rect x="288" y="517" width="259.5" height="24" rx="6" class="bg s-agent" stroke-width="1"/>
+<text x="417.75" y="533" text-anchor="middle" class="mono bm t-agent">src/obligations/  ledger · argcheck</text>
+<rect x="555.5" y="517" width="273.29999999999995" height="24" rx="6" class="bg s-agent" stroke-width="1"/>
+<text x="692.15" y="533" text-anchor="middle" class="mono bm t-agent">src/decisions/  gate · route · judges</text>
+<rect x="32" y="571" width="1116" height="88" rx="12" class="f-memory s-memory" stroke-width="1.3"/>
+<rect x="32" y="571" width="236" height="88" rx="12" class="s-memory" fill="none" stroke-width="0"/>
+<line x1="268" y1="583" x2="268" y2="647" class="s-memory" stroke-width="1" opacity="0.5"/>
+<text x="50" y="597" text-anchor="start" class="t-memory bt">Knowledge &amp; learning</text>
+<text x="50" y="617" text-anchor="start" class="ink bs">memory, outcomes, lessons,</text>
+<text x="50" y="634" text-anchor="start" class="ink bs">forecasts and evidence</text>
+<rect x="288" y="587" width="211.2" height="24" rx="6" class="bg s-memory" stroke-width="1"/>
+<text x="393.6" y="603" text-anchor="middle" class="mono bm t-memory">src/memory/  context · dream</text>
+<rect x="507.2" y="587" width="231.9" height="24" rx="6" class="bg s-memory" stroke-width="1"/>
+<text x="623.15" y="603" text-anchor="middle" class="mono bm t-memory">src/outcomes/  one outcome path</text>
+<rect x="747.1" y="587" width="218.1" height="24" rx="6" class="bg s-memory" stroke-width="1"/>
+<text x="856.15" y="603" text-anchor="middle" class="mono bm t-memory">src/learning/  judged lessons</text>
+<rect x="973.2" y="587" width="107.7" height="24" rx="6" class="bg s-memory" stroke-width="1"/>
+<text x="1027.05" y="603" text-anchor="middle" class="mono bm t-memory">src/forecast/</text>
+<rect x="288" y="619" width="87" height="24" rx="6" class="bg s-memory" stroke-width="1"/>
+<text x="331.5" y="635" text-anchor="middle" class="mono bm t-memory">src/arena/</text>
+<rect x="383" y="619" width="114.6" height="24" rx="6" class="bg s-memory" stroke-width="1"/>
+<text x="440.3" y="635" text-anchor="middle" class="mono bm t-memory">src/resolvers/</text>
+<rect x="505.6" y="619" width="225" height="24" rx="6" class="bg s-memory" stroke-width="1"/>
+<text x="618.1" y="635" text-anchor="middle" class="mono bm t-memory">src/research/ · src/retrieval/</text>
+<rect x="738.6" y="619" width="114.6" height="24" rx="6" class="bg s-memory" stroke-width="1"/>
+<text x="795.9" y="635" text-anchor="middle" class="mono bm t-memory">src/schedules/</text>
+<rect x="861.2" y="619" width="176.7" height="24" rx="6" class="bg s-memory" stroke-width="1"/>
+<text x="949.5500000000001" y="635" text-anchor="middle" class="mono bm t-memory">src/model/  model calls</text>
+<rect x="32" y="673" width="1116" height="88" rx="12" class="f-store s-store" stroke-width="1.3"/>
+<rect x="32" y="673" width="236" height="88" rx="12" class="s-store" fill="none" stroke-width="0"/>
+<line x1="268" y1="685" x2="268" y2="749" class="s-store" stroke-width="1" opacity="0.5"/>
+<text x="50" y="699" text-anchor="start" class="t-store bt">Persistence</text>
+<text x="50" y="719" text-anchor="start" class="ink bs">one SQLite file per world</text>
+<text x="50" y="740" text-anchor="start" class="mono t-store bm">src/persistence/</text>
+<rect x="288" y="689" width="211.2" height="24" rx="6" class="bg s-store" stroke-width="1"/>
+<text x="393.6" y="705" text-anchor="middle" class="mono bm t-store">database.ts  MarinaDB facade</text>
+<rect x="507.2" y="689" width="162.9" height="24" rx="6" class="bg s-store" stroke-width="1"/>
+<text x="588.65" y="705" text-anchor="middle" class="mono bm t-store">schema.ts  migrations</text>
+<rect x="678.1" y="689" width="218.1" height="24" rx="6" class="bg s-store" stroke-width="1"/>
+<text x="787.15" y="705" text-anchor="middle" class="mono bm t-store">interfaces/  store interfaces</text>
+<rect x="904.2" y="689" width="169.79999999999998" height="24" rx="6" class="bg s-store" stroke-width="1"/>
+<text x="989.1" y="705" text-anchor="middle" class="mono bm t-store">db-*.ts  query modules</text>
+<rect x="288" y="721" width="59.4" height="24" rx="6" class="bg s-store" stroke-width="1"/>
+<text x="317.7" y="737" text-anchor="middle" class="mono bm t-store">fts.ts</text>
+<rect x="355.4" y="721" width="156" height="24" rx="6" class="bg s-store" stroke-width="1"/>
+<text x="433.4" y="737" text-anchor="middle" class="mono bm t-store">src/storage/  assets</text>
+<rect x="32" y="775" width="1116" height="57" rx="12" class="f-neutral s-neutral" stroke-width="1.3"/>
+<rect x="32" y="775" width="236" height="57" rx="12" class="s-neutral" fill="none" stroke-width="0"/>
+<line x1="268" y1="787" x2="268" y2="820" class="s-neutral" stroke-width="1" opacity="0.5"/>
+<text x="50" y="801" text-anchor="start" class="t-neutral bt">Foundations</text>
+<text x="50" y="821" text-anchor="start" class="ink bs">shared by every layer</text>
+<rect x="288" y="791" width="100.8" height="24" rx="6" class="bg s-neutral" stroke-width="1"/>
+<text x="338.4" y="807" text-anchor="middle" class="mono bm t-neutral">src/types.ts</text>
+<rect x="396.8" y="791" width="93.89999999999999" height="24" rx="6" class="bg s-neutral" stroke-width="1"/>
+<text x="443.75" y="807" text-anchor="middle" class="mono bm t-neutral">src/config/</text>
+<rect x="498.7" y="791" width="87" height="24" rx="6" class="bg s-neutral" stroke-width="1"/>
+<text x="542.2" y="807" text-anchor="middle" class="mono bm t-neutral">src/stats/</text>
+<rect x="593.7" y="791" width="87" height="24" rx="6" class="bg s-neutral" stroke-width="1"/>
+<text x="637.2" y="807" text-anchor="middle" class="mono bm t-neutral">src/quant/</text>
+<rect x="688.7" y="791" width="107.7" height="24" rx="6" class="bg s-neutral" stroke-width="1"/>
+<text x="742.5500000000001" y="807" text-anchor="middle" class="mono bm t-neutral">src/security/</text>
+<rect x="804.4000000000001" y="791" width="114.6" height="24" rx="6" class="bg s-neutral" stroke-width="1"/>
+<text x="861.7" y="807" text-anchor="middle" class="mono bm t-neutral">src/telemetry/</text>
+</svg>
