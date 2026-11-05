@@ -48,6 +48,7 @@ export default defineConfig({
         {
           label: "Get things done",
           items: [
+            { label: "What you can do with it", slug: "docs/guides/use-cases" },
             { label: "Code with an agent", slug: "docs/guides/coding" },
             { label: "Put memory to work", slug: "docs/guides/memory-workflows" },
             { label: "Shared task work", slug: "docs/guides/shared-task-work" },
