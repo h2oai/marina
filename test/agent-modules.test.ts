@@ -1406,14 +1406,15 @@ describe("tool profiles", () => {
   });
 
   it("crew profile is a mid-size set for dispatchers", () => {
-    // Coordinators need a bit more — tell peers, pool shared memory,
-    // brief world state, channel management. Still ~1/4 of full.
+    // Coordinators need a bit more — tell peers, pool shared memory, channel
+    // management. Still ~1/4 of full. `brief` is not resident: work reaches
+    // an agent as World Events, so it never polls the world for it.
     const crew = TOOL_PROFILE_NAMES.crew;
     expect(crew).toContain("marina_command");
     expect(crew).toContain("marina_code");
     expect(crew).toContain("marina_tell");
     expect(crew).toContain("marina_pool");
-    expect(crew).toContain("marina_brief");
+    expect(crew).not.toContain("marina_brief");
     expect(crew.length).toBeLessThan(10);
   });
 

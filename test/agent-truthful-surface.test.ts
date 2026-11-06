@@ -82,21 +82,14 @@ describe("live command roster", () => {
         coreOnly: true,
       },
     );
-    for (const core of [
-      "work",
-      "next",
-      "task",
-      "project",
-      "channel",
-      "web",
-      "canvas",
-      "orient",
-      "challenge",
-    ])
+    for (const core of ["work", "task", "project", "channel", "web", "canvas", "challenge"])
       expect(roster).toContain(`\n${core}: `);
+    // Orientation reads are not offered: work reaches an agent as World
+    // Events, `work` is its one read, and memory health is pushed.
+    for (const read of ["look", "brief", "next", "orient"])
+      expect(roster).not.toContain(`\n${read}: `);
     for (const niche of ["arena", "bankroll", "bookmark", "admin", "key", "adapter", "quit"])
       expect(roster).not.toContain(`\n${niche}: `);
-    expect(roster.indexOf("\nwork: ")).toBeLessThan(roster.indexOf("\nlook: "));
   });
 
   it("filters commands above the caller's rank unless told to include them", () => {

@@ -202,10 +202,14 @@ describe("system prompt byte budget", () => {
               // The core work commands are listed; operator surfaces are not.
               for (const core of ["work:", "web:", "challenge:"]) expect(p).toContain(`\n${core}`);
               // Commands TOOL ROUTING or MEMORY already teach are named there, not re-listed.
-              for (const taught of ["task", "channel", "canvas", "memory", "pool", "look"]) {
+              for (const taught of ["task", "channel", "canvas", "memory", "pool"]) {
                 expect(p).toContain(`\`${taught}`);
                 expect(p).not.toContain(`\n${taught}:`);
               }
+              // Orientation reads are neither taught nor listed: work reaches
+              // an agent as World Events, and `work` is its one read for it.
+              for (const read of ["look", "brief", "next", "orient"])
+                expect(p).not.toContain(`\n${read}:`);
               for (const operator of ["\nadmin:", "\nkey:", "\nadapter:", "\nquit:", "\narena:"])
                 expect(p).not.toContain(operator);
             }
