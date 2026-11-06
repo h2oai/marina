@@ -8,6 +8,7 @@ import { bold, dim } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import type { QuestDef } from "../../world/world-definition";
+import { principalKind } from "../challenges";
 
 interface NextDeps {
   getEntity: (id: EntityId) => Entity | undefined;
@@ -39,6 +40,7 @@ export function nextCommand(deps: NextDeps): CommandDef {
         quests: deps.quests,
         startRoom: deps.startRoom,
         peers: ctx.entities,
+        forAgent: principalKind(entity) === "agent",
       });
       const detail = item.detail ? `: ${truncate(item.detail, 100)}` : "";
       const memory = db
