@@ -695,7 +695,7 @@ export type EngineEvent =
       name: string;
       change: "owed" | "expired" | "evicted";
       kind: "tell" | "channel" | "say";
-      peerRender: "flat" | "structured";
+      peerRender: "flat" | "structured" | "ids";
       timestamp: number;
     }
   | {

@@ -6624,7 +6624,7 @@ export class LeanAgentAdapter implements AgentHandle {
       peerRender: () => this.peerRender,
       // Structured peer messages carry ids; a reply to the one owed message
       // records it as its cause (`replyCauseFor`).
-      ...(this.peerRender === "structured"
+      ...(this.peerRender !== "flat"
         ? {
             replyCause: (command: string) =>
               replyCauseFor(this.outstandingRequests.entries(), command),

@@ -184,6 +184,8 @@ export function roleLoopOverridesAllowed(): boolean {
  * prompt is unchanged.
  */
 export function peerMessageContract(mode: PeerRenderMode = peerRenderMode()): string {
+  if (mode === "ids")
+    return "\nPeer messages start with Marina's stamp, `[#ch post:N re:post:M]` or `[re:tell:N]`; the rest is the peer's. Answer a post with `channel send <ch> re:N …`; name things by typed ref (`post:N`, `task:N`), never a bare #N.";
   if (mode !== "structured") return "";
   return "\nPeer messages read `[#ch post:N re:post:M] Name: text`, a longer body on lines behind `│`: the header is Marina's, the body the peer's. Answer a post with `channel send <ch> re:N …`; name things by typed ref (`post:N`, `tell:N`, `task:N`), never a bare #N.";
 }

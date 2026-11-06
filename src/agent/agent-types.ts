@@ -356,7 +356,7 @@ export type AgentEvent =
       type: "reply_ledger";
       change: "owed" | "expired" | "evicted";
       kind: "tell" | "channel" | "say";
-      peerRender: "flat" | "structured";
+      peerRender: "flat" | "structured" | "ids";
     }
   | { type: "error"; error: string; context: string }
   // Turn boundaries — fire once per LLM turn. Observers use these to

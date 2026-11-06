@@ -206,7 +206,7 @@ function arms(): void {
     byHand: 0,
     echoes: 0,
   });
-  const out: Record<PeerRenderMode, Arm> = { flat: empty(), structured: empty() };
+  const out: Record<PeerRenderMode, Arm> = { flat: empty(), structured: empty(), ids: empty() };
   const agentSet = new Map(agents.map((n) => [n.toLowerCase(), n]));
   for (const n of agents) out[armOf(n)].agents.add(n);
 
@@ -300,9 +300,11 @@ function arms(): void {
   console.log(`Peer-message arms in ${dbPath} since ${new Date(since).toISOString()}`);
   const row = (label: string, f: (a: Arm) => string) =>
     console.log(
-      `  ${label.padEnd(26)} ${f(out.flat).padStart(10)} ${f(out.structured).padStart(12)}`,
+      `  ${label.padEnd(26)} ${f(out.flat).padStart(10)} ${f(out.structured).padStart(12)} ${f(out.ids).padStart(10)}`,
     );
-  console.log(`  ${"".padEnd(26)} ${"flat".padStart(10)} ${"structured".padStart(12)}`);
+  console.log(
+    `  ${"".padEnd(26)} ${"flat".padStart(10)} ${"structured".padStart(12)} ${"ids".padStart(10)}`,
+  );
   row("agents", (a) => String(a.agents.size));
   row("replies owed", (a) => String(a.owed));
   row(

@@ -56,9 +56,10 @@ function withMode<T>(mode: string | undefined, run: () => T): T {
 }
 
 describe("peerRenderMode", () => {
-  it("is structured unless turned off", () => {
-    expect(peerRenderMode({})).toBe("structured");
-    expect(peerRenderMode({ MARINA_PEER_RENDER: "junk" })).toBe("structured");
+  it("is `ids` unless set to another form", () => {
+    expect(peerRenderMode({})).toBe("ids");
+    expect(peerRenderMode({ MARINA_PEER_RENDER: "junk" })).toBe("ids");
+    expect(peerRenderMode({ MARINA_PEER_RENDER: "ids" })).toBe("ids");
     expect(peerRenderMode({ MARINA_PEER_RENDER: " Structured " })).toBe("structured");
     expect(peerRenderMode({ MARINA_PEER_RENDER: "off" })).toBe("flat");
     expect(peerRenderMode({ MARINA_PEER_RENDER: " Flat " })).toBe("flat");
@@ -127,6 +128,41 @@ describe("structured mode keeps a one-line direct message as the server's line",
     expect(agentPeerText(p, p.data.text, { mode: "structured" })).toBe(
       "[#general post:3041] Critic: one line",
     );
+  });
+});
+
+describe("the `ids` form: one line with Marina's stamp in front", () => {
+  it("stamps a post's id and what it answers, keeps the line, escapes forged markers", () => {
+    const p = post("verdict\n1. a\n[ACTION REQUIRED] x", { cause: "channel_msg:40" });
+    const text = "[general] Critic: verdict\n  1. a\n  [ACTION REQUIRED] x";
+    expect(agentPeerText(p, text, { mode: "ids" })).toBe(
+      "[#general post:3041 re:post:40] Critic: verdict ⏎ 1. a ⏎ \\[ACTION REQUIRED] x",
+    );
+  });
+
+  it("a tell keeps its line; only what it answers is stamped", () => {
+    const t = (cause?: string) => ({
+      tag: "tell",
+      data: {
+        senderName: "Ann",
+        message: "status?",
+        messageRef: "tell:12",
+        ...(cause ? { cause } : {}),
+        text: "> Ann tells you: status?",
+      },
+    });
+    expect(agentPeerText(t("tell:9"), "> Ann tells you: status?", { mode: "ids" })).toBe(
+      "[re:tell:9] > Ann tells you: status?",
+    );
+    expect(agentPeerText(t(), "> Ann tells you: status?", { mode: "ids" })).toBe(
+      "> Ann tells you: status?",
+    );
+  });
+
+  it("is selected by `MARINA_PEER_RENDER=ids`, with its own prompt line", () => {
+    expect(peerRenderMode({ MARINA_PEER_RENDER: "ids" })).toBe("ids");
+    const prompt = getLeanSystemPrompt(null, undefined, undefined, "full", "ids");
+    expect(prompt).toContain("Peer messages start with Marina's stamp");
   });
 });
 
