@@ -198,6 +198,8 @@ export interface GateCallOptions {
    * default `consequential` counts every question.
    */
   risk?: "egress" | "mutate" | "consequential";
+  /** The world fences the call to the caller's own or assigned work: `outsideScope` is not counted (`GateDecideOptions.scopeFenced`). */
+  scopeFenced?: boolean;
 }
 
 /** Score one tool call. Never throws: a backend failure is a fail-closed `block`. */
@@ -212,7 +214,10 @@ export async function gateToolCall(
 ): Promise<GateDecision> {
   const set = opts.questions ?? activeGateQuestions();
   const questions = questionsFor(set, !!intent);
-  const decide = opts.risk ? { risk: opts.risk } : {};
+  const decide = {
+    ...(opts.risk ? { risk: opts.risk } : {}),
+    ...(opts.scopeFenced ? { scopeFenced: true } : {}),
+  };
   const fit =
     opts.calibration === undefined
       ? earnedGateCalibration(provider.model, process.env, questionSetHash(set))

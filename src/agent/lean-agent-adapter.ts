@@ -283,6 +283,7 @@ import {
   gateScopedArgs,
   isAdditiveDeposit,
   isGatedRisk,
+  isScopeFenced,
   mediateToolCall,
   POLICY_LANGUAGE_LABEL,
   toolResultTrust,
@@ -2475,8 +2476,12 @@ export class LeanAgentAdapter implements AgentHandle {
         : undefined;
     // A batch is scored on its gated parts only; the risk is the worst part's.
     const call = gateScopedArgs(toolName, args);
+    // A call the world fences to this agent's own or assigned work (its
+    // assistance job, an additive deposit, its own new note) is not held for
+    // reaching beyond its work (see `isScopeFenced`).
     const decision = await gateToolCall(provider, toolName, call, undefined, description, intent, {
       risk,
+      ...(isScopeFenced(toolName, args) ? { scopeFenced: true } : {}),
     });
     this.emitEvent({
       type: "decision",

@@ -7,13 +7,16 @@ import {
   commandParts,
   gateScopedArgs,
   isAdditiveDeposit,
+  isScopeFenced,
   mediateToolCall,
+  NOTE_SUBCOMMANDS,
   POLICY_LANGUAGE_LABEL,
   READ_TOOL_NAMES,
   typedToolCommand,
 } from "../src/agent/tool-policy";
 import { createWorldTools } from "../src/agent/tools";
 import { READ_ONLY_TOOL_NAMES } from "../src/agent/tools/profiles";
+import { NOTE_SUBS } from "../src/engine/commands/note";
 
 describe("agent tool reference monitor", () => {
   it("classifies narrow reads, communication, mutation, and consequential commands", () => {
@@ -311,6 +314,46 @@ describe("agent tool reference monitor", () => {
     expect(isAdditiveDeposit("marina_command", { command: "pool create add x" })).toBe(false);
     expect(isAdditiveDeposit("marina_command", { command: "note correct 252 x" })).toBe(false);
     expect(isAdditiveDeposit("marina_command", { command: "task create x | y" })).toBe(false);
+  });
+
+  it("fences assigned memory jobs, additive deposits and own new notes to the caller's work", () => {
+    for (const operation of ["assist_claim", "assist_read", "assist_heartbeat", "assist_finish"]) {
+      expect(isScopeFenced("marina_memory_service", { operation, id: "j" })).toBe(true);
+    }
+    for (const operation of [
+      "assist_create",
+      "assist_delegate",
+      "assist_cancel",
+      "grant",
+      "revise",
+    ]) {
+      expect(isScopeFenced("marina_memory_service", { operation })).toBe(false);
+    }
+    expect(isScopeFenced("marina_pool", { action: "add", pool: "guide", content: "x" })).toBe(true);
+    expect(isScopeFenced("marina_command", { command: "pool guide add x" })).toBe(true);
+    expect(isScopeFenced("marina_command", { command: "memory note FOCUS-SCOPE test" })).toBe(true);
+    expect(isScopeFenced("marina_command", { command: "note remove the stale map" })).toBe(true);
+    expect(
+      isScopeFenced("marina_command", { command: "batch memory note a; look; memory set rest b" }),
+    ).toBe(true);
+    for (const command of [
+      "memory note correct 2060 x",
+      "note delete 35305",
+      "note link 1 2 supports",
+      "note claim x",
+      "build code workbench/library",
+      "task cancel 24",
+      "chronicle record x",
+      "batch memory note a; build destroy hub",
+      "look",
+    ]) {
+      expect(isScopeFenced("marina_command", { command })).toBe(false);
+    }
+    expect(isScopeFenced("marina_pool", { action: "create", pool: "x" })).toBe(false);
+  });
+
+  it("keeps the note subcommand list equal to the note command's", () => {
+    expect([...NOTE_SUBCOMMANDS].sort()).toEqual([...NOTE_SUBS].sort());
   });
 
   it("treats changing an existing role or trait as consequential, creating one as a plain mutation", () => {
