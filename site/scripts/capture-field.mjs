@@ -70,7 +70,8 @@ const CHAT = [
   {
     file: "field-forecast.png",
     user: "Ava",
-    cmds: ["forecast Will Brent crude close above $90 on 2027-03-31?"],
+    // Several vendors research in parallel; with provider retries this can pass 10 minutes.
+    cmds: [{ cmd: "forecast Will Brent crude close above $90 on 2027-03-31?", max: 1_500_000 }],
   },
   {
     file: "field-research.png",
@@ -107,7 +108,7 @@ const CHAT = [
       "data series CPIAUCSL",
       "data markets fed rate cut",
       "schedule add eu-ai-brief daily:07:00 -- research ask -- What changed in EU AI regulation in the last 24 hours? Cite sources.",
-      { cmd: "schedule run eu-ai-brief", until: /^Research\b/m },
+      { cmd: "schedule run eu-ai-brief", until: /Research \(agent\)\s/ },
     ],
   },
   {
@@ -326,6 +327,31 @@ async function endpointShot(browser) {
   await page.close();
 }
 
+/** Admin → Keys with the add-a-key form open: where a provider key goes from the dashboard. */
+async function keysShot(browser) {
+  console.log("connect-provider.png");
+  const page = await open(browser, WORLDS.main.port, "Rae", { maximizeChat: false });
+  await page
+    .getByText(/^Admin$/i)
+    .first()
+    .click();
+  await page.waitForTimeout(1500);
+  await page
+    .getByText(/^\+ Add$/)
+    .first()
+    .click();
+  await page.waitForTimeout(800);
+  await page.locator('[placeholder="Key name"]').fill("openrouter");
+  // Pick a provider so the form shows what goes where; no key is typed or saved.
+  await page
+    .locator("select")
+    .filter({ has: page.locator('option[value="openrouter"]') })
+    .first()
+    .selectOption("openrouter");
+  await page.screenshot({ path: join(OUT, "connect-provider.png"), clip: workspaceClip(420) });
+  await page.close();
+}
+
 /** The middle (Workspace) column of the 1440-wide layout. */
 const workspaceClip = (height) => ({ x: 437, y: 92, width: 639, height });
 
@@ -401,6 +427,8 @@ function codingShot() {
     "coding",
     [
       BUN,
+      // The CLI reads its keys from this file alone (an explicit --env-file replaces its lookup).
+      `--env-file=${resolve(process.env.MARINA_CAPTURE_ENV_FILE ?? ".env")}`,
       join(ROOT, "scripts", "marina.ts"),
       "-p",
       "fix the pagination bug so page 1 returns the first items, and make the tests pass",
@@ -453,6 +481,7 @@ async function record() {
   try {
     await chatShots(browser, only);
     if (!only || only.includes("endpoint")) await endpointShot(browser);
+    if (!only || only.includes("keys")) await keysShot(browser);
   } finally {
     await browser.close();
   }
