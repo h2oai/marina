@@ -103,6 +103,13 @@ export interface GateDecideOptions {
    * `mutate` call.
    */
   risk?: "egress" | "mutate" | "consequential";
+  /**
+   * The world fences this call to the caller's own or assigned work
+   * (`isScopeFenced` in `src/agent/tool-policy.ts`): `outsideScope` is
+   * reported but not counted, as on `egress`. Not applied to a
+   * `consequential` call.
+   */
+  scopeFenced?: boolean;
 }
 
 export const DEFAULT_GATE_POLICY: GatePolicy = { blockAt: 0.88, askAt: 0.65 };
@@ -177,8 +184,10 @@ export function decideGate(
   if (!routine) return bandVerdict(signals, signals, policy);
   // Routine call: the risk questions decide as they always have; the context
   // question can only ADD a hold, and only at the stricter context bar. On
-  // egress the scope question is not counted (see `GateDecideOptions.risk`).
-  const uncounted = new Set(["unauthorized", ...(opts.risk === "egress" ? ["outsideScope"] : [])]);
+  // egress, or a call the world fences to the caller's own or assigned work,
+  // the scope question is not counted (see `GateDecideOptions`).
+  const scopeUncounted = opts.risk === "egress" || opts.scopeFenced === true;
+  const uncounted = new Set(["unauthorized", ...(scopeUncounted ? ["outsideScope"] : [])]);
   const risks = Object.fromEntries(Object.entries(signals).filter(([id]) => !uncounted.has(id)));
   const base = bandVerdict(risks, signals, policy);
   if (base.action !== "allow" || context === undefined) return base;
