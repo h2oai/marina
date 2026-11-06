@@ -295,6 +295,7 @@ import {
   isScopeFenced,
   mediateToolCall,
   POLICY_LANGUAGE_LABEL,
+  relayedCommandRefusal,
   toolResultTrust,
   typedToolCommand,
 } from "./tool-policy";
@@ -1553,6 +1554,11 @@ export class LeanAgentAdapter implements AgentHandle {
   private currentPromptTraceLinks: TraceLink[] = [];
   /** Evidence classes currently influencing this run; never stores evidence content. */
   private currentTrustSources = new Set<string>();
+  /** Peer-authored text in the current prompt (World Events bodies, steers): `relayedCommandRefusal`. */
+  private currentPeerText = "";
+  /** Relayed commands refused, by command, with the read count at the refusal (a later read lifts it). */
+  private relayedRefusals = new Map<string, number>();
+  private readCallsThisPrompt = 0;
   /**
    * Measurement quarantine (`x-marina-eval` model requests). A run that serves
    * one is neither journaled nor archived: its messages are marked here,
@@ -2304,6 +2310,21 @@ export class LeanAgentAdapter implements AgentHandle {
         }
         const policy = mediateToolCall(context.toolCall.name, args, [...this.currentTrustSources]);
         if (policy.block) return { block: true, reason: policy.block };
+        if (policy.risk === "read") this.readCallsThisPrompt++;
+        const relayed = relayedCommandRefusal(context.toolCall.name, args, this.currentPeerText);
+        if (relayed) {
+          // Refused until the agent has read something itself since the refusal.
+          const key = JSON.stringify([context.toolCall.name, args]);
+          const at = this.relayedRefusals.get(key);
+          if (at === undefined || this.readCallsThisPrompt <= at) {
+            this.relayedRefusals.set(key, this.readCallsThisPrompt);
+            this.log.info(LEAN_AGENT_LOG_CATEGORY, "relayed command refused", {
+              agent: this.name,
+              tool: context.toolCall.name,
+            });
+            return { block: true, reason: relayed };
+          }
+        }
         if (policy.label) {
           // Noted, not blocked: agents may discuss or argue about policy.
           this.policyLabeledCalls.add(context.toolCall.id);
@@ -2867,6 +2888,7 @@ export class LeanAgentAdapter implements AgentHandle {
             // tasks, model requests); an addressed chat post waits for the
             // next cycle instead of steering every run in flight.
             if (decision.steer && this.agent.state.isStreaming) {
+              this.currentPeerText += `\n${shown()}`;
               const speaker = lastEvent?.speaker ?? "Someone";
               this.agent.steer({
                 role: "user",
@@ -4368,6 +4390,9 @@ export class LeanAgentAdapter implements AgentHandle {
     this.currentPromptTraceParent = undefined;
     this.currentPromptTraceLinks = [];
     this.currentTrustSources.clear();
+    this.currentPeerText = "";
+    this.relayedRefusals.clear();
+    this.readCallsThisPrompt = 0;
     this.retrievedContext = undefined;
     const cycle = this.loopIterationCount;
     // Use the same effective-window allowance for events, memory, and assembly.
@@ -4482,6 +4507,7 @@ export class LeanAgentAdapter implements AgentHandle {
         this.currentPromptAddressed = trustedEvents.some((perception) => perception.shouldRespond);
       }
 
+      if (topEvents.length > 0) this.currentPeerText = topEvents.map((e) => e.text).join("\n");
       if (trustedEvents.length > 0) {
         this.currentTrustSources.add("world_event");
         const lines = trustedEvents.map((p) => (p.shouldRespond ? `[!] ${p.text}` : p.text));
