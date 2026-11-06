@@ -53,6 +53,8 @@ export function isPeerSpeech(p: { tag?: string; data?: Record<string, unknown> }
  * How a peer's message reaches an agent's model (`MARINA_PEER_RENDER`):
  *  - `flat` (default; set as `off` or `flat`): one line, the server's text
  *    with line breaks as ` ⏎ `.
+ *  - `split` assigns half the agents to each form by name, and
+ *    `structured:<name>,<name>` the named ones: both forms in one world.
  *  - `structured`: a header the server stamped — where it was said, its id,
  *    what it answers, who said it — then the body as written, each line of a
  *    multi-line body behind a `  │ ` guard. A list stays a list, and no line
@@ -62,8 +64,32 @@ export type PeerRenderMode = "flat" | "structured";
 
 export function peerRenderMode(
   env: Record<string, string | undefined> = process.env,
+  agent?: string,
 ): PeerRenderMode {
-  return env.MARINA_PEER_RENDER?.trim().toLowerCase() === "structured" ? "structured" : "flat";
+  const raw = env.MARINA_PEER_RENDER?.trim().toLowerCase() ?? "";
+  if (raw === "structured") return "structured";
+  // `split`: half the agents, by a stable hash of the name (the rollout's
+  // two arms in one world); `structured:<a>,<b>`: the named agents.
+  if (raw === "split") return agent && peerRenderArm(agent) ? "structured" : "flat";
+  if (raw.startsWith("structured:") && agent) {
+    const names = raw
+      .slice("structured:".length)
+      .split(",")
+      .map((n) => n.trim());
+    return names.includes(agent.trim().toLowerCase()) ? "structured" : "flat";
+  }
+  return "flat";
+}
+
+/** The `split` arm of an agent: true = structured. FNV-1a over the lower-cased name. */
+export function peerRenderArm(agent: string): boolean {
+  let hash = 0x811c9dc5;
+  for (const ch of agent.trim().toLowerCase()) {
+    hash ^= ch.codePointAt(0)!;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  // A high bit: an FNV hash's lowest bit is only the parity of the characters.
+  return ((hash >>> 15) & 1) === 1;
 }
 
 /** The guard in front of every line of a multi-line peer body. */

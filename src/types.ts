@@ -687,6 +687,17 @@ export type EngineEvent =
       reason: string;
       timestamp: number;
     }
+  // A resident's reply ledger: an owed request recorded, or one that left it
+  // unsettled (expired / evicted). Counts only, never content; `peerRender`
+  // is the agent's arm (`MARINA_PEER_RENDER`), for the rollout's measurement.
+  | {
+      type: "agent_reply_ledger";
+      name: string;
+      change: "owed" | "expired" | "evicted";
+      kind: "tell" | "channel" | "say";
+      peerRender: "flat" | "structured";
+      timestamp: number;
+    }
   | {
       type: "agent_error";
       name: string;

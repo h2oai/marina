@@ -19,6 +19,7 @@ import {
   agentPeerText,
   escapeHarnessMarkers,
   fenceToolResult,
+  type PeerRenderMode,
   peerRenderMode,
   renderHistoryMessage,
 } from "../peer-text";
@@ -42,6 +43,10 @@ export interface ToolContext {
    * it delivered to this agent.
    */
   replyCause?: (command: string) => string | undefined;
+  /** The agent's own name: a peer message that names it reads `→ you`. */
+  self?: string;
+  /** This agent's peer-message form (`MARINA_PEER_RENDER`, which may differ per agent). */
+  peerRender?: () => PeerRenderMode;
 }
 
 // ─── Images in tool results ─────────────────────────────────────────────────
@@ -93,8 +98,11 @@ export function perceptionImages(perceptions: Perception[]): {
 
 // ─── Perception Formatting ──────────────────────────────────────────────────
 
-export function formatPerceptions(perceptions: Perception[], self?: string): string {
-  const mode = peerRenderMode();
+export function formatPerceptions(
+  perceptions: Perception[],
+  self?: string,
+  mode: PeerRenderMode = peerRenderMode(process.env, self),
+): string {
   return (
     perceptions
       .map((p) => {
@@ -201,7 +209,13 @@ export async function execCommand(
   const images = perceptionImages(perceptions);
   return {
     content: [
-      { type: "text", text: renderCommandResult(command, formatPerceptions(perceptions)) },
+      {
+        type: "text",
+        text: renderCommandResult(
+          command,
+          formatPerceptions(perceptions, ctx.self, ctx.peerRender?.()),
+        ),
+      },
       ...images.parts,
     ],
     details: {

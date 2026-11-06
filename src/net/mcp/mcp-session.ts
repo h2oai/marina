@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { agentPeerText, isPeerSpeech } from "../../agent/peer-text";
+import { agentPeerText, isPeerSpeech, peerRenderMode } from "../../agent/peer-text";
 import { renderCommandResult } from "../../agent/tools/shared";
 import type { RateLimiter } from "../../auth/rate-limiter";
 import { commandManifest } from "../../engine/command-manifest";
@@ -30,7 +30,12 @@ const logger = new Logger();
  */
 function agentPerceptionText(p: Perception, self?: string): string {
   if (isPeerSpeech(p))
-    return agentPeerText(p, stripAnsi((p.data?.text as string) ?? ""), { self }) || `[${p.kind}]`;
+    return (
+      agentPeerText(p, stripAnsi((p.data?.text as string) ?? ""), {
+        self,
+        mode: peerRenderMode(process.env, self),
+      }) || `[${p.kind}]`
+    );
   return formatPerception(p, "markdown");
 }
 

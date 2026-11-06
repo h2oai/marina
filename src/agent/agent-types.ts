@@ -351,6 +351,13 @@ export type AgentEvent =
     }
   | { type: "tool_result"; toolName: string; result: unknown; isError: boolean }
   | { type: "perception"; kind: string; text: string }
+  /** A reply obligation entered or left the ledger unsettled (no content; `peer-text` arm). */
+  | {
+      type: "reply_ledger";
+      change: "owed" | "expired" | "evicted";
+      kind: "tell" | "channel" | "say";
+      peerRender: "flat" | "structured";
+    }
   | { type: "error"; error: string; context: string }
   // Turn boundaries — fire once per LLM turn. Observers use these to
   // know when an agent is mid-thought vs. idle.

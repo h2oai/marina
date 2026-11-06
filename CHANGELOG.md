@@ -1002,8 +1002,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re:<id> <message>` lets anyone thread a post explicitly, and an id that is not a post of that
   channel is refused. In every mode, MCP output no longer repeats a channel's tag in front of a
   post, and an MCP command result is fenced and escaped by the command's trust class, as an
-  in-process agent's tool result already was. The default stays one line per message until paired
-  runs show the structured form loses no replies.
+  in-process agent's tool result already was. `split` puts half the agents on each form by name,
+  and `structured:<name>,<name>` picks agents, so both forms run in one world. Each agent's owed replies and the ones left unsettled are logged as
+  content-free `agent_reply_ledger` events with the agent's form. `bun scripts/peer-render-report.ts`
+  compares the two forms (threading, lost replies, echoed format), and its `--corpus` option checks
+  the structured form against every stored message. The default stays one line per message until
+  that comparison shows the structured form loses no replies.
 - **Marina plugin for Codex.** `bun run build:codex-plugin` builds an installable local
   marketplace with durable memory, setup and memory skills, and optional world access.
   The package bundles its MCP adapters and references private credential files without

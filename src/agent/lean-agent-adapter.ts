@@ -234,6 +234,7 @@ import {
   flattenPeerText,
   neutralizeAuthoredBlock,
   neutralizeAuthoredLine,
+  type PeerRenderMode,
   peerRenderMode,
 } from "./peer-text";
 import { piModels } from "./pi-models";
@@ -1468,12 +1469,23 @@ export class LeanAgentAdapter implements AgentHandle {
   }> = [];
   private perceptionSeq = 0;
   /** How peer messages read in World Events and tool results (`MARINA_PEER_RENDER`). */
-  private readonly peerRender = peerRenderMode();
+  private peerRenderCached?: PeerRenderMode;
+  /** This agent's form (`MARINA_PEER_RENDER`: one value, `split`, or a named list). */
+  private get peerRender(): PeerRenderMode {
+    this.peerRenderCached ??= peerRenderMode(process.env, this.name);
+    return this.peerRenderCached;
+  }
   private readonly outstandingRequests = new OutstandingRequests({
     // A lapsed obligation stops forcing the fast tick and the reply nudges;
     // the durable ledger prunes the same entries on its next write.
     onDrop: (request, reason) => {
       this.unsavedRequests.delete(request.id);
+      this.emitEvent({
+        type: "reply_ledger",
+        change: reason,
+        kind: request.kind,
+        peerRender: this.peerRender,
+      });
       this.log.warn(
         LEAN_AGENT_LOG_CATEGORY,
         reason === "expired"
@@ -2150,6 +2162,7 @@ export class LeanAgentAdapter implements AgentHandle {
           undefined,
           tools.map((t) => t.name),
           promptTierForContextWindow(this.model.contextWindow),
+          this.peerRender,
         ),
         model: this.model,
         tools,
@@ -2788,6 +2801,16 @@ export class LeanAgentAdapter implements AgentHandle {
             // Repeated delivery of the same message/model-request ID is already tracked.
             // Re-enqueueing its upsert during settlement could resurrect it after the commit.
             if (tracked && !tracked.isNew) return;
+            if (tracked && !untrusted) {
+              const owed = this.outstandingRequests.entries().find((r) => r.id === tracked.id);
+              if (owed)
+                this.emitEvent({
+                  type: "reply_ledger",
+                  change: "owed",
+                  kind: owed.kind,
+                  peerRender: this.peerRender,
+                });
+            }
             if (requestId) this.obligations.noteRequest(requestBody);
             if (requestId) {
               const request = this.outstandingRequests.entries().find((r) => r.id === requestId)!;
@@ -2987,6 +3010,7 @@ export class LeanAgentAdapter implements AgentHandle {
       this.capabilityEntries,
       this.promptToolNames(),
       this.promptTier,
+      this.peerRender,
     );
   }
   // ─── end prompt budget tier ───────────────────────────────────────────
@@ -6571,6 +6595,8 @@ export class LeanAgentAdapter implements AgentHandle {
       client: this.client,
       gameState: this.gameState,
       visionMode: () => this.visionMode(),
+      self: this.name,
+      peerRender: () => this.peerRender,
       // Structured peer messages carry ids; a reply to the one owed message
       // records it as its cause (`replyCauseFor`).
       ...(this.peerRender === "structured"

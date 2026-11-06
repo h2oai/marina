@@ -9,6 +9,7 @@
 // message as its cause.
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createAgentEventRelay } from "../src/agent/agent-runtime";
 import { type OutstandingRequest, replyCauseFor } from "../src/agent/outstanding-requests";
 import {
   agentPeerText,
@@ -22,7 +23,7 @@ import { getLeanSystemPrompt } from "../src/agent/prompts/lean-system";
 import { formatPerceptions } from "../src/agent/tools/shared";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
-import { roomId } from "../src/types";
+import { type EngineEvent, roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi, tempDbPath } from "./helpers";
 
 const TEST_DB = tempDbPath("test_peer_render.db");
@@ -59,6 +60,47 @@ describe("peerRenderMode", () => {
     expect(peerRenderMode({ MARINA_PEER_RENDER: "flat" })).toBe("flat");
     expect(peerRenderMode({ MARINA_PEER_RENDER: "junk" })).toBe("flat");
     expect(peerRenderMode({ MARINA_PEER_RENDER: " Structured " })).toBe("structured");
+  });
+});
+
+describe("per-agent arms", () => {
+  it("`split` gives each agent a stable arm, and a named list picks agents", () => {
+    const env = { MARINA_PEER_RENDER: "split" };
+    const arms = Array.from({ length: 2000 }, (_, i) => peerRenderMode(env, `agent-${i}`));
+    const structured = arms.filter((a) => a === "structured").length;
+    expect(structured).toBeGreaterThan(900);
+    expect(structured).toBeLessThan(1100);
+    expect(peerRenderMode(env, "Critic")).toBe(peerRenderMode(env, " critic "));
+    expect(peerRenderMode(env)).toBe("flat");
+    const list = { MARINA_PEER_RENDER: "structured:Critic, builder" };
+    expect(peerRenderMode(list, "critic")).toBe("structured");
+    expect(peerRenderMode(list, "Builder")).toBe("structured");
+    expect(peerRenderMode(list, "Scout")).toBe("flat");
+    expect(peerRenderMode(list)).toBe("flat");
+  });
+
+  it("the system prompt follows the agent's own arm", () => {
+    expect(getLeanSystemPrompt(null, undefined, undefined, "full", "structured")).toContain(
+      "channel send <ch> re:N",
+    );
+    expect(getLeanSystemPrompt(null, undefined, undefined, "full", "flat")).not.toContain("post:N");
+  });
+
+  it("a reply-ledger change reaches the event log with its arm and no content", () => {
+    const events: EngineEvent[] = [];
+    createAgentEventRelay("Critic", (e) => events.push(e))({
+      type: "reply_ledger",
+      change: "expired",
+      kind: "tell",
+      peerRender: "structured",
+    });
+    expect(events[0]).toMatchObject({
+      type: "agent_reply_ledger",
+      name: "Critic",
+      change: "expired",
+      kind: "tell",
+      peerRender: "structured",
+    });
   });
 });
 
