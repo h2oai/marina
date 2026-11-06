@@ -9,6 +9,9 @@
  *   2. SearXNG (if SEARXNG_URL set) — self-hosted meta-search, 150+ engines
  *   3. DuckDuckGo (on unless MARINA_SEARCH_DUCKDUCKGO=off) — free, no key needed
  *   4. DeepSeek Search (if DEEPSEEK_API_KEY set) — paid fallback when DuckDuckGo fails
+ *   5. OpenRouter's Exa web plugin (if OPENROUTER_API_KEY set; MARINA_SEARCH_OPENROUTER=off
+ *      turns it off) — the last paid fallback, so a search still answers when a keyed
+ *      plan is exhausted and the keyless engine is throttled
  * A provider that fails (a key out of credit, an outage) throws; its engines
  * fall through to the next provider in this order, and the failure lands in
  * the search-health ledger (`./health`, shown by `readiness`). A provider that
@@ -30,6 +33,7 @@
 
 import type { ConnectorRuntime } from "../connector-runtime";
 import { recordSearchOutcome, searchBackendDown } from "./health";
+import { OPENROUTER_SEARCH_DISABLED, openRouterWebSearchEnabled } from "./openrouter-web-engines";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -375,6 +379,29 @@ export async function search(
 
 // ─── Provider Initialization ────────────────────────────────────────────────
 
+/**
+ * `web search`'s last paid fallback: OpenRouter's Exa web plugin (`openrouter`), carried
+ * by MARINA_RESEARCH_SEARCH_MODEL, left out while MARINA_SEARCH_OPENROUTER=off.
+ */
+export function openRouterFallbackProvider(
+  apiKey: string,
+  env: NodeJS.ProcessEnv = process.env,
+  fetcher?: (url: string, init: RequestInit) => Promise<Response>,
+): SearchProvider {
+  const { DEFAULT_OPENROUTER_SEARCH_MODEL, openRouterSearchProvider } =
+    require("../../research/web-search") as typeof import("../../research/web-search");
+  const provider = openRouterSearchProvider(
+    apiKey,
+    env.MARINA_RESEARCH_SEARCH_MODEL?.trim() || DEFAULT_OPENROUTER_SEARCH_MODEL,
+    fetcher,
+  );
+  return {
+    ...provider,
+    describe: "OpenRouter's Exa web plugin (OPENROUTER_API_KEY); the last paid fallback",
+    disabled: () => (openRouterWebSearchEnabled(env) ? undefined : OPENROUTER_SEARCH_DISABLED),
+  };
+}
+
 let initialized = false;
 
 /**
@@ -402,6 +429,9 @@ export function initProvidersSync(): void {
   if (process.env.DEEPSEEK_API_KEY?.trim()) {
     const { deepSeekSearchProvider } = require("./deepseek");
     registerProvider(deepSeekSearchProvider(process.env.DEEPSEEK_API_KEY.trim()));
+  }
+  if (process.env.OPENROUTER_API_KEY?.trim()) {
+    registerProvider(openRouterFallbackProvider(process.env.OPENROUTER_API_KEY.trim()));
   }
   registerProvider(academicProvider());
 

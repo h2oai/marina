@@ -103,3 +103,12 @@ export function openRouterWebPluginUsd(
   const extra = Math.max(0, maxResults - price.includedResults) * price.perExtraResult;
   return Math.max(1, searches) * (perRequest + extra);
 }
+
+/** The label the OpenRouter fallback carries wherever it is left out. */
+export const OPENROUTER_SEARCH_DISABLED = "turned off (MARINA_SEARCH_OPENROUTER=off)";
+
+/** Whether `web search` may fall back to OpenRouter's Exa web plugin (read per call; default on). */
+export function openRouterWebSearchEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = env.MARINA_SEARCH_OPENROUTER?.trim().toLowerCase();
+  return !(v === "off" || v === "false" || v === "0" || v === "no");
+}
