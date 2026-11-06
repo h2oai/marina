@@ -141,6 +141,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the durable search entirely, so nothing is fetched and nothing is logged as served.
   - Both tiers remain in `memory recall <query> evidence|all`, `context`, `/mem/context`, MCP and
     passthru, which keep the same default tiers.
+- **Room-based context only for agents doing spatial work.**
+  - `[Nearby]` (who is in the room, every 5 cycles) and the "is nearby" part of
+    `[Coordination Opportunity]` are shown only to an agent that moved, built, looked or mapped in
+    the last hour. Everyone else is reached by what it owes and is given, and gets coordination
+    patterns for its focus without the room.
+  - `work` and `next` no longer offer an agent "You have not explored yet" or "You are not alone:
+    tell … what are you working on?". People still see both.
+  - The "This room:" line (a room's own tools) is unchanged.
 - **Agents no longer orient themselves before acting.**
   - **Why:** an agent is reached by what it owes and what it is given: messages, requests and
     assignments arrive as World Events. Looking around and reading a brief spent model turns on

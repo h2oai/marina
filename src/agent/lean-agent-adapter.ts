@@ -4668,7 +4668,10 @@ export class LeanAgentAdapter implements AgentHandle {
     // from social events already in [World Events]. Restating [Nearby]
     // every cycle wastes ~50-100 tokens on information the agent already
     // has. Cadence matches Novelty Suggestions.
-    if (cycle % 5 === 0) {
+    // Only for an agent doing spatial work (it moved, built or looked in the
+    // last hour): everyone else is reached by what it owes and is given.
+    const spatial = this.spatialRecently();
+    if (cycle % 5 === 0 && spatial) {
       const socialCtx = this.socialAwareness.getSocialContext();
       if (
         socialCtx &&
@@ -4688,7 +4691,7 @@ export class LeanAgentAdapter implements AgentHandle {
     if (cycle % 20 === 10) {
       const lines: string[] = [];
 
-      const nearby = this.socialAwareness.getEntitiesInRoom();
+      const nearby = spatial ? this.socialAwareness.getEntitiesInRoom() : [];
       if (nearby.length > 0) {
         const knownNearby = this.socialAwareness
           .getKnownEntities(3)
@@ -6585,6 +6588,26 @@ export class LeanAgentAdapter implements AgentHandle {
     // load extends it instead of restoring the pre-switch tools.
     if (target !== "plan") this.baseTools = toolset.resident;
     this.agent.state.tools = toolset.resident;
+  }
+
+  /**
+   * Whether this agent did spatial work in the last hour: moved, built,
+   * looked or mapped. Room-based prompt sections (`[Nearby]`, nearby
+   * collaborators) are shown only then.
+   */
+  private spatialRecently(): boolean {
+    return this.actionHistory.getActions(Date.now() - 60 * 60_000).some((a) => {
+      if (a.type !== "tool_call") return false;
+      if (a.toolName === "marina_look" || a.toolName === "marina_move") return true;
+      const command = (a.args as { command?: unknown } | undefined)?.command;
+      return (
+        a.toolName === "marina_command" &&
+        typeof command === "string" &&
+        /^\s*\/?(look|l|move|go|goto|build|map|north|south|east|west|up|down|n|s|e|w|u|d)\b/i.test(
+          command,
+        )
+      );
+    });
   }
 
   /** What every tool factory receives: the client, game state and the vision mode. */
