@@ -231,6 +231,7 @@ import {
 } from "./outstanding-requests";
 import {
   agentPeerText,
+  escapePeerMarkers,
   flattenPeerText,
   neutralizeAuthoredBlock,
   neutralizeAuthoredLine,
@@ -2828,9 +2829,7 @@ export class LeanAgentAdapter implements AgentHandle {
             // stamped header and guarded body (`agentPeerText`). Attention
             // and request tracking above always read `text`.
             const shown = (suffix = "") =>
-              this.peerRender === "structured"
-                ? agentPeerText(p, text, { mode: "structured", self: this.name, suffix })
-                : `${text}${suffix}`;
+              agentPeerText(p, text, { mode: this.peerRender, self: this.name, suffix });
             this.pendingPerceptions.push({
               id: perceptionId,
               requestId,
@@ -4557,7 +4556,7 @@ export class LeanAgentAdapter implements AgentHandle {
       parts.push(
         `[Reply still owed — ${awaiting.length} pending]\n` +
           `Respond via ${request.kind} to ${request.target}${correlation ? ` with ${correlation}` : ""}. ` +
-          `Observations and private prose do not deliver an answer.\n${clampPerceptionLine(request.text, true)}`,
+          `Observations and private prose do not deliver an answer.\n${clampPerceptionLine(escapePeerMarkers(request.text), true)}`,
         MANDATORY_SECTION_PRIORITY,
         "outstanding_request",
       );
@@ -6163,7 +6162,7 @@ export class LeanAgentAdapter implements AgentHandle {
       this.pendingPerceptions.push({
         id: ++this.perceptionSeq,
         requestId: request.id,
-        text: `[Recovered peer request — ${request.kind} to ${request.target}] ${flattenPeerText(request.text)}`,
+        text: `[Recovered peer request — ${request.kind} to ${request.target}] ${escapePeerMarkers(flattenPeerText(request.text), 0)}`,
         priority: 100,
         shouldRespond: true,
         untrusted: false,
