@@ -1334,7 +1334,10 @@ async function retrieveUnifiedContext(
       Object.assign(fetched, legacy.items);
       degraded.push(...legacy.degraded);
     }
-    if (scope !== "legacy") {
+    // A caller that asked for no evidence and no proposals (`perTier` 0, the
+    // agent's per-turn prompt) skips the durable search: nothing is fetched,
+    // so nothing is logged as served.
+    if (scope !== "legacy" && (perTier.evidence > 0 || perTier.proposal > 0)) {
       if (opts.asOf !== undefined) {
         // Durable records, sources and proposals are filtered by their own
         // known-at time (`./as-of`); one without a reliable time is withheld.
@@ -1364,7 +1367,7 @@ async function retrieveUnifiedContext(
         trimmed,
         {
           records: perTier.evidence,
-          sources: Math.max(1, Math.ceil(perTier.evidence / 2)),
+          sources: perTier.evidence > 0 ? Math.max(1, Math.ceil(perTier.evidence / 2)) : 0,
           proposals: perTier.proposal,
         },
         represented,

@@ -692,6 +692,14 @@ export function runCapWarningAt(cap: number): number {
 }
 
 /**
+ * Durable tiers left out of the per-turn prompt context. Measured in a live
+ * world, `[evidence]` and `[proposal]` items served into prompts were never
+ * cited, while skills and the agent's own notes were. They stay one
+ * `memory recall <query> evidence|all` away.
+ */
+export const PROMPT_SKIP_TIERS = ["evidence", "proposal"] as const;
+
+/**
  * One perception line, bounded for the prompt. A clamped line says how much
  * was cut and, for a stored direct message, how to read it whole (`tell read
  * <id>`): measured 2026-11-02, a reviewer's 1,800-character verdict reached
@@ -4124,7 +4132,7 @@ export class LeanAgentAdapter implements AgentHandle {
     const query = this.focus.description;
     const budget = relevantMemoryBudgetBytes(this.continuationBudgetBytes());
     void this.platformMemory
-      .unifiedContext(query, budget, { warm: true })
+      .unifiedContext(query, budget, { warm: true, skipTiers: PROMPT_SKIP_TIERS })
       .catch((error) =>
         this.log.debug("agent", `Sleep-time precompute skipped: ${getErrorMessage(error)}`),
       );
@@ -4913,7 +4921,9 @@ export class LeanAgentAdapter implements AgentHandle {
         // Reauthorize each retrieval; a cycle-count cache cannot honor revoked or erased memory.
         {
           const unified = await this.platformMemory
-            .unifiedContext(focusDesc, relevantMemoryBudgetBytes(continuationBudget))
+            .unifiedContext(focusDesc, relevantMemoryBudgetBytes(continuationBudget), {
+              skipTiers: PROMPT_SKIP_TIERS,
+            })
             .catch(() => ({ success: false, text: "", context: null }));
           this.retrievedContext = unified.context ?? undefined;
           if (unified.context) {
