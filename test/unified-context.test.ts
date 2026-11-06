@@ -12,6 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { previewParticipantContext } from "../src/engine/commands/context";
 import { Engine } from "../src/engine/engine";
 import { findDurableTwin } from "../src/memory/legacy-projection";
 import { residentMemoryOperation } from "../src/memory/resident-service";
@@ -73,6 +74,53 @@ describe("unified memory context", () => {
   afterEach(() => {
     db.close();
     cleanupDb(TEST_DB);
+  });
+
+  it("a caller that skips evidence and proposals gets neither, and none is logged as served", async () => {
+    const fx = await seedUnifiedFixture(engine, db);
+    const servedTiers = () =>
+      (
+        db.memoryRepository().raw.query("SELECT tier FROM memory_served").all() as {
+          tier: string;
+        }[]
+      ).map((r) => r.tier);
+    const before = servedTiers().length;
+    const result = await buildUnifiedContext(db, fx.owner, FIXTURE_QUERY, {
+      perTier: { evidence: 0, proposal: 0 },
+      surface: "prompt",
+    });
+    const byTier = Object.fromEntries(result.tiers.map((t) => [t.tier, t.items.length]));
+    expect(byTier.evidence).toBe(0);
+    expect(byTier.proposal).toBe(0);
+    expect(byTier.skill).toBeGreaterThan(0);
+    expect(byTier.unverified).toBeGreaterThan(0);
+    const added = servedTiers().slice(before);
+    expect(added.length).toBeGreaterThan(0);
+    expect(added.filter((t) => t === "evidence" || t === "proposal")).toEqual([]);
+  });
+
+  it("the prompt preview takes `skipTiers` and refuses anything else in it", async () => {
+    const fx = await seedUnifiedFixture(engine, db);
+    const id = engine.findEntityGlobal(fx.owner)?.id;
+    expect(id).toBeDefined();
+    const reader = { db, getEntity: (e: EntityId) => engine.entities.get(e) };
+    const preview = await previewParticipantContext(
+      reader,
+      id!,
+      { query: FIXTURE_QUERY, skipTiers: ["evidence", "proposal"] },
+      "prompt",
+    );
+    const tiers = Object.fromEntries(preview.context.tiers.map((t) => [t.tier, t.items.length]));
+    expect(tiers.evidence).toBe(0);
+    expect(tiers.proposal).toBe(0);
+    await expect(
+      previewParticipantContext(
+        reader,
+        id!,
+        { query: FIXTURE_QUERY, skipTiers: ["skill"] },
+        "prompt",
+      ),
+    ).rejects.toThrow("skipTiers lists only evidence and proposal");
   });
 
   it("returns all five tiers with the fixture ids, fixed order, provenance and byte accounting", async () => {

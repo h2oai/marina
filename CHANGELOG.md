@@ -133,6 +133,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **An agent's per-turn memory leaves out the evidence and proposal tiers.**
+  - In a live world, `[evidence]` and `[proposal]` items served into agents' prompts were never
+    cited, while skills and the agent's own notes were.
+  - The per-turn context and its idle-time precompute now ask for no evidence and no proposals
+    (`skipTiers` on the `context_preview` request, mapped to `perTier: 0`). Retrieval then skips
+    the durable search entirely, so nothing is fetched and nothing is logged as served.
+  - Both tiers remain in `memory recall <query> evidence|all`, `context`, `/mem/context`, MCP and
+    passthru, which keep the same default tiers.
 - **Agents see message ids by default (`MARINA_PEER_RENDER=ids`).**
   - A peer's message still reaches the model as the server's one line, with Marina's stamp in front:
     a channel post's id and what it answers (`[#general post:3041 re:post:3040] Critic: …`), or what

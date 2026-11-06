@@ -312,9 +312,11 @@ export declare class MarinaClient {
     /** Query the authenticated live command registry, including room overrides. */
     capabilities(timeoutMs?: number): Promise<CapabilityManifest>;
     contextPreview(query: string, budgetBytes?: number, signal?: AbortSignal, 
-    /** `warm`: a sleep-time precompute — the server caches the build for the next prompt. */
+    /** `warm`: a sleep-time precompute — the server caches the build for the next prompt.
+     *  `skipTiers`: durable tiers not to retrieve (`evidence`, `proposal`). */
     opts?: {
         warm?: boolean;
+        skipTiers?: readonly ("evidence" | "proposal")[];
     }): Promise<{
         context: UnifiedContextResult;
         createdAt: number;
