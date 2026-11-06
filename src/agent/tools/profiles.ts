@@ -80,7 +80,6 @@ export const TOOL_PROFILE_NAMES: Record<ToolProfile, string[]> = {
     "marina_code",
     "marina_tell",
     "marina_pool",
-    "marina_brief",
     "marina_channel",
     "think",
     "memory",
