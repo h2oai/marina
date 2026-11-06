@@ -43,7 +43,7 @@ three larger projects need some design work. For how the pieces fit, see
 | 5 | [AI gateway with costs and traces](#5-ai-gateway-with-costs-and-traces) | about 1 s per call |
 | 6 | [Analyst teams](#6-analyst-teams-due-diligence-research-investigations) | an hour or more |
 | 7 | [Scheduled briefings](#7-scheduled-briefings) | as one research run |
-| 8 | [Coding agents with tests](#8-coding-agents-with-tests-and-review) | about a minute for a small fix |
+| 8 | [Coding agents with tests](#8-coding-agents-with-tests-and-review) | under a minute for a small fix |
 | 9 | [Tabletop exercises](#9-tabletop-exercises-and-war-games) | 5–15 min |
 | 10 | [Comparing AI models](#10-comparing-ai-models-on-your-own-work) | 2–6 min per 20 questions |
 | B1 | [A supervised AI security team](#b1-cyber-defense-a-supervised-ai-security-team) | weeks to integrate |
@@ -84,10 +84,10 @@ and scores it later against what actually happened, so over time you learn how f
 **The problem it solves:** forecasts come from one analyst or one chatbot answer, with no sources
 and no track record.
 
-Three vendors landed within five points of each other, and the reasons cite the actual futures
-prices:
+Three vendors landed within three points of each other, and the reasons cite the actual futures
+prices. The answer also says how well each run was grounded in checked evidence:
 
-![Forecast result: 42% yes from Claude, GPT and Gemini, with reasons and 64 verified sources](../assets/field-forecast.png)
+![Forecast result: 46% yes from Claude, GPT and Gemini, with each one's reasons and 182 verified sources](../assets/field-forecast.png)
 
 **Try it**
 
@@ -98,7 +98,7 @@ forecast Which company will have the largest market cap on 2027-06-30? type:rank
 forecast list
 ```
 
-Those runs gave **42% yes** (about 5 min, $3.30), **3.9% ± 0.55** (6.5 min, $4.29, 77 sources checked)
+Those runs gave **46% yes** (about 10 min, $8.50), **3.9% ± 0.55** (6.5 min, $4.29, 77 sources checked)
 and **Nvidia, Apple, Microsoft** (3 min, $2.02).
 
 **Example prompts**
@@ -119,10 +119,11 @@ can also search your own documents without sending them anywhere.
 **The problem it solves:** chatbot research invents or misquotes sources, and internal documents
 can't be searched without uploading them to a vendor.
 
-The brief leads with what changed (the AI Office's enforcement powers from 2 August 2026) and
-links each claim to the page it came from:
+The brief leads with its answer (the obligations themselves did not change in 2026; the
+Commission's power to enforce them did, from 2 August 2026) and links each claim to the page it
+came from:
 
-![Research brief on the EU AI Act: what changed in 2026, each claim linked to its source](../assets/field-research.png)
+![Research brief on the EU AI Act: enforcement started in 2026, each claim linked to its source](../assets/field-research.png)
 
 **Try it**
 
@@ -282,11 +283,12 @@ in a shared notebook and on a review board.
 takes weeks.
 
 We started the `due-diligence` setup and sent one instruction: assess Datadog against the thesis
-"Datadog keeps winning mid-market observability despite open-source pressure". Within 15 minutes
-the team had posted its thesis, a decision memo and a reviewer's correction to the review board,
-and all five workstreams were submitted for the lead's review:
+"Datadog keeps winning mid-market observability despite open-source pressure". Within 10 minutes
+the lead had approved four of the five workstreams. One analyst's dissent note changed the memo's
+central claim (one weak quarter became four), and the lead published decision memo v3 on the
+review board:
 
-![Due diligence on Datadog: the review board, with memo v2's verdict and the lead's correction](../assets/field-dd.png)
+![Due diligence on Datadog: the review board, with decision memo v3 and the lead's review gate](../assets/field-dd.png)
 
 **Try it**
 
@@ -326,8 +328,8 @@ owner's inbox and memory.
 remembers last week's answer.
 
 We read official prices and market odds, scheduled a daily EU AI regulation brief, then ran it at
-once with `schedule run`. The brief started within seconds, found no change in the last 24 hours,
-and named the pages it checked:
+once with `schedule run`. The brief started within seconds, answered in about two minutes that
+nothing had changed in the last 24 hours, and named the pages it checked:
 
 ![Official CPI figures and Fed-cut market odds, then a daily brief scheduled, run and answered](../assets/field-schedule.png)
 
@@ -364,8 +366,8 @@ done unless the tests passed.
 record, and no proof anything was tested.
 
 We made a small project with a deliberate off-by-one bug and a failing test. One sentence later,
-Marina had fixed the line, added its own check for pages 1 to 3, run the tests (passed) and
-submitted the change for review, in about a minute:
+Marina had fixed the line, added its own test for pages 2, 3 and 4, run the tests (passed) and
+submitted the change for review, in about 20 seconds:
 
 ![One sentence in; a tested fix out, submitted for review](../assets/field-coding.png)
 
@@ -404,11 +406,10 @@ We built an "Incident War Room", which appeared on the world map:
 ![World map showing the new Incident War Room above the Library and Workbench](../assets/field-map.png)
 
 We added three AI players and a surprise ("a journalist asks whether card data was taken").
-Within minutes they had argued it out. The incident lead said not to rebuild the system until it
-was imaged, and corrected its own earlier figure; the CFO signed a position ("do not pay, today")
-with the conditions that would change it:
+Within minutes they had argued it out. The CFO priced the 40 BTC demand at $3.04M from four live
+Bitcoin quotes it found with web search, and the attacker, seated as judge, ruled on the debate:
 
-![The crew channel during the tabletop: the incident lead's turn](../assets/field-tabletop.png)
+![The crew channel during the tabletop: the CFO prices the ransom from live quotes, then the judge's verdict](../assets/field-tabletop.png)
 
 **Try it**
 
