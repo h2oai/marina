@@ -1,7 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { flattenPeerText, isPeerSpeech } from "../../agent/peer-text";
+import { agentPeerText, isPeerSpeech } from "../../agent/peer-text";
+import { renderCommandResult } from "../../agent/tools/shared";
 import type { RateLimiter } from "../../auth/rate-limiter";
 import { commandManifest } from "../../engine/command-manifest";
 import { previewParticipantContext } from "../../engine/commands/context";
@@ -11,6 +12,7 @@ import { Logger } from "../../engine/logger";
 import { buildUnifiedContext, renderUnifiedContext } from "../../memory/unified-context";
 import type { MemoryOperationResult } from "../../sdk/memory-operations";
 import type { EntityId, Perception } from "../../types";
+import { stripAnsi } from "../ansi";
 import { formatPerception } from "../formatter";
 import { receiptForUnifiedContext } from "../memory/memory-receipt";
 import { mcpAdmission } from "./mcp-admission";
@@ -20,19 +22,26 @@ import { errorText, type McpResult, type McpSession, text } from "./mcp-types";
 const logger = new Logger();
 
 /**
- * A perception as an MCP agent reads it: the shared Markdown form, with a
- * peer's message on ONE line (its line breaks as ` ⏎ `), as the in-process
- * agents read it (`src/agent/tools/shared.ts`).
+ * A perception as an MCP agent reads it, as the in-process agents read it
+ * (`src/agent/tools/shared.ts`): a peer's message is the server's own line,
+ * one line (` ⏎ ` for its breaks) or structured (`MARINA_PEER_RENDER`), with
+ * no Markdown tag in front (a channel's tag is already in the line); anything
+ * else is the shared Markdown form.
  */
-function agentPerceptionText(p: Perception): string {
-  const text = formatPerception(p, "markdown");
-  return isPeerSpeech(p) ? flattenPeerText(text) : text;
+function agentPerceptionText(p: Perception, self?: string): string {
+  if (isPeerSpeech(p))
+    return agentPeerText(p, stripAnsi((p.data?.text as string) ?? ""), { self }) || `[${p.kind}]`;
+  return formatPerception(p, "markdown");
 }
 
-export function drainPerceptions(session: McpSession): string {
+function renderPerceptions(perceptions: Perception[], self?: string): string {
+  return perceptions.map((p) => agentPerceptionText(p, self)).join("\n\n");
+}
+
+export function drainPerceptions(session: McpSession, self?: string): string {
   const perceptions = session.perceptionBuffer.splice(0);
   if (perceptions.length === 0) return "(no output)";
-  return perceptions.map((p) => agentPerceptionText(p)).join("\n\n");
+  return renderPerceptions(perceptions, self);
 }
 
 /**
@@ -162,7 +171,13 @@ export async function cmdTool(
     const memory = perceptions.map((p) => p.data?.memory).findLast(Boolean) as
       | Record<string, unknown>
       | undefined;
-    const rendered = perceptions.map((p) => agentPerceptionText(p)).join("\n\n") || "(no output)";
+    // Fenced and escaped by the command's trust class, exactly as an
+    // in-process agent's tool result is (`renderCommandResult`).
+    const self = engine.entities.get(resolved.entityId)?.name;
+    const rendered =
+      perceptions.length && !inspection
+        ? renderCommandResult(cmd, renderPerceptions(perceptions, self))
+        : renderPerceptions(perceptions, self) || "(no output)";
     const result: McpResult =
       envelope && !inspection
         ? memoryMcpResult(envelope)

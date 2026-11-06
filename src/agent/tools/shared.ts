@@ -15,7 +15,13 @@ import type { MarinaClient } from "../../sdk/client";
 import type { Perception } from "../../types";
 import { stripCommandPleasantry } from "../acknowledgement";
 import type { GameStateManager } from "../game-state";
-import { escapeHarnessMarkers, fenceToolResult, flattenPeerText, isPeerSpeech } from "../peer-text";
+import {
+  agentPeerText,
+  escapeHarnessMarkers,
+  fenceToolResult,
+  peerRenderMode,
+  renderHistoryMessage,
+} from "../peer-text";
 import { toolResultTrust } from "../tool-policy";
 
 // ─── Shared Context ─────────────────────────────────────────────────────────
@@ -29,6 +35,13 @@ export interface ToolContext {
    * Absent = `describe`.
    */
   visionMode?: () => "native" | "describe";
+  /**
+   * The ref of the one owed message a speech command answers (`tell <name>`,
+   * `channel send <ch>`, `say`), when exactly one fits; sent as the command's
+   * `cause` so the reply is threaded under it. The server accepts only a ref
+   * it delivered to this agent.
+   */
+  replyCause?: (command: string) => string | undefined;
 }
 
 // ─── Images in tool results ─────────────────────────────────────────────────
@@ -80,20 +93,38 @@ export function perceptionImages(perceptions: Perception[]): {
 
 // ─── Perception Formatting ──────────────────────────────────────────────────
 
-export function formatPerceptions(perceptions: Perception[]): string {
+export function formatPerceptions(perceptions: Perception[], self?: string): string {
+  const mode = peerRenderMode();
   return (
     perceptions
       .map((p) => {
         const text = (p.data?.text as string) ?? "";
         const message = (p.data?.message as string) ?? "";
-        // Agents read text, not terminal colour codes, and a peer's message
-        // as one line: its line breaks show as ` ⏎ ` (see `isPeerSpeech`).
+        // Agents read text, not terminal colour codes. A peer's message is
+        // one line (` ⏎ ` for its breaks) or, under `MARINA_PEER_RENDER=
+        // structured`, a stamped header and a guarded body (`./peer-text`).
         const plain = stripAnsi(text || message);
-        return (isPeerSpeech(p) ? flattenPeerText(plain) : plain) || `[${p.kind}]`;
+        if (mode === "structured") {
+          const history = structuredHistory(p, self);
+          if (history) return history;
+        }
+        return agentPeerText(p, plain, { mode, self }) || `[${p.kind}]`;
       })
       .filter(Boolean)
       .join("\n\n") || "(no response)"
   );
+}
+
+/** `channel history` as structured messages, from its payload. */
+function structuredHistory(p: Perception, self?: string): string | undefined {
+  const payload = p.data?.channelHistory as { channel?: unknown; messages?: unknown } | undefined;
+  if (typeof payload?.channel !== "string" || !Array.isArray(payload.messages)) return undefined;
+  const channel = payload.channel;
+  const lines = payload.messages.map((m) =>
+    renderHistoryMessage(channel, (m ?? {}) as Record<string, unknown>, self),
+  );
+  if (lines.some((l) => l === undefined)) return undefined;
+  return [`History: #${channel} (${lines.length})`, ...(lines as string[])].join("\n");
 }
 
 /**
@@ -152,7 +183,8 @@ export async function execCommand(
 
   let perceptions: Perception[];
   try {
-    perceptions = await ctx.client.command(command, signal);
+    const cause = ctx.replyCause?.(command);
+    perceptions = await ctx.client.command(command, cause ? { signal, cause } : signal);
   } catch (err) {
     // A rejected command's error carries its partial output: plain, as on success.
     if (err instanceof Error) err.message = plainErrorMessage(err);
