@@ -1282,86 +1282,86 @@ Fields read here: `clampLimit(url.searchParams.get("limit"), 50)`, `url.searchPa
 
 ### `url.pathname === "/api/coordination/channels"`
 
-[Source](../../src/net/dashboard-api/world.ts#L902)
+[Source](../../src/net/dashboard-api/world.ts#L912)
 
 - Guard: `url.pathname === "/api/coordination/channels" && db`
 
 ### `url.pathname === "/api/coordination/groups"`
 
-[Source](../../src/net/dashboard-api/world.ts#L905)
+[Source](../../src/net/dashboard-api/world.ts#L915)
 
 - Guard: `url.pathname === "/api/coordination/groups" && db`
 
 ### `url.pathname === "/api/coordination/projects"`
 
-[Source](../../src/net/dashboard-api/world.ts#L908)
+[Source](../../src/net/dashboard-api/world.ts#L918)
 
 - Guard: `url.pathname === "/api/coordination/projects" && db`
 
 ### `url.pathname === "/api/connectors"`
 
-[Source](../../src/net/dashboard-api/world.ts#L911)
+[Source](../../src/net/dashboard-api/world.ts#L921)
 
 - Guard: `url.pathname === "/api/connectors" && db`
 
 ### `url.pathname === "/api/commands"`
 
-[Source](../../src/net/dashboard-api/world.ts#L914)
+[Source](../../src/net/dashboard-api/world.ts#L924)
 
 - Guard: `url.pathname === "/api/commands" && db`
 
 ### `url.pathname === "/api/room-templates"`
 
-[Source](../../src/net/dashboard-api/world.ts#L927)
+[Source](../../src/net/dashboard-api/world.ts#L937)
 
 - Guard: `url.pathname === "/api/room-templates" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/macros"`
 
-[Source](../../src/net/dashboard-api/world.ts#L930)
+[Source](../../src/net/dashboard-api/world.ts#L940)
 
 - Guard: `url.pathname === "/api/macros" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/experiments"`
 
-[Source](../../src/net/dashboard-api/world.ts#L937)
+[Source](../../src/net/dashboard-api/world.ts#L947)
 
 - Guard: `url.pathname === "/api/experiments" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/evolution-sessions"`
 
-[Source](../../src/net/dashboard-api/world.ts#L940)
+[Source](../../src/net/dashboard-api/world.ts#L950)
 
 - Guard: `url.pathname === "/api/evolution-sessions" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/markets"`
 
-[Source](../../src/net/dashboard-api/world.ts#L946)
+[Source](../../src/net/dashboard-api/world.ts#L956)
 
 - Guard: `url.pathname === "/api/markets" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/benchmarks"`
 
-[Source](../../src/net/dashboard-api/world.ts#L949)
+[Source](../../src/net/dashboard-api/world.ts#L959)
 
 - Guard: `url.pathname === "/api/benchmarks" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/recipes"`
 
-[Source](../../src/net/dashboard-api/world.ts#L966)
+[Source](../../src/net/dashboard-api/world.ts#L976)
 
 - Guard: `url.pathname === "/api/recipes" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/coordination\/projects\/([^/]+)\/orchestration$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L987)
+[Source](../../src/net/dashboard-api/world.ts#L997)
 
 - Guard: `orchMatch && method === "POST" && db`
 - Guard: `method === "POST"`

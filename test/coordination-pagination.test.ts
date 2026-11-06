@@ -69,6 +69,18 @@ describe("coordination pagination endpoints", () => {
     expect(page2.total).toBe(130);
   });
 
+  it("tasks: each paged row counts its open claims and waiting submissions", async () => {
+    const id = db.createTask({ title: "memo", creatorId: "e_1", creatorName: "Alice" });
+    db.createTaskClaim(id, "e_2", "Bob");
+    db.createTaskClaim(id, "e_3", "Cy");
+    db.updateTaskClaimStatus(id, "e_3", "submitted", "done");
+    const page = (await get("/api/coordination/tasks?paged=1&limit=10")) as {
+      items: { id: number; status: string; claimed: number; submitted: number }[];
+    };
+    const row = page.items.find((t) => t.id === id);
+    expect(row).toMatchObject({ status: "open", claimed: 1, submitted: 1 });
+  });
+
   it("board posts: bounded page plus true total", async () => {
     db.createBoard({ id: "b_1", name: "ideas" });
     for (let i = 0; i < 12; i++) {

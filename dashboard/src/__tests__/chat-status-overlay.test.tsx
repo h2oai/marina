@@ -135,6 +135,22 @@ describe("ChatStatusOverlay", () => {
     expect(draftCommand).toHaveBeenCalledWith("task claim 1");
   });
 
+  it("names an open task with submissions as awaiting its creator's review", () => {
+    queries.tasks = {
+      data: {
+        total: 2,
+        items: [
+          { id: 1, title: "Memo", status: "open", creator_name: "Lead", submitted: 2 },
+          { id: 2, title: "Probe", status: "open", creator_name: "Lead", claimed: 1 },
+        ],
+      },
+    };
+    show(overlayOf("tasks", { scope: "open" }));
+    expect(screen.getByText("awaiting review (2)")).toBeInTheDocument();
+    expect(screen.getByText("Reviewed by Lead")).toBeInTheDocument();
+    expect(screen.getByText("claimed")).toBeInTheDocument();
+  });
+
   it("shows every task under the mine scope, and loading/error states", () => {
     queries.tasks = { data: { items: [{ id: 1, title: "A", status: "claimed" }] } };
     const { unmount } = show(overlayOf("tasks", { scope: "mine" }));
