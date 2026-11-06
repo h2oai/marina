@@ -208,11 +208,9 @@ import {
   channelSendsCeiling,
   defaultLoopPreferences,
   describeLoadedState,
-  isOrientationRead,
   LOOP_PREFERENCE_KEYS,
   type LoopPreferences,
   nextPreferenceRefreshCycles,
-  ORIENTATION_FREE_READS,
   PREFERENCE_REFRESH_MIN_CYCLES,
   parseFocusWrite,
   parseLoopPreferenceCommand,
@@ -1587,14 +1585,6 @@ export class LeanAgentAdapter implements AgentHandle {
     { toolName: string; args: Record<string, unknown> }
   >();
   private currentRunToolCalls = 0;
-  /**
-   * The discovery (orientation) turn is in flight: up to
-   * `ORIENTATION_FREE_READS` read-only orientation calls (`look`, `brief`,
-   * `recall`, `task list`, …) do not count toward the per-run tool cap, so a
-   * resumed agent still gets a working cycle after it has looked around.
-   */
-  private discoveryRun = false;
-  private discoveryFreeReads = 0;
   /** Public channel updates this run, against `channelSendsBudget()` (default 1,
    *  agent-set via `channel_sends`, operator ceiling MARINA_CHANNEL_SENDS_PER_RUN).
    *  Targeted tells remain unrestricted. */
@@ -3156,8 +3146,8 @@ export class LeanAgentAdapter implements AgentHandle {
       // agent can replace it any time via `task goal` / `memory set goal`. A
       // persisted focus from a prior session still overrides it below.
       const roleHint = this.config.role
-        ? `Settle into your role as ${this.config.role}: get oriented, then take a first useful action`
-        : "Get oriented in the world, then pick something that matters and pursue it";
+        ? `Act in your role as ${this.config.role}: take a first useful action`
+        : "Pick something that matters and pursue it";
       this.focus = {
         description: `${roleHint} — set your own goal with \`task goal\` or \`memory set goal\` once you know what you want to work on.`,
         startedAt: Date.now(),
@@ -3252,8 +3242,6 @@ export class LeanAgentAdapter implements AgentHandle {
     const discoveryText =
       `${discoveryPrompt}${wisdomPart}${checkpointPart}${ownContextPart}${focusPart}${loadedPart}\n\n` +
       (this.outstandingRequests.size ? await this.buildContinuationPrompt() : "Begin.");
-    this.discoveryRun = true;
-    this.discoveryFreeReads = 0;
     let discoveryError: string | null;
     try {
       await this.agent.prompt(discoveryText);
@@ -3265,13 +3253,11 @@ export class LeanAgentAdapter implements AgentHandle {
         await this.afterRouteRefusal(discoveryError, this.config.model ?? MARINA_DEFAULT_MODEL);
         const routed = await this.routeFor(this.model, await this.resolveKeyNow());
         if (routed.via) {
-          this.discoveryFreeReads = 0;
           await this.agent.prompt(discoveryText);
           discoveryError = this.lastTurnError();
         }
       }
     } finally {
-      this.discoveryRun = false;
     }
     if (discoveryError === null) {
       this.log.info(
@@ -4672,7 +4658,10 @@ export class LeanAgentAdapter implements AgentHandle {
     // from social events already in [World Events]. Restating [Nearby]
     // every cycle wastes ~50-100 tokens on information the agent already
     // has. Cadence matches Novelty Suggestions.
-    if (cycle % 5 === 0) {
+    // Only for an agent doing spatial work (it moved, built or looked in the
+    // last hour): everyone else is reached by what it owes and is given.
+    const spatial = this.spatialRecently();
+    if (cycle % 5 === 0 && spatial) {
       const socialCtx = this.socialAwareness.getSocialContext();
       if (
         socialCtx &&
@@ -4692,7 +4681,7 @@ export class LeanAgentAdapter implements AgentHandle {
     if (cycle % 20 === 10) {
       const lines: string[] = [];
 
-      const nearby = this.socialAwareness.getEntitiesInRoom();
+      const nearby = spatial ? this.socialAwareness.getEntitiesInRoom() : [];
       if (nearby.length > 0) {
         const knownNearby = this.socialAwareness
           .getKnownEntities(3)
@@ -4751,21 +4740,6 @@ export class LeanAgentAdapter implements AgentHandle {
 
       if (lines.length > 0) {
         parts.push(`[Coordination Opportunity]\n${lines.join("\n")}`);
-      }
-    }
-
-    // ── 2c. Active objective progress (every 20th cycle, offset 5) ──
-    // Surface the agent's quest progress in-context so it doesn't re-discover
-    // it by repeatedly running `quest status`. Skipped when no quest is active
-    // (the common case), so it adds nothing for goal-less worlds.
-    if (cycle % 20 === 5) {
-      try {
-        const quest = await this.platformMemory.questStatus();
-        if (quest.active) {
-          parts.push(`[Active Objective]\n${clampText(quest.text, 500)}`);
-        }
-      } catch {
-        // best-effort — quest status unavailable this cycle
       }
     }
 
@@ -5030,7 +5004,7 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     } else {
       parts.push(
-        "[No Focus] Pick one concrete objective (`brief` lists open work; set it with " +
+        "[No Focus] Pick one concrete objective (`work` lists open work; set it with " +
           "`memory set goal <objective>` or `task goal <title> | <description>`), " +
           "or rest with `memory set rest <why>`.",
         75,
@@ -5923,15 +5897,7 @@ export class LeanAgentAdapter implements AgentHandle {
         // beforeToolCall hook runs via the framework (AgentOptions.beforeToolCall),
         // so we don't fire hookRegistry here — would double-fire.
         this.metrics.toolCalls++;
-        if (
-          this.discoveryRun &&
-          this.discoveryFreeReads < ORIENTATION_FREE_READS &&
-          isOrientationRead(event.toolName, event.args)
-        ) {
-          this.discoveryFreeReads++;
-        } else {
-          this.currentRunToolCalls++;
-        }
+        this.currentRunToolCalls++;
         this.metrics.lastActivity = Date.now();
         this.actionHistory.addAction({
           timestamp: Date.now(),
@@ -6535,6 +6501,26 @@ export class LeanAgentAdapter implements AgentHandle {
     // load extends it instead of restoring the pre-switch tools.
     if (target !== "plan") this.baseTools = toolset.resident;
     this.agent.state.tools = toolset.resident;
+  }
+
+  /**
+   * Whether this agent did spatial work in the last hour: moved, built,
+   * looked or mapped. Room-based prompt sections (`[Nearby]`, nearby
+   * collaborators) are shown only then.
+   */
+  private spatialRecently(): boolean {
+    return this.actionHistory.getActions(Date.now() - 60 * 60_000).some((a) => {
+      if (a.type !== "tool_call") return false;
+      if (a.toolName === "marina_look" || a.toolName === "marina_move") return true;
+      const command = (a.args as { command?: unknown } | undefined)?.command;
+      return (
+        a.toolName === "marina_command" &&
+        typeof command === "string" &&
+        /^\s*\/?(look|l|move|go|goto|build|map|north|south|east|west|up|down|n|s|e|w|u|d)\b/i.test(
+          command,
+        )
+      );
+    });
   }
 
   /** What every tool factory receives: the client, game state and the vision mode. */

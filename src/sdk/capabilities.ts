@@ -36,12 +36,12 @@ export interface CapabilityManifest {
 
 /** Core work commands, most relevant first: find work, act, communicate, remember. */
 export const ROSTER_PRIORITY: readonly string[] = [
+  // Orientation reads (`look`, `brief`, `next`, `orient`) are not listed: an
+  // agent is reached by what it owes and is given (World Events), `work` is
+  // its one read for choosing new work, and memory health is pushed.
   "work",
-  "next",
   "task",
   "project",
-  "look",
-  "brief",
   "tell",
   "channel",
   "board",
@@ -50,7 +50,6 @@ export const ROSTER_PRIORITY: readonly string[] = [
   "memory",
   "pool",
   "skill",
-  "orient",
   "web",
   "canvas",
   "code",

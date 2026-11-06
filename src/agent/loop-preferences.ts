@@ -223,33 +223,6 @@ export function describeLoadedState(prefs: LoopPreferences, focus: string | null
   return `# ALREADY IN HAND (loaded for you — do not read these again)\n\n${lines.join(" · ")}`;
 }
 
-/** Orientation reads the discovery turn may make before its tool calls count against the run cap. */
-export const ORIENTATION_FREE_READS = 6;
-
-/** Read-only world commands an orientation turn runs to look around (no state changes). */
-const ORIENTATION_COMMANDS =
-  /^(look|brief|recall|recap|work|task (list|info)|tell inbox|channel history|chronicle pending|memory (kv )?get)\b/i;
-
-/**
- * Whether a tool call is an orientation read: a read-only command through the
- * command tool, the brief/look tools, or a memory read. Writes, sends and
- * anything that spends never qualify. Pure.
- */
-export function isOrientationRead(toolName: string, args: Record<string, unknown>): boolean {
-  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-  switch (toolName) {
-    case "marina_command":
-      return ORIENTATION_COMMANDS.test(str(args.command));
-    case "marina_brief":
-    case "marina_look":
-      return true;
-    case "memory":
-      return ["get", "recall", "list"].includes(str(args.action).toLowerCase());
-    default:
-      return false;
-  }
-}
-
 /** Cycles between the adapter's core-memory preference reads, right after a change. */
 export const PREFERENCE_REFRESH_MIN_CYCLES = 50;
 /** The ceiling the interval backs off to while nothing changes. */

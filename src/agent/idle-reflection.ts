@@ -17,7 +17,7 @@
  *
  * `MARINA_IDLE_REFLECTION`:
  *   - `append` (default): the append-only ask above.
- *   - `rest`: keep the idle detection; offer only rest or `brief`.
+ *   - `rest`: keep the idle detection; offer only rest.
  * The two are measured against each other on task success; neither rewrites
  * the store. The old curation menu is not an arm.
  */
@@ -41,12 +41,12 @@ export const APPEND_ASK =
   "A note that only records quiet or repeats a status adds noise.";
 
 export const REST_ASK =
-  "Run `brief` for new work, or rest (`memory set rest <why>`) and end the turn.";
+  "Rest (`memory set rest <why>`) and end the turn: new requests and work reach you as World Events.";
 
 /** The body under `[Quiet — nothing needs your attention]`. */
 export function quietBody(mode: IdleReflectionMode): string {
   return mode === "append"
-    ? `${APPEND_ASK} Then rest (\`memory set rest <why>\`) and end the turn, or run \`brief\` for new work.`
+    ? `${APPEND_ASK} Then rest (\`memory set rest <why>\`) and end the turn: new requests and work reach you as World Events.`
     : REST_ASK;
 }
 
