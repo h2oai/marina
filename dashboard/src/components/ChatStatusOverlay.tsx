@@ -17,7 +17,7 @@ import { authFetch } from "../lib/api";
 import { apiOrigin } from "../lib/api-origin";
 import type { OverlayState } from "../lib/chat-overlay";
 import { draftCommand } from "../lib/command-discovery";
-import type { MediaJob } from "../lib/types";
+import { type MediaJob, taskStateLabel } from "../lib/types";
 import {
   type CodeMessageData,
   codeStatusTone,
@@ -158,11 +158,14 @@ export function ChatStatusOverlay({
                 <span className="truncate text-[12px] font-semibold text-text-bright">
                   {task.title}
                 </span>
-                <span className="text-[10px] uppercase text-primary">{task.status}</span>
+                <span className="text-[10px] uppercase text-primary">{taskStateLabel(task)}</span>
               </div>
               <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[10px] text-text-dim">
                 <span>ID #{task.id}</span>
-                <span>Created by {task.creator_name ?? "—"}</span>
+                <span>
+                  {task.status === "open" && task.submitted ? "Reviewed by" : "Created by"}{" "}
+                  {task.creator_name ?? "—"}
+                </span>
               </div>
               <div className="mt-2 flex flex-wrap gap-1">
                 <button

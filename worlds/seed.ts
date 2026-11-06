@@ -15,6 +15,7 @@ import { discoverSkillFiles, formatSkillContent, loadSkillFile } from "../src/ag
 import { crewModelFromEnv, isRoleKey, roleOverrideProblems } from "../src/config/model-tiers";
 import { isRouteModel } from "../src/decisions/route";
 import type { Engine } from "../src/engine/engine";
+import { sanitizeEntityName } from "../src/engine/entity-name";
 import type { MarinaDB } from "../src/persistence/database";
 import type { Entity } from "../src/types";
 import { reconcileSeedNotes } from "../src/world/seed-guide";
@@ -411,6 +412,11 @@ export function seedProject(
  * claim them — so the claimant's work closes through the normal submit →
  * approve path. Creates the reviewer's world account when it has none yet
  * (rank 0, like any first login). Idempotent; repairs databases seeded before.
+ *
+ * The account is the one the reviewer logs in as: a seeded agent named
+ * `Diligence-Lead` logs in as `DiligenceLead` (`sanitizeEntityName`), and a task
+ * held by the unsanitized spelling could never be approved by anyone. Tasks an
+ * earlier release handed to that spelling are moved to the login account.
  */
 export function assignSeededTaskReviewer(
   db: MarinaDB,
@@ -419,16 +425,19 @@ export function assignSeededTaskReviewer(
 ): void {
   const project = db.getProjectByName(projectName);
   if (!project?.group_id) return;
-  let account = db.getUserByName(reviewer);
+  const login = sanitizeEntityName(reviewer);
+  if (!login) return;
+  let account = db.getUserByName(login);
   if (!account) {
-    db.createUser({ id: crypto.randomUUID(), name: reviewer });
-    account = db.getUserByName(reviewer);
+    db.createUser({ id: crypto.randomUUID(), name: login });
+    account = db.getUserByName(login);
   }
   if (!account) return;
+  const unreachable = reviewer !== login ? reviewer : undefined;
   for (const task of db.listTasks({ groupId: project.group_id, limit: 500 })) {
-    if (task.creator_name !== SYSTEM_OWNER) continue;
+    if (task.creator_name !== SYSTEM_OWNER && task.creator_name !== unreachable) continue;
     if (task.status === "completed" || task.status === "cancelled") continue;
-    db.setTaskCreator(task.id, account.id, reviewer);
+    db.setTaskCreator(task.id, account.id, login);
   }
 }
 

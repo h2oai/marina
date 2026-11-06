@@ -10,10 +10,14 @@ export interface GuideLinkOptions {
   assets?: ReadonlySet<string>;
   /** The URL prefix the site serves `docs/assets/` from (ends with `/`). */
   assetsBase?: string;
+  /** Other published pages outside `docs/guides/`, by repository path (`docs/architecture/overview.md`). */
+  pages?: ReadonlySet<string>;
+  /** Repository directory of the page being rewritten (default `docs/guides`). */
+  from?: string;
 }
 
 /**
- * Guides stay local and an image the site serves is addressed where it is served;
+ * Published pages (the guides, plus `pages`) stay local and an image the site serves is addressed where it is served;
  * repository-only references retain their GitHub destination.
  *
  * A guide writes `![…](../assets/x.png)`, which GitHub renders. Sent to the
@@ -27,16 +31,19 @@ export function rewriteGuideLinks(
 ): string {
   const opts: GuideLinkOptions = "guides" in published ? published : { guides: published };
   const assetsBase = opts.assetsBase ?? "/assets/";
+  const from = opts.from ?? "docs/guides";
+  // Each page is served at `/<repo path without .md>/`, so a link between two
+  // pages is their repository paths' relation, taken from inside the source page.
+  const local = (path: string) => `${posix.relative(`${from}/page`, path.replace(/\.md$/, ""))}/`;
   return markdown.replace(
     /\]\(([A-Za-z0-9_./-]+)(#[^\s)]*)?\)/g,
     (original, target: string, anchor: string | undefined) => {
       if (target.startsWith("/")) return original;
-      const path = posix.normalize(posix.join("docs/guides", target));
+      const path = posix.normalize(posix.join(from, target));
       if (path.startsWith("../")) return original;
       const suffix = anchor ?? "";
-      if (posix.dirname(path) === "docs/guides" && opts.guides.has(posix.basename(path))) {
-        return `](../${posix.basename(path, ".md")}/${suffix})`;
-      }
+      const isGuide = posix.dirname(path) === "docs/guides" && opts.guides.has(posix.basename(path));
+      if (isGuide || opts.pages?.has(path)) return `](${local(path)}${suffix})`;
       if (posix.dirname(path) === "docs/assets" && opts.assets?.has(posix.basename(path))) {
         return `](${assetsBase}${posix.basename(path)})`;
       }

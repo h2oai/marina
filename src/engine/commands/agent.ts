@@ -25,6 +25,7 @@ import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../
 import { refuseCommand } from "../command-response";
 import { MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
 import { sanitizeEntityName } from "../entity-name";
+import { getErrorMessage } from "../errors";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
 import { rankFloorRefusal } from "../rank-floor";
 import { successorHint } from "../role-guard";
@@ -233,7 +234,8 @@ Usage:
               `Agent ${bold(name)} restarted with configuration and focus preserved.`,
             );
           } catch (error) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Restart failed: ${error instanceof Error ? error.message : error}`,
             );
@@ -260,7 +262,8 @@ Usage:
               `Agent ${bold(name)} failed over to ${model}; role, goal, room, and focus were preserved.`,
             );
           } catch (error) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Failover failed: ${error instanceof Error ? error.message : error}`,
             );
@@ -315,7 +318,8 @@ Usage:
             deps.agentRuntime.setAttentionMode(name, mode);
             ctx.send(input.entity, `Agent ${bold(name)} attention mode set to ${mode}.`);
           } catch (error) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Attention update failed: ${error instanceof Error ? error.message : error}`,
             );
@@ -357,7 +361,8 @@ Usage:
               `Agent ${bold(name)} learned from ${feedback}; attention threshold is now ${threshold}.`,
             );
           } catch (error) {
-            ctx.send(
+            refuseCommand(
+              ctx,
               input.entity,
               `Attention feedback failed: ${error instanceof Error ? error.message : error}`,
             );
@@ -484,8 +489,12 @@ function handleList(
       : formatUsd(a.totalCostUsd ?? 0);
     const thinking =
       a.thinkingSent && a.thinkingSent !== "off" ? `thinking:${a.thinkingSent} ` : "";
+    // A config name like "Diligence-Lead" lives in the world as "DiligenceLead":
+    // show the spelling `tell`, `who` and crews will see.
+    const worldName = sanitizeEntityName(a.name);
+    const alias = worldName !== a.name ? ` ${dim(`(in world: ${worldName})`)}` : "";
     lines.push(
-      `${bold(a.name)} ${dim(`[${ops?.paused?.kind === "provider-auth" ? "blocked: provider auth" : (a.healthState ?? a.state)}]`)} ${a.model} ${a.role ? `role:${a.role} ` : ""}${thinking}${dim(`${upMin}m · ${a.toolCalls} calls · ${cost}`)}${ops?.paused && ops.paused.kind !== "provider-auth" ? ` ${dim(`paused: ${ops.paused.kind}`)}` : ""}`,
+      `${bold(a.name)}${alias} ${dim(`[${ops?.paused?.kind === "provider-auth" ? "blocked: provider auth" : (a.healthState ?? a.state)}]`)} ${a.model} ${a.role ? `role:${a.role} ` : ""}${thinking}${dim(`${upMin}m · ${a.toolCalls} calls · ${cost}`)}${ops?.paused && ops.paused.kind !== "provider-auth" ? ` ${dim(`paused: ${ops.paused.kind}`)}` : ""}`,
     );
     if (a.focus) lines.push(`  ${dim(`focus: ${a.focus}`)}`);
   }
@@ -752,7 +761,7 @@ async function handleSpawn(
     refuseCommand(
       ctx,
       eid,
-      "Agent names must be 1-20 characters using only letters, numbers, and underscores.",
+      `Agent names must be 1-20 characters using only letters, numbers, and underscores${spawnNameHint(name)}.`,
     );
     return;
   }
@@ -803,12 +812,35 @@ async function handleSpawn(
     // Spend-rate consent: say what an uncapped agent actually burns, at the
     // moment the operator can still do something about it.
     const budgetLine = budgetCalls
-      ? `Budget: ${budgetCalls} model calls — the agent pauses (and tells you) when it's spent.`
-      : `Budget: uncapped — an active agent makes roughly 10-20 model calls/min. Cap it with \`agent spawn <name> budget <N>\`.`;
+      ? `Budget: ${budgetCalls} model calls (${budgetDuration(budgetCalls)} of active work) — the agent pauses (and tells you) when it's spent.`
+      : `Budget: uncapped — an active agent makes roughly ${ACTIVE_CALLS_PER_MIN.low}-${ACTIVE_CALLS_PER_MIN.high} model calls/min. Cap it with \`agent spawn <name> budget <N>\`.`;
     ctx.send(eid, `Agent ${bold(name)} spawned and running.\n${dim(budgetLine)}`);
   } catch (error) {
-    ctx.send(eid, `Failed to spawn agent: ${error instanceof Error ? error.message : error}`);
+    refuseCommand(ctx, eid, `Failed to spawn agent: ${getErrorMessage(error)}`);
   }
+}
+
+/** Observed call rate of an active resident (a busy crew member reached ~30/min). */
+const ACTIVE_CALLS_PER_MIN = { low: 10, high: 30 } as const;
+
+/** How long a call budget lasts while the agent is busy ("2-6 min"), so a cap is chosen knowingly. */
+export function budgetDuration(calls: number): string {
+  const fmt = (min: number) =>
+    min >= 90 ? `${Math.round(min / 60)} h` : `${Math.max(1, Math.round(min))} min`;
+  const short = fmt(calls / ACTIVE_CALLS_PER_MIN.high);
+  const long = fmt(calls / ACTIVE_CALLS_PER_MIN.low);
+  if (short === long) return `about ${short}`;
+  const sameUnit = short.split(" ")[1] === long.split(" ")[1];
+  return `about ${sameUnit ? short.split(" ")[0] : short}-${long}`;
+}
+
+/** A valid spelling to offer when a spawn name is refused ("Red-Actor" → "Red_Actor"). */
+function spawnNameHint(name: string): string {
+  const fixed = name
+    .replace(/[^A-Za-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 20);
+  return fixed && fixed !== name ? ` — try ${fixed}` : "";
 }
 
 async function handleStop(
@@ -879,7 +911,7 @@ async function handleStop(
           : "";
     ctx.send(eid, `Agent ${bold(name)} stopped.${childrenLine}`);
   } catch (error) {
-    ctx.send(eid, `Failed to stop agent: ${error instanceof Error ? error.message : error}`);
+    refuseCommand(ctx, eid, `Failed to stop agent: ${getErrorMessage(error)}`);
   }
 }
 
@@ -918,7 +950,8 @@ function stopSupervisedResident(
       control: { action: "stop" },
     });
   } catch (error) {
-    ctx.send(
+    refuseCommand(
+      ctx,
       eid,
       error instanceof RoutingError && error.code === "session_left"
         ? `${bold(config.name)}'s supervisor is offline; stop it from its terminal.`
@@ -1213,6 +1246,6 @@ async function handleConfig(
     await deps.agentRuntime.reconfigure(name, opts);
     ctx.send(eid, `Agent ${bold(name)} reconfigured (${field} = ${value}).`);
   } catch (error) {
-    ctx.send(eid, `Reconfigure failed: ${error instanceof Error ? error.message : error}`);
+    refuseCommand(ctx, eid, `Reconfigure failed: ${getErrorMessage(error)}`);
   }
 }

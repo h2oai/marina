@@ -106,6 +106,24 @@ export class AuthCoordinator {
     );
   }
 
+  /**
+   * Whether the account is held only by a quiet in-process connection (a
+   * scheduled run acting for an absent owner). Its owner logging in takes the
+   * account over (`releaseQuietHolder`); the run keeps going and its output
+   * reaches the owner. Any other live connection still refuses the login.
+   */
+  private heldQuietly(entityId: EntityId): boolean {
+    return this.host.connections.getConnectionForEntity(entityId)?.quiet === true;
+  }
+
+  /** Detach a quiet holder so its later teardown leaves the new session alone. */
+  private releaseQuietHolder(entityId: EntityId): void {
+    const holder = this.host.connections.getConnectionForEntity(entityId);
+    if (!holder?.quiet) return;
+    holder.entity = null;
+    this.host.connections.unbindEntity(entityId);
+  }
+
   /** Cancel a pending grace-period eviction for an entity (it's being rebound). */
   private cancelEviction(entityId: EntityId): void {
     const pending = this.entityEvictionTimers.get(entityId);
@@ -314,7 +332,11 @@ export class AuthCoordinator {
     // across restarts. If a live connection IS bound, reject — concurrent logins with
     // the same name would race on entity state. Mirrors the same logic `reconnect()` uses.
     const existing = this.host.entities.findAgentByName(cleanName);
-    if (existing && this.host.connections.isEntityConnected(existing.id)) {
+    if (
+      existing &&
+      this.host.connections.isEntityConnected(existing.id) &&
+      !this.heldQuietly(existing.id)
+    ) {
       return { error: this.nameInUse(existing.id) };
     }
     if (existing) {
@@ -324,6 +346,7 @@ export class AuthCoordinator {
       if (this.atLoginCapacity(internal)) {
         return { error: AuthCoordinator.ERR_AT_CAPACITY };
       }
+      this.releaseQuietHolder(existing.id);
       // Re-attaching to a still-in-memory entity: cancel any pending grace
       // eviction so it isn't torn out from under the new connection.
       this.cancelEviction(existing.id);
@@ -513,7 +536,7 @@ export class AuthCoordinator {
     const existing = this.host.entities.findAgentByName(session.name);
     let entity: Entity | undefined;
     if (existing) {
-      if (this.host.connections.isEntityConnected(existing.id)) {
+      if (this.host.connections.isEntityConnected(existing.id) && !this.heldQuietly(existing.id)) {
         return { error: this.nameInUse(existing.id) };
       }
       // The cap applies to every unbound→bound transition — a grace-window
@@ -527,6 +550,7 @@ export class AuthCoordinator {
       // Cancel any pending eviction so the grace timer doesn't yank the
       // entity out from under the freshly bound connection.
       this.cancelEviction(existing.id);
+      this.releaseQuietHolder(existing.id);
       this.host.connections.unbindEntity(existing.id);
       this.host.connections.bindEntity(connId, existing.id);
       entity = existing;

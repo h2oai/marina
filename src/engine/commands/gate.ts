@@ -22,6 +22,7 @@ import {
   operatorRequiredRefusal,
   principalKind,
 } from "../challenges";
+import { refuseCommand } from "../command-response";
 import { sanitizeEntityName } from "../entity-name";
 import { getErrorMessage } from "../errors";
 import { applyGateReset, auditGateGrants, planGateReset } from "../gate-audit";
@@ -75,12 +76,13 @@ export function gateCommand(deps: {
       const actor = deps.getEntity(input.entity);
       if (!actor) return;
       const reply = (text: string) => ctx.send(input.entity, text);
+      const refuse = (text: string) => refuseCommand(ctx, input.entity, text);
       const sub = input.tokens[0]?.toLowerCase() ?? "list";
 
       if (sub === "list" || sub === "ls") {
         const targetName = input.tokens[1];
         const target = targetName ? deps.resolveEntity(targetName) : actor;
-        if (!target) return reply(`No entity named "${targetName}" found.`);
+        if (!target) return refuse(`No entity named "${targetName}" found.`);
         const rows = getGateProgress(deps.db, String(target.id));
         return reply(
           [
@@ -125,9 +127,9 @@ export function gateCommand(deps: {
         const args = input.tokens.slice(1);
         const apply = args.at(-1)?.toLowerCase() === "apply";
         const [target, gate] = apply ? args.slice(0, -1) : args;
-        if (!target) return reply("Usage: gate reset <entity|agents> [gate|all] [apply]");
+        if (!target) return refuse("Usage: gate reset <entity|agents> [gate|all] [apply]");
         const plan = planGateReset(deps.db, target, gate?.toLowerCase() === "all" ? "all" : gate);
-        if (plan.error) return reply(plan.error);
+        if (plan.error) return refuse(plan.error);
         if (plan.rows.length === 0)
           return reply(
             `Nothing to reset: ${target} holds no operator-grant ${gate ?? "gate"} rows.`,
@@ -146,7 +148,7 @@ export function gateCommand(deps: {
             ].join("\n"),
           );
         if (!isOperatorPrincipal(actor))
-          return reply(operatorRequiredRefusal(actor, "Applying a gate reset"));
+          return refuse(operatorRequiredRefusal(actor, "Applying a gate reset"));
         const done = applyGateReset(deps.db, plan, actor.name);
         return reply(
           [
@@ -161,48 +163,48 @@ export function gateCommand(deps: {
 
       const targetName = input.tokens[1] ?? "";
       const gateId = input.tokens[2] ?? "";
-      if (!targetName || !gateId) return reply(`Usage: gate ${sub} <entity> <gate>`);
+      if (!targetName || !gateId) return refuse(`Usage: gate ${sub} <entity> <gate>`);
       if (!SAFETY_GATES[gateId]) {
-        return reply(`Unknown gate "${gateId}". Gates: ${Object.keys(SAFETY_GATES).join(", ")}`);
+        return refuse(`Unknown gate "${gateId}". Gates: ${Object.keys(SAFETY_GATES).join(", ")}`);
       }
       const target = deps.resolveEntity(targetName);
-      if (!target) return reply(`No entity named "${targetName}" found.`);
+      if (!target) return refuse(`No entity named "${targetName}" found.`);
       // An operator is a PERSON at sovereign rank (the rule holds use): a
       // rank-9 agent is not one, and a grant is an approval for good.
       const sovereign = isOperatorPrincipal(actor);
       const person = principalKind(actor) === "person";
 
       if (sub === "revoke") {
-        if (!sovereign) return reply(operatorRequiredRefusal(actor, "Revoking a gate"));
+        if (!sovereign) return refuse(operatorRequiredRefusal(actor, "Revoking a gate"));
         revoke(deps.db, String(target.id), gateId);
         audit(deps.db, "revoke", actor.name, target.name, gateId);
         return reply(`Revoked ${gateId} from ${target.name}.`);
       }
 
       if (String(target.id) === String(actor.id)) {
-        return reply(
+        return refuse(
           `Nobody grants a gate to themselves — run the gated action; a person's approval of the held run builds it.`,
         );
       }
       if (!person) {
-        return reply(
+        return refuse(
           `Agents don't grant gates — a person does. ${target.name} earns ${gateId} through people's approvals of its held runs. ${agentPrincipalReason(actor)}`,
         );
       }
       if (OPEN_POSTURE_CORE.has(gateId) && !sovereign) {
-        return reply(
+        return refuse(
           `${gateId} is an operator-grant gate — only an operator (a person at rank 9) grants it.`,
         );
       }
       if (!sovereign) {
         if (!checkUnattendedGate(deps.db, String(actor.id), gateId).ok) {
-          return reply(
+          return refuse(
             `You can grant only gates you hold solo — you don't hold ${gateId} unsupervised.`,
           );
         }
         const creator = deps.spawnedBy?.(target.name);
         if (creator && sanitizeEntityName(creator) === sanitizeEntityName(actor.name)) {
-          return reply(
+          return refuse(
             `${target.name} is an agent you spawned — it earns ${gateId} through approvals from outside your lineage, or a sovereign grants it.`,
           );
         }

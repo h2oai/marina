@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 850" width="1180" height="850" role="img" aria-label="System context: people, programs and agents connect to one Marina server process over WebSocket/HTTP, MCP and chat bridges; the engine admits, authorizes and runs every command, calls subsystems, persists to one SQLite database, and reaches model providers, sandboxes, web data and operator alerts outside.">
+<title>Marina at a glance</title>
+<desc>System context: people, programs and agents connect to one Marina server process over WebSocket/HTTP, MCP and chat bridges; the engine admits, authorizes and runs every command, calls subsystems, persists to one SQLite database, and reaches model providers, sandboxes, web data and operator alerts outside.</desc>
+<style>
+text{font-family:Inter,"Segoe UI",-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif}
+.mono{font-family:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace}
+.h1{font-size:22px;font-weight:700;letter-spacing:-0.2px}
+.h2{font-size:13.5px;font-weight:500}
+.bt{font-size:14px;font-weight:650}
+.bs{font-size:12px}
+.bm{font-size:11.5px}
+.gl{font-size:11.5px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase}
+.al{font-size:11.5px;font-weight:600}
+.badge{font-size:12px;font-weight:700}
+.bg{fill:#fbfcfd}.ink{fill:#1f2328}.muted{fill:#59636e}.line{stroke:#6e7781}.ah{fill:#6e7781}.pill{fill:#fbfcfd}.grid{stroke:#eaeef2}
+.f-client{fill:#eef3ff}.s-client{stroke:#4c6ef5}.t-client{fill:#1e3a9a}.a-client{fill:#4c6ef5}.ls-client{stroke:#4c6ef5}.f-net{fill:#e7f6f3}.s-net{stroke:#139a86}.t-net{fill:#0b5e52}.a-net{fill:#139a86}.ls-net{stroke:#139a86}.f-engine{fill:#f1edff}.s-engine{stroke:#7048e8}.t-engine{fill:#46249f}.a-engine{fill:#7048e8}.ls-engine{stroke:#7048e8}.f-agent{fill:#fff4e0}.s-agent{stroke:#e08a00}.t-agent{fill:#7a4a00}.a-agent{fill:#e08a00}.ls-agent{stroke:#e08a00}.f-memory{fill:#e9f7ee}.s-memory{stroke:#2b9a4b}.t-memory{fill:#17602d}.a-memory{fill:#2b9a4b}.ls-memory{stroke:#2b9a4b}.f-civic{fill:#fff0f4}.s-civic{stroke:#d6336c}.t-civic{fill:#8f1a43}.a-civic{fill:#d6336c}.ls-civic{stroke:#d6336c}.f-store{fill:#f1f3f5}.s-store{stroke:#5c6773}.t-store{fill:#343a40}.a-store{fill:#5c6773}.ls-store{stroke:#5c6773}.f-ext{fill:#ffffff}.s-ext{stroke:#8c959f}.t-ext{fill:#3b434b}.a-ext{fill:#8c959f}.ls-ext{stroke:#8c959f}.f-neutral{fill:#ffffff}.s-neutral{stroke:#d0d7de}.t-neutral{fill:#1f2328}.a-neutral{fill:#d0d7de}.ls-neutral{stroke:#d0d7de}
+@media (prefers-color-scheme: dark){
+.bg{fill:#0d1117}.ink{fill:#e6edf3}.muted{fill:#9198a1}.line{stroke:#8b949e}.ah{fill:#8b949e}.pill{fill:#0d1117}.grid{stroke:#1c2128}
+.f-client{fill:#141f3d}.s-client{stroke:#6f8cff}.t-client{fill:#b4c6ff}.a-client{fill:#6f8cff}.ls-client{stroke:#6f8cff}.f-net{fill:#0e2a27}.s-net{stroke:#2ec4ad}.t-net{fill:#8fe3d6}.a-net{fill:#2ec4ad}.ls-net{stroke:#2ec4ad}.f-engine{fill:#1e1838}.s-engine{stroke:#9b82ff}.t-engine{fill:#cdbfff}.a-engine{fill:#9b82ff}.ls-engine{stroke:#9b82ff}.f-agent{fill:#2b2010}.s-agent{stroke:#f2a93b}.t-agent{fill:#f8d596}.a-agent{fill:#f2a93b}.ls-agent{stroke:#f2a93b}.f-memory{fill:#0f2818}.s-memory{stroke:#45c46a}.t-memory{fill:#9de0b0}.a-memory{fill:#45c46a}.ls-memory{stroke:#45c46a}.f-civic{fill:#33141f}.s-civic{stroke:#f06595}.t-civic{fill:#f8b3cb}.a-civic{fill:#f06595}.ls-civic{stroke:#f06595}.f-store{fill:#1b2027}.s-store{stroke:#8b96a3}.t-store{fill:#d0d7de}.a-store{fill:#8b96a3}.ls-store{stroke:#8b96a3}.f-ext{fill:#161b22}.s-ext{stroke:#6e7781}.t-ext{fill:#c9d1d9}.a-ext{fill:#6e7781}.ls-ext{stroke:#6e7781}.f-neutral{fill:#161b22}.s-neutral{stroke:#3d444d}.t-neutral{fill:#e6edf3}.a-neutral{fill:#3d444d}.ls-neutral{stroke:#3d444d}
+}</style>
+<defs><marker id="ah-client" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-client"/></marker><marker id="ah-net" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-net"/></marker><marker id="ah-engine" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-engine"/></marker><marker id="ah-agent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-agent"/></marker><marker id="ah-memory" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-memory"/></marker><marker id="ah-civic" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-civic"/></marker><marker id="ah-store" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-store"/></marker><marker id="ah-ext" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-ext"/></marker><marker id="ah-neutral" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="a-neutral"/></marker><marker id="ah-line" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0.8 L10,5 L0,9.2 z" class="ah"/></marker></defs>
+<rect class="bg" x="0" y="0" width="1180" height="850" rx="14"/>
+<text class="ink h1" x="32" y="44">Marina at a glance</text>
+<text class="muted h2" x="32" y="66">People, programs and agents reach one Bun server process; every action becomes a world command; state lands in one SQLite database.</text>
+<rect x="32" y="104" width="360" height="158" rx="14" class="s-client" fill="none" stroke-width="1.4" stroke-dasharray="7 5"/>
+<rect x="48" y="93" width="74.14000000000001" height="22" rx="11" class="f-client s-client" stroke-width="1.2"/>
+<text x="85.07000000000001" y="108" text-anchor="middle" class="t-client gl">People</text>
+
+<rect x="48" y="120" width="328" height="34" rx="9" class="f-client s-client" stroke-width="1.3"/>
+<text x="62" y="142" text-anchor="start" class="t-client bt">Web dashboard · desktop app</text>
+<rect x="48" y="162" width="328" height="34" rx="9" class="f-client s-client" stroke-width="1.3"/>
+<text x="62" y="184" text-anchor="start" class="t-client bt">marina terminal</text>
+<rect x="48" y="204" width="328" height="34" rx="9" class="f-client s-client" stroke-width="1.3"/>
+<text x="62" y="226" text-anchor="start" class="t-client bt">Discord · Telegram · telnet</text>
+<rect x="410" y="104" width="360" height="158" rx="14" class="s-ext" fill="none" stroke-width="1.4" stroke-dasharray="7 5"/>
+<rect x="426" y="93" width="91.52000000000001" height="22" rx="11" class="f-ext s-ext" stroke-width="1.2"/>
+<text x="471.76" y="108" text-anchor="middle" class="t-ext gl">Programs</text>
+
+<rect x="426" y="120" width="328" height="34" rx="9" class="f-ext s-ext" stroke-width="1.3"/>
+<text x="440" y="142" text-anchor="start" class="t-ext bt">OpenAI · Anthropic · Ollama clients</text>
+<rect x="426" y="162" width="328" height="34" rx="9" class="f-ext s-ext" stroke-width="1.3"/>
+<text x="440" y="184" text-anchor="start" class="t-ext bt">SDK · LangChain · n8n · scripts</text>
+<rect x="426" y="204" width="328" height="34" rx="9" class="f-ext s-ext" stroke-width="1.3"/>
+<text x="440" y="226" text-anchor="start" class="t-ext bt">Federated Marina peers</text>
+<rect x="788" y="104" width="360" height="158" rx="14" class="s-agent" fill="none" stroke-width="1.4" stroke-dasharray="7 5"/>
+<rect x="804" y="93" width="74.14000000000001" height="22" rx="11" class="f-agent s-agent" stroke-width="1.2"/>
+<text x="841.07" y="108" text-anchor="middle" class="t-agent gl">Agents</text>
+
+<rect x="804" y="120" width="328" height="34" rx="9" class="f-agent s-agent" stroke-width="1.3"/>
+<text x="818" y="142" text-anchor="start" class="t-agent bt">Marina residents (in-process)</text>
+<rect x="804" y="162" width="328" height="34" rx="9" class="f-agent s-agent" stroke-width="1.3"/>
+<text x="818" y="184" text-anchor="start" class="t-agent bt">Claude Code · Codex over MCP</text>
+<rect x="804" y="204" width="328" height="34" rx="9" class="f-agent s-agent" stroke-width="1.3"/>
+<text x="818" y="226" text-anchor="start" class="t-agent bt">Supervised agents · ACP editors</text>
+<rect x="56" y="346" width="180" height="62" rx="9" class="f-net s-net" stroke-width="1.3"/>
+<text x="70" y="368" text-anchor="start" class="t-net bt">Chat &amp; telnet</text>
+<text x="70" y="387" text-anchor="start" class="mono bm t-net" opacity="0.9">bridges</text>
+<rect x="248" y="346" width="388" height="62" rx="9" class="f-net s-net" stroke-width="1.3"/>
+<text x="262" y="368" text-anchor="start" class="t-net bt">WebSocket + HTTP  :3300</text>
+<text x="262" y="387" text-anchor="start" class="mono bm t-net" opacity="0.9">world protocol · /dashboard · /api · /v1 · /mem</text>
+<rect x="648" y="346" width="180" height="62" rx="9" class="f-net s-net" stroke-width="1.3"/>
+<text x="662" y="368" text-anchor="start" class="t-net bt">MCP  :3301</text>
+<text x="662" y="387" text-anchor="start" class="mono bm t-net" opacity="0.9">/mcp</text>
+<path d="M206,262 L206,346" fill="none" class="ls-client" stroke-width="1.6" marker-end="url(#ah-client)"/>
+<path d="M330,262 L330,346" fill="none" class="ls-client" stroke-width="1.6" marker-end="url(#ah-client)"/>
+<rect x="268.26" y="278" width="123.48" height="20" rx="10" class="pill"/>
+<text x="330" y="292" text-anchor="middle" class=" al muted">HTTPS · WebSocket</text>
+<path d="M480,262 L480,346" fill="none" class="ls-ext" stroke-width="1.6" marker-end="url(#ah-ext)"/>
+<rect x="411.82" y="278" width="136.36" height="20" rx="10" class="pill"/>
+<text x="480" y="292" text-anchor="middle" class=" al muted">/v1 · SDK · gateway</text>
+<path d="M860,262 L860.0,274.0 Q860,284 850.0,284.0 L610.0,284.0 Q600,284 600.0,294.0 L600,346" fill="none" class="ls-agent" stroke-width="1.6" marker-end="url(#ah-agent)"/>
+<rect x="648.94" y="274" width="162.12" height="20" rx="10" class="pill"/>
+<text x="730" y="288" text-anchor="middle" class=" al muted">WebSocket · routing API</text>
+<path d="M1000,262 L1000.0,296.0 Q1000,306 990.0,306.0 L770.0,306.0 Q760,306 760.0,316.0 L760,346" fill="none" class="ls-agent" stroke-width="1.6" marker-end="url(#ah-agent)"/>
+<rect x="964.02" y="276" width="71.96000000000001" height="20" rx="10" class="pill"/>
+<text x="1000" y="290" text-anchor="middle" class=" al muted">MCP tools</text>
+<rect x="56" y="438" width="772" height="128" rx="10" class="f-engine s-engine" stroke-width="2"/>
+<text x="72" y="462" text-anchor="start" class="t-engine bt">Engine — one world, one command path</text>
+<text x="812" y="462" text-anchor="end" class="mono t-engine bm">src/engine/</text>
+<rect x="72" y="476" width="166" height="76" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="86" y="498" text-anchor="start" class="t-neutral bt">Admission</text>
+<text x="86" y="517" text-anchor="start" class="bs ink">per-entity FIFO queues</text>
+<text x="86" y="533.5" text-anchor="start" class="mono bm t-neutral" opacity="0.9">CommandCoordinator</text>
+<rect x="250" y="476" width="206" height="76" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="264" y="498" text-anchor="start" class="t-neutral bt">Authority</text>
+<text x="264" y="517" text-anchor="start" class="bs ink">rank · gates · challenges</text>
+<text x="264" y="533.5" text-anchor="start" class="mono bm t-neutral" opacity="0.9">CommandPhaseCoordinator</text>
+<rect x="468" y="476" width="166" height="76" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="482" y="498" text-anchor="start" class="t-neutral bt">World state</text>
+<text x="482" y="517" text-anchor="start" class="bs ink">rooms · entities · events</text>
+<text x="482" y="533.5" text-anchor="start" class="mono bm t-neutral" opacity="0.9">EventLog</text>
+<rect x="646" y="476" width="166" height="76" rx="9" class="f-neutral s-neutral" stroke-width="1.3"/>
+<text x="660" y="498" text-anchor="start" class="t-neutral bt">Time</text>
+<text x="660" y="517" text-anchor="start" class="bs ink">periodic jobs</text>
+<text x="660" y="533.5" text-anchor="start" class="mono bm t-neutral" opacity="0.9">TickScheduler</text>
+<path d="M146,408 L146,438" fill="none" class="ls-net" stroke-width="1.6" marker-end="url(#ah-net)"/>
+<path d="M442,408 L442,438" fill="none" class="ls-net" stroke-width="1.6" marker-end="url(#ah-net)"/>
+<path d="M738,408 L738,438" fill="none" class="ls-net" stroke-width="1.6" marker-end="url(#ah-net)"/>
+<text x="456" y="428" text-anchor="start" class="muted bm">every action → a world command</text>
+<rect x="56" y="596" width="184" height="54" rx="9" class="f-agent s-agent" stroke-width="1.3"/>
+<text x="70" y="618" text-anchor="start" class="t-agent bt">Agent runtime</text>
+<text x="70" y="637" text-anchor="start" class="bs ink">spawns residents · crews</text>
+<rect x="252" y="596" width="184" height="54" rx="9" class="f-memory s-memory" stroke-width="1.3"/>
+<text x="266" y="618" text-anchor="start" class="t-memory bt">Memory</text>
+<text x="266" y="637" text-anchor="start" class="bs ink">records · recall · dreams</text>
+<rect x="448" y="596" width="184" height="54" rx="9" class="f-engine s-engine" stroke-width="1.3"/>
+<text x="462" y="618" text-anchor="start" class="t-engine bt">Forecasting</text>
+<text x="462" y="637" text-anchor="start" class="bs ink">pipeline · resolvers</text>
+<rect x="644" y="596" width="184" height="54" rx="9" class="f-net s-net" stroke-width="1.3"/>
+<text x="658" y="618" text-anchor="start" class="t-net bt">Model gateway /v1</text>
+<text x="658" y="637" text-anchor="start" class="bs ink">proxy · usage · traces</text>
+<rect x="56" y="660" width="184" height="54" rx="9" class="f-agent s-agent" stroke-width="1.3"/>
+<text x="70" y="682" text-anchor="start" class="t-agent bt">Orchestration</text>
+<text x="70" y="701" text-anchor="start" class="bs ink">formations · crews · tasks</text>
+<rect x="252" y="660" width="184" height="54" rx="9" class="f-memory s-memory" stroke-width="1.3"/>
+<text x="266" y="682" text-anchor="start" class="t-memory bt">Outcomes &amp; lessons</text>
+<text x="266" y="701" text-anchor="start" class="bs ink">one outcome path</text>
+<rect x="448" y="660" width="184" height="54" rx="9" class="f-civic s-civic" stroke-width="1.3"/>
+<text x="462" y="682" text-anchor="start" class="t-civic bt">Decisions &amp; judges</text>
+<text x="462" y="701" text-anchor="start" class="bs ink">gate · route · verify</text>
+<rect x="644" y="660" width="184" height="54" rx="9" class="f-engine s-engine" stroke-width="1.3"/>
+<text x="658" y="682" text-anchor="start" class="t-engine bt">Code Mode</text>
+<text x="658" y="701" text-anchor="start" class="bs ink">workspaces · checks</text>
+<path d="M442,566 L442,596" fill="none" class="ls-engine" stroke-width="1.6" marker-end="url(#ah-engine)"/>
+<text x="452" y="585" text-anchor="start" class="muted bm">handlers call subsystems</text>
+<rect x="56" y="744" width="580" height="56" rx="9" class="f-store s-store" stroke-width="2"/>
+<text x="70" y="766" text-anchor="start" class="t-store bt">SQLite world database</text>
+<text x="70" y="785" text-anchor="start" class="mono bm t-store" opacity="0.9">bun:sqlite · WAL · append-only migrations · FTS5</text>
+<rect x="648" y="744" width="180" height="56" rx="9" class="f-store s-store" stroke-width="1.3"/>
+<text x="662" y="766" text-anchor="start" class="t-store bt">Asset storage</text>
+<text x="662" y="785" text-anchor="start" class="mono bm t-store" opacity="0.9">media · files</text>
+<path d="M346,714 L346,744" fill="none" class="ls-store" stroke-width="1.6" marker-end="url(#ah-store)"/>
+<text x="356" y="733" text-anchor="start" class="muted bm">persisted through MarinaDB</text>
+<rect x="32" y="318" width="820" height="504" rx="14" class="s-engine" fill="none" stroke-width="1.4"/>
+<rect x="48" y="307" width="134.97000000000003" height="22" rx="11" class="f-engine s-engine" stroke-width="1.2"/>
+<text x="115.48500000000001" y="322" text-anchor="middle" class="t-engine gl">Marina server</text>
+
+<rect x="872" y="318" width="292" height="504" rx="14" class="s-ext" fill="none" stroke-width="1.4" stroke-dasharray="7 5"/>
+<rect x="888" y="307" width="82.83000000000001" height="22" rx="11" class="f-ext s-ext" stroke-width="1.2"/>
+<text x="929.415" y="322" text-anchor="middle" class="t-ext gl">Outside</text>
+
+<rect x="888" y="346" width="260" height="70" rx="9" class="f-ext s-ext" stroke-width="1.3"/>
+<text x="902" y="368" text-anchor="start" class="t-ext bt">Web &amp; data</text>
+<text x="902" y="387" text-anchor="start" class="bs ink">search · fetch (SSRF-guarded)</text>
+<text x="902" y="403.5" text-anchor="start" class="bs ink">markets · forecasting boards</text>
+<rect x="888" y="468" width="260" height="68" rx="9" class="f-ext s-ext" stroke-width="1.3"/>
+<text x="902" y="490" text-anchor="start" class="t-ext bt">Operator alerts</text>
+<text x="902" y="509" text-anchor="start" class="bs ink">webhook or command</text>
+<rect x="888" y="583" width="260" height="80" rx="9" class="f-ext s-ext" stroke-width="1.3"/>
+<text x="902" y="605" text-anchor="start" class="t-ext bt">Model providers</text>
+<text x="902" y="624" text-anchor="start" class="bs ink">Anthropic · OpenAI · local servers</text>
+<text x="902" y="640.5" text-anchor="start" class="bs ink">OpenRouter (labelled fallback)</text>
+<rect x="888" y="671" width="260" height="68" rx="9" class="f-ext s-ext" stroke-width="1.3"/>
+<text x="902" y="693" text-anchor="start" class="t-ext bt">Sandboxes</text>
+<text x="902" y="712" text-anchor="start" class="bs ink">container image · Flywheel</text>
+<path d="M828,502 L888,502" fill="none" class="ls-engine" stroke-width="1.6" marker-end="url(#ah-engine)"/>
+<path d="M828,623 L888,623" fill="none" class="ls-net" stroke-width="1.6" marker-end="url(#ah-net)"/>
+<path d="M828,687 L888,687" fill="none" class="ls-engine" stroke-width="1.6" marker-end="url(#ah-engine)"/>
+</svg>

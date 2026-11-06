@@ -544,6 +544,33 @@ single comparison's p-value moves with them. Don't draw a conclusion from one ru
 
 Method: [persistence.md → Replicate groups](../architecture/persistence.md#replicate-groups-migration-148).
 
+## Use-case playbook
+
+`scripts/playbook/catalog.ts` lists Marina's use cases (memory, forecasting, research, plan
+stress-tests, scheduled briefings, tabletop exercises, governance, analyst teams, model
+comparison) as the commands a person types, each with what must hold: success or refusal,
+a few words the reply carries, and time and cost ceilings. Text checks stay loose on purpose:
+a model's wording changes from run to run, the shape of its reply does not.
+
+Two runners read the one list:
+
+- `test/playbook.test.ts` runs every use case that needs no model, network, long wait or other
+  world in an in-process engine under the `local` profile, on every test run.
+- `bun run playbook` runs the rest against real servers:
+
+```sh
+bun run playbook --free                                   # no keys: model-free + network steps
+bun run playbook --env-file ~/.marina/.env --only forecast,research
+bun run playbook --env-file ~/.marina/.env --long --cap 20 # + schedules, comparison, analyst teams
+```
+
+Each world gets a fresh isolated server (its own port from `--port`, database under the output
+folder, `local` profile, no room agents, daily spend cap `--cap`). A step's cost is the world's
+spend while it ran, so background agents count toward it. The report (`report.md`, `report.json`)
+goes outside the checkout; keep results out of the public repository. A use case that fails here
+is a product problem to fix, not a check to loosen: add a step when a fix lands, so the
+regression stays caught.
+
 ## Live coding smoke qualification
 
 With `OPENAI_API_KEY` configured, run the native Marina worker against disposable Git fixtures:

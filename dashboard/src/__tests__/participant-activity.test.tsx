@@ -53,6 +53,25 @@ it("keeps native turn results and delivery acceptance distinct from task complet
   expect(blocks[2]!.tone).toBe("danger");
 });
 
+it("folds a repeated runtime state into one counted entry, keeping every source event", () => {
+  const events = [
+    event(1, "runtime.state", { status: "idle", cwd: "/work/tree" }),
+    event(2, "runtime.state", { status: "idle", cwd: "/work/tree" }),
+    event(3, "runtime.state", { status: "idle", cwd: "/work/tree" }),
+    event(4, "output", { text: "Fixed the bug." }),
+    event(5, "runtime.state", { status: "idle", cwd: "/work/tree" }),
+    event(6, "runtime.state", { status: "running", cwd: "/work/tree" }),
+  ];
+  const blocks = participantActivity(events, "codex");
+  expect(blocks.map((block) => block.title)).toEqual([
+    "Runtime · idle ×3",
+    "Output",
+    "Runtime · idle",
+    "Runtime · running",
+  ]);
+  expect(blocks.flatMap((block) => block.events)).toEqual(events);
+});
+
 it("retains custom event data for inspection and search without treating it as HTML", () => {
   render(
     <ParticipantActivity

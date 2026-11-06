@@ -1519,6 +1519,31 @@ export function routeToChannelStreaming(
   return { stream, conversationId: convId, requestId: reqId };
 }
 
+/** Model-name prefixes → the provider an unprefixed id most likely belongs to. */
+const BARE_MODEL_PROVIDERS: ReadonlyArray<[RegExp, string]> = [
+  [/^claude-/i, "anthropic"],
+  [/^(gpt-|o\d|chatgpt-)/i, "openai"],
+  [/^gemini-/i, "google"],
+  [/^deepseek-/i, "deepseek"],
+  [/^(mistral|codestral|magistral)/i, "mistral"],
+  [/^grok-/i, "xai"],
+];
+
+/**
+ * The two ways a gateway caller reaches a model directly, said where it fails:
+ * an explicit `<provider>/<id>` passes through in every endpoint mode, and the
+ * Passthru endpoint mode passes every request. A bare id ("claude-sonnet-5-5")
+ * keeps the agent route, so the hint names the prefixed spelling to send.
+ */
+export function passthruHint(model: unknown): string {
+  const bare = typeof model === "string" && model && !model.includes("/") ? model : undefined;
+  const provider = bare && BARE_MODEL_PROVIDERS.find(([re]) => re.test(bare))?.[1];
+  const explicit = provider
+    ? `send model "${provider}/${bare}"`
+    : `name the model as "<provider>/<model>"`;
+  return `To call a model directly, ${explicit} (it passes straight through), or switch the endpoint to Passthru (Admin → Endpoint, or PUT /api/model-endpoint {"mode":"passthru"}).`;
+}
+
 /**
  * Parameters an in-world agent route cannot honor. Agents answer in text over
  * a channel: a tool schema, multiple choices or a structured output format
@@ -1526,17 +1551,18 @@ export function routeToChannelStreaming(
  * `unsupported_parameter` error the SDK can act on (drop tools, retry).
  */
 export function rejectUnsupportedForAgents(body: Record<string, unknown>): Response | undefined {
+  const fix = passthruHint(body.model);
   for (const field of ["max_tokens", "max_completion_tokens", "max_output_tokens"]) {
     if (body[field] !== undefined)
       return unsupportedParam(
         field,
-        "In-world agent routing cannot enforce an output-token ceiling; use the passthru endpoint mode for token controls.",
+        `In-world agent routing cannot enforce an output-token ceiling. ${fix}`,
       );
   }
   if (Array.isArray(body.tools) && body.tools.length > 0) {
     return unsupportedParam(
       "tools",
-      "In-world agent routing answers in text and cannot execute tool schemas; use the passthru endpoint mode for tool calling.",
+      `In-world agent routing answers in text and cannot execute tool schemas. ${fix}`,
     );
   }
   if (Array.isArray(body.functions) && body.functions.length > 0) {

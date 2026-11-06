@@ -8,6 +8,7 @@ import { CANVAS_INTENT_CLAIM_TIMEOUT_MS, type CanvasNodeRow } from "../../persis
 import { validatePanelDocument } from "../../sdk/panel-document";
 import type { Entity, EntityId, RoomContext } from "../../types";
 import { type CanvasReader, mayReadCanvas } from "../canvas-access";
+import { refuseCommand } from "../command-response";
 
 /** Command parsing/presentation only; lifecycle writes also serve the HTTP UI. */
 export async function handleCanvasIntent(options: {
@@ -24,6 +25,7 @@ export async function handleCanvasIntent(options: {
   const { ctx, entity, db, tokens, reader, resolveWritableNode, preview, resultTypes, logEvent } =
     options;
   const send = (text: string) => ctx.send(entity.id, text);
+  const refuse = (text: string) => refuseCommand(ctx, entity.id, text);
   const action = tokens[0]?.toLowerCase();
   const usage =
     "Usage: canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent fail <node_id> [reason] | canvas intent complete <node_id> [--type <type>] <result> | canvas intent complete-rich <node_id> <a2ui_json>";
@@ -55,19 +57,19 @@ export async function handleCanvasIntent(options: {
     return;
   }
   if (!action || !["claim", "fail", "complete", "complete-rich"].includes(action) || !tokens[1]) {
-    send(usage);
+    refuse(usage);
     return;
   }
   const node = resolveWritableNode(tokens[1]);
   if (!node) {
-    send(`Node "${tokens[1]}" not found.`);
+    refuse(`Node "${tokens[1]}" not found.`);
     return;
   }
   const context = { db, actor: { id: entity.id, name: entity.name, room: entity.room }, logEvent };
   const reportFailure = (failure: { reason: string; status?: string }) => {
-    if (failure.reason === "no_intent") send("This node has no intent.");
-    else if (failure.reason === "not_found") send(`Node "${tokens[1]}" not found.`);
-    else send(`Intent is already "${failure.status ?? "changed"}", cannot ${action}.`);
+    if (failure.reason === "no_intent") refuse("This node has no intent.");
+    else if (failure.reason === "not_found") refuse(`Node "${tokens[1]}" not found.`);
+    else refuse(`Intent is already "${failure.status ?? "changed"}", cannot ${action}.`);
   };
   if (action === "claim") {
     const result = claimIntent(context, node.id);
@@ -99,12 +101,12 @@ export async function handleCanvasIntent(options: {
     resultTokens = [...resultTokens.slice(0, typeIndex), ...resultTokens.slice(typeIndex + 2)];
   }
   if (!resultTypes.includes(resultType)) {
-    send(`Invalid result node type. Valid: ${resultTypes.join(", ")}`);
+    refuse(`Invalid result node type. Valid: ${resultTypes.join(", ")}`);
     return;
   }
   let text = resultTokens.join(" ");
   if (!text) {
-    send(usage);
+    refuse(usage);
     return;
   }
   let resultData: Record<string, unknown> | undefined;
@@ -113,12 +115,12 @@ export async function handleCanvasIntent(options: {
     try {
       raw = JSON.parse(text);
     } catch {
-      send("Invalid JSON. Provide a valid A2UI component tree.");
+      refuse("Invalid JSON. Provide a valid A2UI component tree.");
       return;
     }
     const document = validatePanelDocument(raw);
     if (!document.ok) {
-      send(document.error);
+      refuse(document.error);
       return;
     }
     resultData = { ...document.document };

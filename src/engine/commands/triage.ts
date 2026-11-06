@@ -5,6 +5,8 @@ import type { AnswerSpec } from "../../forecast/answer-types";
 import { type TriageResult, triageQuestion } from "../../forecast/triage";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
+import { getErrorMessage } from "../errors";
 import { currentEvidenceCutoff } from "../evidence-fence";
 import { parseModifiers } from "../parse-input";
 import { typedSpec } from "./forecast";
@@ -138,7 +140,7 @@ export function triageCommand(deps: {
       try {
         body = runTriage(args, deps.now?.() ?? new Date());
       } catch (err) {
-        ctx.send(input.entity, `triage: ${(err as Error).message}\n${TRIAGE_USAGE}`);
+        refuseCommand(ctx, input.entity, `triage: ${getErrorMessage(err)}\n${TRIAGE_USAGE}`);
         return;
       }
       ctx.send(input.entity, [header("triage"), separator(), ...body].join("\n"));

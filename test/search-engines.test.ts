@@ -448,7 +448,7 @@ describe("search readiness", () => {
     const r = describeSearchReadiness({ DEEPSEEK_API_KEY: "dk", OPENROUTER_API_KEY: "ok" }, []);
     expect(r.status).toBe("ok");
     expect(r.detail).toContain(
-      "web search chain: duckduckgo → deepseek (Search API) → openrouter (Exa plugin, research)",
+      "web search chain: duckduckgo → deepseek (Search API) → openrouter (Exa plugin)",
     );
     expect(r.detail).toContain(
       "openrouter-web engines: native, exa, parallel, perplexity, firecrawl",

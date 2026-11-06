@@ -82,6 +82,24 @@ const run = (
   });
 const stages = (r: PatternRunResult) => r.trace.steps.map((s) => s.stage);
 
+describe("today's date under the task", () => {
+  it("reaches every member, and a run without it sends the task unchanged", async () => {
+    const dated = fakeModel();
+    await runTextPattern("ensemble", "Launch on March 1. What fails?", M, {
+      complete: dated.complete,
+      checker: "m/judge",
+      budget: new SpendGuard({ label: "pattern budget", daily: false }),
+      today: new Date("2026-11-05T12:00:00Z"),
+    });
+    const answers = dated.calls.filter((c) => c.system !== TEXT_PICK_SYSTEM);
+    expect(answers.length).toBeGreaterThan(0);
+    for (const c of answers) expect(c.user).toContain("Today is 2026-11-05.");
+    const plain = fakeModel();
+    await run("ensemble", plain);
+    for (const c of plain.calls) expect(c.user).not.toContain("Today is");
+  });
+});
+
 describe("the protocols stay pure", () => {
   it("text-patterns imports no network or engine module at runtime", () => {
     const source = readFileSync(

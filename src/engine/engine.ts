@@ -98,7 +98,7 @@ import { ConnectionManager } from "./connection-manager";
 import { ConnectorRuntime } from "./connector-runtime";
 import { positiveNumberFromEnv, ROOM_FETCH_RATE_MS, ROOM_FETCH_TIMEOUT_MS } from "./constants";
 import { onDefaultResolved, summarizeDefaultValue } from "./default-resolution";
-import { sanitizeEntityName } from "./entity-name";
+import { residentNameKey, sanitizeEntityName } from "./entity-name";
 import { getErrorMessage, logRejection, tryLog, tryLogAsync } from "./errors";
 import { EventLog } from "./event-log";
 import { principalOf } from "./gate-context";
@@ -1615,10 +1615,15 @@ export class Engine {
     // Two passes, exact first: the old single-pass exact-or-prefix test meant
     // a prefix match on an earlier-iterated entity beat an exact match on a
     // later one ("tell Alex ..." reached Alexandra when Alex existed).
+    // Between them, one spelling-insensitive pass: an agent config name
+    // ("Diligence-Lead", as `agent list` shows it) reaches the live entity
+    // whose name was sanitized at login ("DiligenceLead").
     const lower = name.toLowerCase();
+    const key = residentNameKey(name);
     const agents = this.entities.all().filter((entity) => entity.kind === "agent");
     return (
       agents.find((entity) => entity.name.toLowerCase() === lower) ??
+      (key ? agents.find((entity) => residentNameKey(entity.name) === key) : undefined) ??
       agents.find((entity) => entity.name.toLowerCase().startsWith(lower))
     );
   }

@@ -1,7 +1,7 @@
 # Forecasting any question
 
 Marina answers forecasting questions with a probability or a number, backed by cited and checked
-evidence and several models, typically in under a minute. It also answers **typed**
+evidence and several models, usually in one to three minutes (two to seven for a typed question). It also answers **typed**
 questions — pick one option, pick a set of options, give a number, rank a list, or name something —
 with a planning step, iterative research, several independent runs and a critique pass
 ([Typed answers](#typed-answers)).

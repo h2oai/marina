@@ -1136,6 +1136,10 @@ export class MarinaDB implements MarinaStores {
   getChannelHistory(channelId: string, limit = 20): ChannelMessageRow[] {
     return channelsDb.getChannelHistory(this.db, channelId, limit);
   }
+
+  getChannelMessage(channelId: string, id: number): ChannelMessageRow | undefined {
+    return channelsDb.getChannelMessage(this.db, channelId, id);
+  }
   countChannelMessages(channelId: string): number {
     return channelsDb.countChannelMessages(this.db, channelId);
   }

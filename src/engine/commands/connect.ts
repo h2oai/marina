@@ -12,6 +12,19 @@ import { rankFloorRefusal } from "../rank-floor";
 import { requiresPersistence } from "./command-messages";
 import { shellExecRefusal } from "./run";
 
+/** A tool description as one listing line: its first line, cut at a word with an ellipsis. */
+export function toolSummary(description: string, max = 100): string {
+  const first = description
+    .trim()
+    .split(/\n\s*\n|\n/)[0]!
+    .replace(/\s+/g, " ")
+    .trim();
+  if (first.length <= max) return first;
+  const cut = first.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
 export function connectCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
@@ -163,7 +176,7 @@ export function connectCommand(deps: {
           // fetch-time check (resolved addresses included), not only the literal one.
           const urlError = await validateFetchUrl(url);
           if (urlError) {
-            ctx.send(input.entity, `Blocked URL: ${urlError}`);
+            refuseCommand(ctx, input.entity, `Blocked URL: ${urlError}`);
             return;
           }
           if (db.getConnectorByName(name)) {
@@ -297,14 +310,14 @@ export function connectCommand(deps: {
               header(`Tools on "${name}"`),
               separator(),
               ...tools.map((t) => {
-                const desc = t.description ? ` \u2014 ${t.description.slice(0, 60)}` : "";
+                const desc = t.description ? ` \u2014 ${toolSummary(t.description)}` : "";
                 return `  ${t.name}${desc}`;
               }),
             ];
             ctx.send(input.entity, lines.join("\n"));
           } catch (err) {
             const msg = getErrorMessage(err);
-            ctx.send(input.entity, `Failed to list tools: ${msg}`);
+            refuseCommand(ctx, input.entity, `Failed to list tools: ${msg}`);
           }
           return;
         }

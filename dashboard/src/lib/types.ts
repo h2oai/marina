@@ -103,6 +103,18 @@ export interface TaskEntry {
   status: string;
   creator_name: string;
   created_at: number;
+  /** Claims still being worked on (paged task list only). */
+  claimed?: number;
+  /** Submissions waiting for the creator's review (paged task list only). */
+  submitted?: number;
+}
+
+/** What a task row shows: an open task with submissions is waiting for its creator. */
+export function taskStateLabel(task: Pick<TaskEntry, "status" | "claimed" | "submitted">): string {
+  if (task.status !== "open") return task.status;
+  if (task.submitted) return `awaiting review (${task.submitted})`;
+  if (task.claimed) return task.claimed === 1 ? "claimed" : `claimed (${task.claimed})`;
+  return "open";
 }
 
 export interface ChannelEntry {

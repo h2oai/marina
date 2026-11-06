@@ -285,7 +285,9 @@ outside `auto` / `none` / `required` / `function` is `param: "tool_choice.type"`
 outside `message` / `function_call` / `function_call_output` is `param: "input[i].type"`. A function
 tool without a `name` (or a `function_call_output` without a `call_id`) is an ordinary 400 with the
 offending `param`. Agents mode still refuses `tools` altogether (`param: "tools"`) — in-world agents
-answer in text.
+answer in text. The refusal says how to reach the model directly: name it as `<provider>/<model>`
+(for example `anthropic/claude-sonnet-5-5`), which passes straight through in every endpoint mode, or
+switch the endpoint to passthru.
 
 ---
 

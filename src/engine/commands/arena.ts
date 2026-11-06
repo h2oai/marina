@@ -12,6 +12,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { ArenaStore } from "../../persistence/interfaces/arena-store";
 import type { NotesStore } from "../../persistence/interfaces/notes-store";
 import type { CommandDef, RoomContext } from "../../types";
+import { refuseCommand } from "../command-response";
 import { logRejection } from "../errors";
 import { Logger } from "../logger";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
@@ -84,8 +85,9 @@ export function arenaCommand(deps: {
     handler: (ctx: RoomContext, input) => {
       const sub = canonicalSub(input.tokens[0]?.toLowerCase() ?? "status", SUBS);
       const reply = (text: string) => ctx.send(input.entity, text);
+      const refuse = (text: string) => refuseCommand(ctx, input.entity, text);
       const fail = (err: unknown) =>
-        reply(`Arena data unavailable: ${err instanceof Error ? err.message : String(err)}`);
+        refuse(`Arena data unavailable: ${err instanceof Error ? err.message : String(err)}`);
       const entrant = arenaStatus().entrant ?? "marina-preview";
       const filed = (roundId: string) =>
         deps.store && arenaStatus().entrant
@@ -104,7 +106,7 @@ export function arenaCommand(deps: {
       if (sub === "discover") return arenaDiscover(lab, input.entity, rest, reply).catch(fail);
       if (sub === "signals") return arenaSignals(lab, rest, reply);
       if (sub === "health") {
-        if (!deps.store) return reply("Arena ledger unavailable.");
+        if (!deps.store) return refuse("Arena ledger unavailable.");
         return arenaHealth(lab.data(), deps.store, entrant)
           .then((health) => reply(formatArenaHealth(health)))
           .catch(fail);
@@ -162,12 +164,12 @@ export function arenaCommand(deps: {
 
       if (sub === "show") {
         const id = input.tokens[1];
-        if (!id) return reply("Usage: arena show <round_id>");
+        if (!id) return refuse("Usage: arena show <round_id>");
         const data = lab.data();
         return data
           .round(id)
           .then(async (round) => {
-            if (!round) return reply(`No round ${id}.`);
+            if (!round) return refuse(`No round ${id}.`);
             const lock = await data.lock(id);
             const body = await buildForecastBody(data, entrant, round);
             const rules = forecastRound(round, lock).rules;

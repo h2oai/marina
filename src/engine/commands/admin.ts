@@ -132,7 +132,7 @@ export function adminCommand(deps: AdminDeps): CommandDef {
               return;
             }
           }
-          ctx.send(input.entity, `Could not find connection for ${target.name}.`);
+          refuseCommand(ctx, input.entity, `Could not find connection for ${target.name}.`);
           break;
         }
 

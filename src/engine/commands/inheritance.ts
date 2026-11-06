@@ -116,7 +116,8 @@ export function inheritanceCommand(deps: {
           `Inheritance bundle ${bundle.schema} (${artifacts.length} artifacts).${skippedLine} Claimed source is unverified until independently authenticated.\ninherit ${token}`,
         );
       } catch (cause) {
-        ctx.send(
+        refuseCommand(
+          ctx,
           input.entity,
           cause instanceof Error ? cause.message : "Inheritance export failed.",
         );
@@ -171,6 +172,10 @@ function importBundle(
       `Imported ${bundle.artifacts.length} artifacts into "${poolName}" as unverified evidence. Nothing was activated, executed, or merged into guide/tradition memory.`,
     );
   } catch (cause) {
-    ctx.send(input.entity, cause instanceof Error ? cause.message : "Inheritance import failed.");
+    refuseCommand(
+      ctx,
+      input.entity,
+      cause instanceof Error ? cause.message : "Inheritance import failed.",
+    );
   }
 }

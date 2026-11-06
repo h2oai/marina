@@ -131,6 +131,8 @@ recall launch   # tomorrow: what did we learn?
 
 Not admin features: commands. A person types them, an agent calls them, an MCP client invokes
 them, under the same permissions and the same spend cap.
+[Field use case examples](docs/guides/field-use-cases.md) walks through thirteen worked examples,
+easiest first, each with real output and the commands to run it.
 
 **Forecast anything.** Ask a question and get a probability, a number or a ranked answer. Several
 models research it independently, every citation is checked before it counts, and when the
@@ -238,7 +240,7 @@ the [deployment guide](docs/guides/deployment.md): turn on sign-in first.
 | Run it for a team | [Configuration](docs/guides/configuration.md) · [Deployment](docs/guides/deployment.md) · [Operator runbook](docs/guides/operator-runbook.md) |
 | Know what's stable | [Feature status](docs/reference/feature-status.md) |
 | Fix something | [Troubleshooting](docs/guides/troubleshooting.md) |
-| Look under the hood | [Architecture](docs/architecture/README.md) · [All guides](docs/guides/README.md) |
+| Look under the hood | [Architecture in diagrams](docs/architecture/overview.md) · [Architecture deep dives](docs/architecture/README.md) · [All guides](docs/guides/README.md) |
 
 The complete command reference is generated in [docs/reference/commands.md](docs/reference/commands.md).
 `SKILL.md` is the agent-facing field guide.

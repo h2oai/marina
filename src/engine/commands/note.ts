@@ -135,7 +135,7 @@ const VALID_RELATIONSHIPS = new Set([
 const NOTE_VERIFY_USAGE =
   "Usage: note verify <your-note-id> unverified|disputed [confidence 0..1] [rationale]. A note becomes verified only when another resident ratifies it (`pool <name> ratify <id>`); add evidence with `note source <id> <url|note:id|asset:id>`.";
 
-const NOTE_SUBS = [
+export const NOTE_SUBS = [
   "claim",
   "source",
   "derive",

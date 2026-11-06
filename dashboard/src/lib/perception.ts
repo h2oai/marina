@@ -18,51 +18,109 @@ export interface SpeechMeta {
   tone?: "emote" | "shout" | "broadcast";
 }
 
+const SPEECH_TONES: Record<string, SpeechMeta["tone"]> = {
+  shout: "shout",
+  emote: "emote",
+  broadcast: "broadcast",
+};
+
+/** Speech from the perception's own fields: another's message, or your own echo. */
+function structuredSpeech(
+  tag: string | undefined,
+  data: Record<string, unknown> | undefined,
+): SpeechMeta | null {
+  if (!data) return null;
+  const tone = SPEECH_TONES[tag ?? ""];
+  const channel = typeof data.channel === "string" ? data.channel : undefined;
+  const body =
+    typeof data.message === "string"
+      ? data.message
+      : typeof data.content === "string"
+        ? data.content
+        : undefined;
+  if (typeof data.senderName === "string" && body !== undefined && tag !== "emote") {
+    return {
+      speaker: data.senderName,
+      body,
+      perspective: data.senderName === "You" ? "self" : "other",
+      ...(channel ? { channel } : {}),
+      ...(tone ? { tone } : {}),
+    };
+  }
+  const delivery = data.delivery as
+    | { kind?: unknown; target?: unknown; message?: unknown }
+    | undefined;
+  if (delivery && typeof delivery.message === "string" && typeof delivery.kind === "string") {
+    const target = typeof delivery.target === "string" ? delivery.target : undefined;
+    if (delivery.kind === "tell")
+      return { speaker: target, body: delivery.message, perspective: "self" };
+    if (delivery.kind === "channel")
+      return {
+        speaker: "You",
+        body: delivery.message,
+        perspective: "self",
+        ...(target ? { channel: target } : {}),
+      };
+    if (delivery.kind === "say" || delivery.kind === "shout")
+      return {
+        speaker: "You",
+        body: delivery.message,
+        perspective: "self",
+        ...(delivery.kind === "shout" ? { tone: "shout" as const } : {}),
+      };
+  }
+  return null;
+}
+
 export function parseSpeech(
   text: string | undefined,
   tag: string | undefined,
   perception?: StoredPerception,
 ): SpeechMeta | null {
   const data = perception?.data as Record<string, unknown> | undefined;
+  // The server's structured fields first: they hold the body exactly as
+  // written, line breaks included, which the text forms below cannot.
+  const structured = structuredSpeech(tag, data);
+  if (structured) return structured;
   if (!text) return null;
   const trimmed = text.trim();
   if (!trimmed) return null;
 
   if (tag === "say") {
-    const youMatch = trimmed.match(/^You say:\s*(.+)$/);
+    const youMatch = trimmed.match(/^You say:\s*([\s\S]+)$/);
     if (youMatch) {
       return { speaker: "You", body: youMatch[1]!, perspective: "self" };
     }
-    const otherMatch = trimmed.match(/^(.+?) says:\s*(.+)$/);
+    const otherMatch = trimmed.match(/^(.+?) says:\s*([\s\S]+)$/);
     if (otherMatch) {
       return { speaker: otherMatch[1]!, body: otherMatch[2]!, perspective: "other" };
     }
   }
 
   if (tag === "tell") {
-    const fromMatch = trimmed.match(/^>\s+(.+?) tells you:\s*(.+)$/);
+    const fromMatch = trimmed.match(/^>\s+(.+?) tells you:\s*([\s\S]+)$/);
     if (fromMatch) {
       return { speaker: fromMatch[1]!, body: fromMatch[2]!, perspective: "other" };
     }
-    const toMatch = trimmed.match(/^>\s+You tell (.+?):\s*(.+)$/);
+    const toMatch = trimmed.match(/^>\s+You tell (.+?):\s*([\s\S]+)$/);
     if (toMatch) {
       return { speaker: toMatch[1]!, body: toMatch[2]!, perspective: "self" };
     }
   }
 
   if (tag === "shout") {
-    const selfMatch = trimmed.match(/^You shout:\s*(.+)$/i);
+    const selfMatch = trimmed.match(/^You shout:\s*([\s\S]+)$/i);
     if (selfMatch) {
       return { speaker: "You", body: selfMatch[1]!, perspective: "self", tone: "shout" };
     }
-    const otherMatch = trimmed.match(/^(.+?) shouts:\s*(.+)$/i);
+    const otherMatch = trimmed.match(/^(.+?) shouts:\s*([\s\S]+)$/i);
     if (otherMatch) {
       return { speaker: otherMatch[1]!, body: otherMatch[2]!, perspective: "other", tone: "shout" };
     }
   }
 
   if (tag === "emote") {
-    const emoteMatch = trimmed.match(/^\*\s*(.+)$/);
+    const emoteMatch = trimmed.match(/^\*\s*([\s\S]+)$/);
     if (emoteMatch) {
       return { body: emoteMatch[1]!, perspective: "other", tone: "emote" };
     }

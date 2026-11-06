@@ -1,12 +1,16 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { flattenPeerText } from "../../agent/peer-text";
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { channelSelf, header, separator } from "../../net/ansi";
 import { modelResponseError } from "../../net/model-api/response-envelope";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { refuseCommand } from "../command-response";
-import { envelopeFields, messageEnvelope } from "../message-envelope";
+import { envelopeFields, type MessageCause, messageEnvelope } from "../message-envelope";
+import { restRaw } from "../parse-input";
+
+const SEND_USAGE = "Usage: channel send <name> [re:<id>] <message>";
 
 export function channelCommand(
   channels: ChannelManager,
@@ -24,11 +28,12 @@ export function channelCommand(
       { syntax: "channel list <name> [args]", effect: "read" },
       { syntax: "channel listall", effect: "read" },
       { syntax: "channel listall <name> [args]", effect: "read" },
-      { syntax: "channel send <name> <message>", effect: "write" },
+      { syntax: "channel read <name> <id>", effect: "read" },
+      { syntax: "channel send <name> [re:<id>] <message>", effect: "write" },
     ],
     name: "channel",
     aliases: ["ch"],
-    help: "Real-time messaging channels with persistent history.\nUsage: channel list|listall|join|leave|send|history|create\n\nExamples:\n  channel join research\n  channel send research Found something in the archive\n  channel history research 20\n  channel create alerts",
+    help: "Real-time messaging channels with persistent history.\nUsage: channel list|listall|join|leave|send|read|history|create\n\nExamples:\n  channel join research\n  channel send research Found something in the archive\n  channel send research re:3041 Agreed, merging it\n  channel history research 20\n  channel read research 3041\n  channel create alerts",
     handler: (ctx: RoomContext, input) => {
       const entity = getEntity(input.entity);
       if (!entity) return;
@@ -132,6 +137,51 @@ export function channelCommand(
           return;
         }
 
+        case "read": {
+          // One message whole, by id: what a cut-off World Events line points to.
+          const name = tokens[1];
+          const id = Number((tokens[2] ?? "").replace(/^#/, ""));
+          if (!name || !Number.isSafeInteger(id) || id <= 0) {
+            refuseCommand(ctx, input.entity, "Usage: channel read <name> <id>");
+            return;
+          }
+          const ch = channels.getChannelByName(name);
+          if (!ch) {
+            refuseCommand(
+              ctx,
+              input.entity,
+              `Channel "${name}" not found; \`channel list\` shows channels, \`board list\` boards.`,
+            );
+            return;
+          }
+          if (!channels.isMember(ch.id, input.entity)) {
+            refuseCommand(ctx, input.entity, `You are not in channel "${name}". Join it first.`);
+            return;
+          }
+          const m = channels.getMessage(ch.id, id);
+          if (!m) {
+            ctx.send(input.entity, `No message #${id} in channel "${name}".`);
+            return;
+          }
+          const when = new Date(m.createdAt).toISOString().slice(0, 16).replace("T", " ");
+          // Every body line indented: no line of it can read as another sender's.
+          const body = m.content.replace(/\r\n?/g, "\n").replace(/^/gm, "  ");
+          ctx.send(
+            input.entity,
+            `${header(`#${name} message ${m.id}`)} ${m.senderName} · ${when} UTC\n${body}`,
+            name,
+            {
+              channel: name,
+              senderName: m.senderName,
+              content: m.content,
+              messageId: m.id,
+              messageRef: `channel_msg:${m.id}`,
+              ...(m.cause ? { cause: m.cause } : {}),
+            },
+          );
+          return;
+        }
+
         case "send": {
           const name = tokens[1];
           // Common agent mistake (measured in the 2026-09 sweep): omitting the
@@ -141,12 +191,12 @@ export function channelCommand(
             refuseCommand(
               ctx,
               input.entity,
-              "You omitted the channel name — the message cannot come first. Usage: channel send <name> <message>",
+              `You omitted the channel name — the message cannot come first. ${SEND_USAGE}`,
             );
             return;
           }
           if (!name || tokens.length < 3) {
-            refuseCommand(ctx, input.entity, "Usage: channel send <name> <message>");
+            refuseCommand(ctx, input.entity, SEND_USAGE);
             return;
           }
           const ch = channels.getChannelByName(name);
@@ -163,12 +213,27 @@ export function channelCommand(
             return;
           }
           // `channel send <name> | <message>`: a leading `|` only separates.
-          const message = tokens
-            .slice(2)
-            .join(" ")
-            .replace(/^\|\s*/, "");
+          // The body is kept as typed, line breaks included (`restRaw`).
+          let message = restRaw(input, 2).replace(/^\|\s*/, "");
+          // `re:<id>` first: this post answers post <id> of the same channel,
+          // recorded as its cause (`channel history` and agents show it).
+          let cause: MessageCause | undefined;
+          const re = /^re:(?:post:|#)?(\d+)(?:\s+|$)/i.exec(message);
+          if (re) {
+            const answered = channels.getMessage(ch.id, Number(re[1]));
+            if (!answered) {
+              refuseCommand(
+                ctx,
+                input.entity,
+                `No message #${re[1]} in channel "${name}" to answer; \`channel history ${name}\` lists its ids.`,
+              );
+              return;
+            }
+            cause = { ref: `channel_msg:${answered.id}`, depth: answered.depth ?? 0 };
+            message = message.slice(re[0].length).replace(/^\|\s*/, "");
+          }
           if (!message) {
-            refuseCommand(ctx, input.entity, "Usage: channel send <name> <message>");
+            refuseCommand(ctx, input.entity, SEND_USAGE);
             return;
           }
           if (ch.name.startsWith("model-")) {
@@ -184,7 +249,7 @@ export function channelCommand(
               return;
             }
           }
-          const envelope = messageEnvelope(input.entity);
+          const envelope = messageEnvelope(input.entity, cause);
           const { message: stored } = channels.post(ch.id, input.entity, entity.name, message, {
             envelope,
           });
@@ -231,12 +296,26 @@ export function channelCommand(
             ctx.send(input.entity, `No messages in channel "${name}".`);
             return;
           }
+          // One line per message in the text (a body's line breaks show as
+          // ` ⏎ `, so no message can pass for another sender's line); clients
+          // that render conversations read the structured `channelHistory`.
           const lines = [
             header(`History: ${name}`),
             separator(),
-            ...history.map((m) => `  ${m.senderName}: ${m.content}`),
+            ...history.map((m) => `  ${m.senderName}: ${flattenPeerText(m.content)}`),
           ];
-          ctx.send(input.entity, lines.join("\n"));
+          ctx.send(input.entity, lines.join("\n"), undefined, {
+            channelHistory: {
+              channel: name,
+              messages: history.map((m) => ({
+                id: m.id,
+                senderName: m.senderName,
+                content: m.content,
+                createdAt: m.createdAt,
+                ...(m.cause ? { cause: m.cause } : {}),
+              })),
+            },
+          });
           return;
         }
 
@@ -272,7 +351,7 @@ export function channelCommand(
         default:
           ctx.send(
             input.entity,
-            "Usage: channel list|listall|join|leave|send|history|create <name> [args]",
+            "Usage: channel list|listall|join|leave|send|read|history|create <name> [args]",
           );
       }
     },

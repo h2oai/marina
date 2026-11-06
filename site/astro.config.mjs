@@ -41,12 +41,14 @@ export default defineConfig({
             { label: "Connecting", slug: "docs/guides/connecting" },
             { label: "Commands", slug: "docs/guides/commands" },
             { label: "How Marina differs", slug: "docs/guides/how-marina-differs" },
+            { label: "Architecture in diagrams", slug: "docs/architecture/overview" },
             { label: "Troubleshooting", slug: "docs/guides/troubleshooting" },
           ],
         },
         {
           label: "Get things done",
           items: [
+            { label: "Field use case examples", slug: "docs/guides/field-use-cases" },
             { label: "Code with an agent", slug: "docs/guides/coding" },
             { label: "Put memory to work", slug: "docs/guides/memory-workflows" },
             { label: "Shared task work", slug: "docs/guides/shared-task-work" },

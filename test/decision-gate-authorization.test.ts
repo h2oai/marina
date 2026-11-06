@@ -175,6 +175,40 @@ describe("gate intent context", () => {
     ).toBe("ask");
   });
 
+  it("does not count the scope question on a scope-fenced write; consequential calls ignore the fence", () => {
+    const answers = (scope: number, d = 0.1) => ({
+      destructive: n(d),
+      irreversible: n(0.1),
+      outsideScope: n(scope),
+      unauthorized: n(0.1),
+    });
+    const fenced = (scope: number, d?: number) =>
+      decideGate(answers(scope, d), undefined, GATE_QUESTIONS_WITH_AUTHORIZATION, {
+        risk: "mutate",
+        scopeFenced: true,
+      });
+    expect(fenced(0.72).action).toBe("allow");
+    expect(fenced(0.99).action).toBe("allow");
+    expect(fenced(0.72).signals.outsideScope).toBe(0.72);
+    // The other risk questions still decide.
+    expect(fenced(0.72, 0.7).action).toBe("ask");
+    expect(fenced(0.72, 0.95).action).toBe("block");
+    // Uncalibrated policy: the scores seen live (0.63–0.74) no longer hold a fenced call.
+    expect(
+      decideGate(answers(0.74), UNCALIBRATED_GATE_POLICY, GATE_QUESTIONS_WITH_AUTHORIZATION, {
+        risk: "mutate",
+        scopeFenced: true,
+      }).action,
+    ).toBe("allow");
+    // A consequential call counts every question, fenced or not.
+    expect(
+      decideGate(answers(0.72), undefined, GATE_QUESTIONS_WITH_AUTHORIZATION, {
+        risk: "consequential",
+        scopeFenced: true,
+      }).action,
+    ).toBe("ask");
+  });
+
   it("still fails closed on a missing answer, whatever the risk", () => {
     const missing = { destructive: n(0.1), irreversible: n(0.1), outsideScope: n(0.1) };
     for (const risk of ["egress", "mutate", "consequential"] as const) {
@@ -464,5 +498,33 @@ describe("pi adapter: what reaches the gate", () => {
     unauthorized = 0.05;
     const write = await call("marina_command", { command: "task create Fix it | now" });
     expect(write?.reason).toContain("outsideScope 0.72");
+  });
+
+  it("does not hold an agent's assigned job, deposit or own new note on the scope question", async () => {
+    // Live: an evaluator's own assistance jobs, a host's guide entries and
+    // residents' own notes were held at outsideScope 0.63–0.74 and expired.
+    outsideScope = 0.74;
+    unauthorized = 0.05;
+    expect(
+      await call("marina_memory_service", { operation: "assist_claim", id: "job-1" }),
+    ).toBeUndefined();
+    expect(
+      await call("marina_memory_service", {
+        operation: "assist_read",
+        id: "job-1",
+        input: { lease_token: "t", request: { operation: "review", input: {} } },
+      }),
+    ).toBeUndefined();
+    expect(await call("marina_pool", { action: "add", pool: "guide", content: "x" })).toBe(
+      undefined,
+    );
+    expect(await call("marina_command", { command: "memory note FOCUS-SCOPE x" })).toBe(undefined);
+    // Still scored on every question.
+    expect(received.length).toBe(4);
+    // Editing a record, or acting on another's job, keeps counting scope.
+    const edit = await call("marina_command", { command: "memory note correct 2060 y" });
+    expect(edit?.reason).toContain("outsideScope 0.74");
+    const delegate = await call("marina_memory_service", { operation: "assist_delegate" });
+    expect(delegate?.reason).toContain("outsideScope 0.74");
   });
 });

@@ -142,6 +142,19 @@ export function getChannelHistory(
     .all(channelId, limit) as ChannelMessageRow[];
 }
 
+/** One stored message of a channel, or undefined (the id must belong to that channel). */
+export function getChannelMessage(
+  db: Database,
+  channelId: string,
+  id: number,
+): ChannelMessageRow | undefined {
+  return (
+    (db
+      .query("SELECT * FROM channel_messages WHERE channel_id = ? AND id = ?")
+      .get(channelId, id) as ChannelMessageRow | null) ?? undefined
+  );
+}
+
 export function countChannelMessages(db: Database, channelId: string): number {
   const row = db
     .query("SELECT COUNT(*) AS n FROM channel_messages WHERE channel_id = ?")

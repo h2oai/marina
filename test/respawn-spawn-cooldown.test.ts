@@ -4,7 +4,7 @@
 /**
  * The boot respawn of saved agents must never lose an agent to the 1 s spawn
  * cooldown (which rate-limits interactive `agent spawn`), while the cooldown
- * itself stays in force for ordinary spawns.
+ * pacing itself spaces ordinary spawns a second apart instead of refusing them.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -15,10 +15,11 @@ import { MarinaDB } from "../src/persistence/database";
 type Internals = {
   agents: Map<string, unknown>;
   lastSpawnAt: number;
+  waitMs: (ms: number) => Promise<void>;
   spawn: (config: AgentConfig, opts?: { systemRespawn?: boolean }) => Promise<unknown>;
 };
 
-const COOLDOWN = "Spawn cooldown";
+const COOLDOWN = "Spawn queue full";
 
 describe("boot respawn vs the spawn cooldown", () => {
   let db: MarinaDB;
@@ -52,16 +53,46 @@ describe("boot respawn vs the spawn cooldown", () => {
     expect(seen.every((s) => s.systemRespawn === true)).toBe(true);
   }, 10_000);
 
-  it("the cooldown still refuses an ordinary spawn and never a system respawn", async () => {
+  it("an ordinary spawn inside the window waits for its slot instead of failing", async () => {
+    const waits: number[] = [];
+    internals.waitMs = async (ms) => {
+      waits.push(ms);
+    };
+    internals.lastSpawnAt = Date.now();
+    // Three spawns in a row: each takes the next one-second slot. Without a
+    // WebSocket port each fails later — but never on the pacing.
+    const outcomes = await Promise.all(
+      ["Probe1", "Probe2", "Probe3"].map((name) =>
+        runtime.spawn({ name, model: "openai/gpt-5-mini" }).then(
+          () => "ok",
+          (e: unknown) => (e instanceof Error ? e.message : String(e)),
+        ),
+      ),
+    );
+    for (const outcome of outcomes) expect(outcome).not.toContain(COOLDOWN);
+    expect(waits.length).toBe(3);
+    const [a = 0, b = 0, c = 0] = [...waits].sort((x, y) => x - y);
+    expect(a).toBeGreaterThan(0);
+    expect(b - a).toBeGreaterThanOrEqual(990);
+    expect(c - b).toBeGreaterThanOrEqual(990);
+  });
+
+  it("a system respawn never waits, and a queue past 30 s is refused", async () => {
+    const waits: number[] = [];
+    internals.waitMs = async (ms) => {
+      waits.push(ms);
+    };
+    internals.lastSpawnAt = Date.now();
     const config: AgentConfig = { name: "Probe", model: "openai/gpt-5-mini" };
-    internals.lastSpawnAt = Date.now();
-    await expect(runtime.spawn(config)).rejects.toThrow(COOLDOWN);
-    internals.lastSpawnAt = Date.now();
-    // Without a WebSocket port the spawn fails later — but never on the cooldown.
     const outcome = await runtime.spawn(config, { systemRespawn: true }).then(
       () => "ok",
       (e: unknown) => (e instanceof Error ? e.message : String(e)),
     );
     expect(outcome).not.toContain(COOLDOWN);
+    expect(waits).toEqual([]);
+    internals.lastSpawnAt = Date.now() + 60_000;
+    await expect(runtime.spawn({ name: "Late", model: "openai/gpt-5-mini" })).rejects.toThrow(
+      COOLDOWN,
+    );
   });
 });

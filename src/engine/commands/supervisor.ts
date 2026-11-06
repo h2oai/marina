@@ -5,6 +5,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { WorldSupervisor, WorldSupervisorDb } from "../../routing/world-supervisor";
 import { resolveSupervisorRoot } from "../../routing/world-supervisor";
 import type { CommandDef, Entity } from "../../types";
+import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
 
@@ -52,6 +53,7 @@ export function supervisorCommand(deps: SupervisorCommandDeps): CommandDef {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       const reply = (text: string) => ctx.send(input.entity, text);
+      const refuse = (text: string) => refuseCommand(ctx, input.entity, text);
       const sub = canonicalSub(input.tokens[0]?.toLowerCase() ?? "status", SUBS);
 
       if (sub === "status") {
@@ -82,12 +84,12 @@ export function supervisorCommand(deps: SupervisorCommandDeps): CommandDef {
 
       // People supervise; an agent never starts or stops the supervisor.
       if (deps.isAgent(entity.id))
-        return reply("Only a person may run the supervisor; an agent never starts or stops it.");
+        return refuse("Only a person may run the supervisor; an agent never starts or stops it.");
 
       if (sub === "start") {
         // Plaintext, unauthenticated telnet never starts host processes (as Code Mode).
         if (deps.getConnectionProtocol?.(entity.id) === "telnet")
-          return reply(
+          return refuse(
             "The supervisor runs host processes; it is not available over telnet. Use marina connect or the dashboard.",
           );
         const parsed = parseModifiers(input.tokens.slice(1), {
@@ -95,9 +97,9 @@ export function supervisorCommand(deps: SupervisorCommandDeps): CommandDef {
           label: { type: "string" },
         });
         if (parsed.errors.length || parsed.rest.length)
-          return reply(parsed.errors[0] ?? `Unexpected: ${parsed.rest.join(" ")}\n${USAGE}`);
+          return refuse(parsed.errors[0] ?? `Unexpected: ${parsed.rest.join(" ")}\n${USAGE}`);
         const root = resolveSupervisorRoot(parsed.raw.root);
-        if ("error" in root) return reply(`supervisor start: ${root.error}`);
+        if ("error" in root) return refuse(`supervisor start: ${root.error}`);
         try {
           const status = await deps.supervisor.start({
             db: deps.db,
@@ -109,15 +111,15 @@ export function supervisorCommand(deps: SupervisorCommandDeps): CommandDef {
             `Supervisor started in ${status.root} (${status.adapters?.join(", ")}). Launch agents from Dashboard → Workspace → Streams; each becomes its own resident. Stop: supervisor stop`,
           );
         } catch (error) {
-          return reply(`supervisor start: ${getErrorMessage(error)}`);
+          return refuse(`supervisor start: ${getErrorMessage(error)}`);
         }
       }
 
       if (sub === "stop") {
         const status = deps.supervisor.status();
-        if (!status.running) return reply("The in-world supervisor is not running.");
+        if (!status.running) return refuse("The in-world supervisor is not running.");
         if (status.owner !== entity.name && !deps.isOperator(entity))
-          return reply(
+          return refuse(
             `The supervisor belongs to ${status.owner}; only they or an operator stop it.`,
           );
         await deps.supervisor.stop();

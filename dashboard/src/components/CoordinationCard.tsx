@@ -32,12 +32,15 @@ import {
   useTaskDetail,
   useTasksPaged,
 } from "../hooks/use-api";
+import { useChatState } from "../hooks/use-chat-state";
 import { useInvalidateOnEvent } from "../hooks/use-realtime";
 import { draftCommand } from "../lib/command-discovery";
+import { identityColor } from "../lib/identity-color";
 import { dashboardInspectionFromSearch } from "../lib/marina-reference";
 import type { DashboardEvent } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
+import { MessageBody } from "./MessageBody";
 import { TaskEvidence } from "./TaskEvidence";
 
 type Section =
@@ -418,6 +421,7 @@ function TaskDetailView({
 const POSTS_PAGE = 25;
 
 export function BoardDetailView({ name }: { name: string }) {
+  const viewer = useChatState((s) => (s.loggedIn ? s.entityName : null));
   const { data, isLoading } = useBoardDetail(name);
   const [limit, setLimit] = useState(POSTS_PAGE);
   const { data: paged } = useBoardPosts(name, limit);
@@ -450,7 +454,7 @@ export function BoardDetailView({ name }: { name: string }) {
             {posts.map((p) => (
               <div key={p.id} className="border-l-2 border-border pl-2 py-0.5">
                 <div className="text-text-bright text-[10px] font-medium">{p.title}</div>
-                <div className="text-text text-[10px] leading-relaxed line-clamp-3">{p.body}</div>
+                <MessageBody text={p.body} viewer={viewer} dense className="text-text" />
                 <div className="flex gap-2 mt-0.5 text-[9px] text-text-dim">
                   <button
                     type="button"
@@ -538,6 +542,7 @@ function GroupDetailView({ name }: { name: string }) {
 const MESSAGES_PAGE = 25;
 
 export function ChannelDetailView({ name }: { name: string }) {
+  const viewer = useChatState((s) => (s.loggedIn ? s.entityName : null));
   const { data, isLoading } = useChannelDetail(name);
   const [limit, setLimit] = useState(MESSAGES_PAGE);
   const { data: paged } = useChannelMessages(name, limit);
@@ -576,12 +581,23 @@ export function ChannelDetailView({ name }: { name: string }) {
             {messages.map((m) => (
               <div key={`${m.sender_name}-${m.created_at}`} className="text-[10px]">
                 <div className="flex items-baseline gap-1.5">
-                  <span className="text-secondary font-medium shrink-0">{m.sender_name}</span>
+                  <span
+                    className="font-semibold shrink-0"
+                    style={{ color: identityColor(m.sender_name) }}
+                  >
+                    {m.sender_name}
+                  </span>
                   <span className="text-text-dim text-[9px] shrink-0">
                     {formatTime(m.created_at)}
                   </span>
                 </div>
-                <div className="text-text leading-relaxed pl-0">{m.content}</div>
+                <MessageBody
+                  text={m.content}
+                  viewer={viewer}
+                  channel={data.name}
+                  dense
+                  className="text-text"
+                />
               </div>
             ))}
           </div>
