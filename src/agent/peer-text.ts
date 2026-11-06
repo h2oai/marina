@@ -51,34 +51,40 @@ export function isPeerSpeech(p: { tag?: string; data?: Record<string, unknown> }
 
 /**
  * How a peer's message reaches an agent's model (`MARINA_PEER_RENDER`):
- *  - `flat` (default; set as `off` or `flat`): one line, the server's text
- *    with line breaks as ` ⏎ `.
+ *  - `ids` (default): the server's one line with Marina's stamp in front
+ *    (`[#general post:3041 re:post:3040] Critic: … ⏎ …`, `[re:tell:9] Ann tells you: …`).
+ *    Measured in a paired replay: the ids give threading, and agents answer
+ *    as many requests as with the bare line.
+ *  - `structured`: a header the server stamped — where it was said,
+ *    a post's id, what it answers, who said it — then the body as written,
+ *    each line of a multi-line body behind a `  │ ` guard. A list stays a
+ *    list, and no line of the body can begin like a harness line or another
+ *    message's header. A one-line direct message keeps the server's line.
+ *  - `off` (or `flat`): one line, the server's text with line breaks as ` ⏎ `.
  *  - `split` assigns half the agents to each form by name, and
  *    `structured:<name>,<name>` the named ones: both forms in one world.
- *  - `structured`: a header the server stamped — where it was said, its id,
- *    what it answers, who said it — then the body as written, each line of a
- *    multi-line body behind a `  │ ` guard. A list stays a list, and no line
- *    of the body can begin like a harness line or another message's header.
  */
-export type PeerRenderMode = "flat" | "structured";
+export type PeerRenderMode = "flat" | "structured" | "ids";
 
 export function peerRenderMode(
   env: Record<string, string | undefined> = process.env,
   agent?: string,
 ): PeerRenderMode {
   const raw = env.MARINA_PEER_RENDER?.trim().toLowerCase() ?? "";
+  if (raw === "off" || raw === "flat") return "flat";
   if (raw === "structured") return "structured";
-  // `split`: half the agents, by a stable hash of the name (the rollout's
-  // two arms in one world); `structured:<a>,<b>`: the named agents.
+  // `split`: half the agents, by a stable hash of the name (two arms in one
+  // world); `structured:<a>,<b>`: the named agents, the rest one-line.
   if (raw === "split") return agent && peerRenderArm(agent) ? "structured" : "flat";
-  if (raw.startsWith("structured:") && agent) {
+  if (raw.startsWith("structured:")) {
+    if (!agent) return "flat";
     const names = raw
       .slice("structured:".length)
       .split(",")
       .map((n) => n.trim());
     return names.includes(agent.trim().toLowerCase()) ? "structured" : "flat";
   }
-  return "flat";
+  return "ids";
 }
 
 /** The `split` arm of an agent: true = structured. FNV-1a over the lower-cased name. */
@@ -101,7 +107,7 @@ export interface PeerMessage {
   where: string;
   sender: string;
   body: string;
-  /** This message's id as a typed ref the agent can use (`post:3041`, `tell:12`). */
+  /** A channel post's id as a typed ref the agent can use (`post:3041`). */
   id?: string;
   /** What it answers (`post:3040`, `tell:9`, `say`). */
   re?: string;
@@ -144,7 +150,11 @@ export function peerMessageOf(p: {
     where,
     sender: data.senderName,
     body,
-    ...(id && id !== "say" && id !== "shout" ? { id } : {}),
+    // A tell's own id is left out: its reply needs none (`re`, or the cause
+    // the harness sends), and showing it invited a `tell read <id>` that spent
+    // a turn re-reading a message already shown whole. Posts keep theirs, for
+    // `channel send <ch> re:<id>`.
+    ...(id?.startsWith("post:") ? { id } : {}),
     ...(re ? { re } : {}),
   };
 }
@@ -195,11 +205,58 @@ export function agentPeerText(
 ): string {
   const suffix = options.suffix ?? "";
   if (!isPeerSpeech(p)) return text + suffix;
-  if ((options.mode ?? peerRenderMode()) === "structured") {
+  const mode = options.mode ?? peerRenderMode();
+  if (mode === "structured") {
     const m = peerMessageOf(p);
-    if (m) return renderPeerMessage(m, options.self, suffix);
+    // A one-line direct message (tell, say, shout) keeps the server's own
+    // line, "Ann tells you: …": a paired replay of real tells answered fewer
+    // of them under a `[tell] Ann:` header, which no longer says it is to
+    // you. Channel posts (ids for threading) and every multi-line body take
+    // the structured form, where it measured better.
+    if (m && (m.where.startsWith("#") || bodyLines(m.body).length > 1))
+      return renderPeerMessage(m, options.self, suffix);
   }
-  return escapePeerMarkers(flattenPeerText(text)) + suffix;
+  const line = escapePeerMarkers(flattenPeerText(text));
+  if (mode === "ids") {
+    const m = peerMessageOf(p);
+    if (m) return stampLine(line, m) + suffix;
+  }
+  return line + suffix;
+}
+
+/**
+ * The `ids` form: the server's one line with Marina's stamp in front. A
+ * channel's leading tag becomes `[#general post:3041 re:post:3040]`; a direct
+ * message that answers something gets `[re:tell:9]` before it.
+ */
+function stampLine(line: string, m: PeerMessage): string {
+  if (m.where.startsWith("#")) {
+    const head = [m.where, m.id, m.re ? `re:${m.re}` : undefined].filter(Boolean).join(" ");
+    const tag = `[${m.where.slice(1)}]`;
+    return line.startsWith(tag) ? `[${head}]${line.slice(tag.length)}` : `[${head}] ${line}`;
+  }
+  return m.re ? `[re:${m.re}] ${line}` : line;
+}
+
+/** One `channel history` / `channel read` message in the `ids` form. */
+export function idsHistoryLine(
+  channel: string,
+  m: { id?: unknown; senderName?: unknown; content?: unknown; cause?: unknown },
+): string | undefined {
+  if (typeof m.senderName !== "string" || typeof m.content !== "string") return undefined;
+  if (!CHANNEL_NAME.test(channel)) return undefined;
+  const id = typeof m.id === "number" ? `post:${m.id}` : undefined;
+  const re = peerRefLabel(m.cause);
+  return stampLine(
+    escapePeerMarkers(flattenPeerText(`[${channel}] ${m.senderName}: ${m.content}`)),
+    {
+      where: `#${channel}`,
+      sender: m.senderName,
+      body: m.content,
+      ...(id ? { id } : {}),
+      ...(re ? { re } : {}),
+    },
+  );
 }
 
 /** One `channel history` / `channel read` payload message, rendered for an agent. */

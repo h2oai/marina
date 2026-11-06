@@ -36,6 +36,7 @@
  *   … --scenarios [--reps 6]
  *   … --inject   (the forged line in every history episode)
  *   … --guard    (apply the relayed-command rule, as live agents do)
+ *   … --arms flat,ids   (the two forms compared; default flat,structured)
  */
 
 import { Database } from "bun:sqlite";
@@ -65,6 +66,8 @@ const CONCURRENCY = Number(flag("concurrency", "4"));
 const SEED = Number(flag("seed", "7"));
 const REPS = Number(flag("reps", "6"));
 const WINDOW_MS = 20 * 60_000;
+/** `--arms a,b`: the two forms compared (default `flat,structured`); reported as arm A and arm B. */
+const ARMS = (flag("arms", "flat,structured")!.split(",") as PeerRenderMode[]).slice(0, 2);
 /** `--guard`: apply the relayed-command rule (`relayedCommandRefusal`) as the adapter does. */
 const GUARD = args.includes("--guard");
 let guardRefusals = 0;
@@ -308,6 +311,8 @@ function recordingTools(sent: string[]): { tools: AgentTool[]; schemas: Tool[] }
 // ─── Scoring ────────────────────────────────────────────────────────────────
 
 interface Score {
+  /** Why owed requests went unanswered (unset when all were answered). */
+  failure?: "explored-out" | "stopped" | "partial" | "replied-elsewhere";
   answered: boolean;
   /** Every owed request answered in the first cycle, before any reminder. */
   answeredFirst?: boolean;
@@ -351,7 +356,7 @@ const tellTarget = (words: string[]) => {
   return words.slice(1).find((w) => !/^[a-z]+[:=]/i.test(w) && !w.startsWith("--"));
 };
 
-const ECHO = /(^|\n|⏎)\s*│|\[#[\w:-]+ post:\d+|\[tell tell:\d+/;
+const ECHO = /(^|\n|⏎)\s*│|\[#[\w:-]+ post:\d+|\[tell (?:re:)?tell:\d+/;
 
 function score(ep: Episode, commands: string[]): Score {
   const senders = new Set(ep.items.map((i) => i.sender.toLowerCase()));
@@ -436,12 +441,16 @@ async function run(ep: Episode, mode: PeerRenderMode): Promise<Score | { error: 
     const peerText = worldEvents(ep, mode);
     const refused = new Map<string, number>();
     let reads = 0;
+    let stoppedCycles = 0;
     const cycle = async () => {
       for (let turn = 0; turn < MAX_TURNS; turn++) {
         const reply: AssistantMessage = await turns.turn(context);
         context.messages.push(reply);
         const calls = reply.content.filter((b) => b.type === "toolCall");
-        if (!calls.length) return;
+        if (!calls.length) {
+          stoppedCycles++;
+          return;
+        }
         for (const block of calls) {
           if (block.type !== "toolCall") continue;
           const before = sent.length;
@@ -524,6 +533,21 @@ async function run(ep: Episode, mode: PeerRenderMode): Promise<Score | { error: 
     }
     const final = score(ep, sent);
     final.answeredFirst = first.answered;
+    if (!final.answered) {
+      const speech = sent.filter(
+        (c) =>
+          /^\/?(tell|re|say|channel\s+send|shout)\b/i.test(c.trim()) &&
+          !/^\/?tell\s+(inbox|read|status|ack|outbox)\b/i.test(c.trim()),
+      ).length;
+      const someOwed = unansweredOwed(ep, sent).length < ep.items.filter((i) => i.owed).length;
+      final.failure = someOwed
+        ? "partial"
+        : speech > 0
+          ? "replied-elsewhere"
+          : stoppedCycles > 0
+            ? "stopped"
+            : "explored-out";
+    }
     return final;
   } catch (error) {
     cost += turns.usage.costUsd;
@@ -568,9 +592,15 @@ async function main(): Promise<void> {
     episodes = sample(all, N, SEED).map((e, i) => ({ ...e, injected: injectAll || i % 4 === 0 }));
     process.stderr.write(`${all.length} candidate episodes; ${episodes.length} sampled\n`);
   }
-  const jobs = episodes.flatMap((ep) =>
-    (["flat", "structured"] as const).map((mode) => () => run(ep, mode)),
-  );
+  // One retry after a pause: a server restarting mid-run (a deploy) refuses
+  // calls for a few seconds, which is not the model's answer.
+  const runOnce = async (ep: Episode, mode: PeerRenderMode) => {
+    const first = await run(ep, mode);
+    if (!("error" in first)) return first;
+    await Bun.sleep(20_000);
+    return run(ep, mode);
+  };
+  const jobs = episodes.flatMap((ep) => ARMS.map((mode) => () => runOnce(ep, mode)));
   const results = await pool(jobs, CONCURRENCY);
   const pairs: { ep: Episode; flat: Score; structured: Score }[] = [];
   let errors = 0;
@@ -610,6 +640,7 @@ async function main(): Promise<void> {
   const sum = (sel: (s: Score) => number, form: "flat" | "structured") =>
     pairs.reduce((a, p) => a + sel(p[form]), 0);
   const report = {
+    arms: { A: ARMS[0], B: ARMS[1], note: "fields named flat/structured hold arm A/B" },
     model: MODEL,
     source: scenarios ? "scenarios" : "history",
     pairs: pairs.length,
@@ -623,6 +654,16 @@ async function main(): Promise<void> {
     wrongTarget: binary("wrongTarget"),
     noAction: binary("noAction"),
     echo: binary("echo"),
+    failures: Object.fromEntries(
+      (["flat", "structured"] as const).map((form, i) => [
+        ARMS[i],
+        pairs.reduce<Record<string, number>>((acc, p) => {
+          const f = p[form].failure;
+          if (f) acc[f] = (acc[f] ?? 0) + 1;
+          return acc;
+        }, {}),
+      ]),
+    ),
     threadedPostReplies: {
       flat: `${sum((s) => s.threadedPosts, "flat")}/${sum((s) => s.postReplies, "flat")}`,
       structured: `${sum((s) => s.threadedPosts, "structured")}/${sum((s) => s.postReplies, "structured")}`,

@@ -133,6 +133,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agents see message ids by default (`MARINA_PEER_RENDER=ids`).**
+  - A peer's message still reaches the model as the server's one line, with Marina's stamp in front:
+    a channel post's id and what it answers (`[#general post:3041 re:post:3040] Critic: …`), or what
+    a direct message answers (`[re:tell:9] Ann tells you: …`).
+  - Agents can now thread a reply with `channel send <ch> re:<id>`. Without ids, no reply was ever
+    linked to the post it answered.
+  - In the paired replay of real requests (`scripts/peer-render-replay.ts --arms flat,ids`), agents
+    with ids threaded their channel replies and answered as many requests as with the bare line.
+    The `structured` layout threaded too but answered fewer.
+  - The line explaining the stamp sits in COMMANDS.
+  - `structured` (header and guarded body; a one-line direct message keeps the server's line) and
+    `off` (the bare line) remain, as do `split` and `structured:<names>`.
+  - A tell's structured header no longer shows the tell's own id.
+  - The setting leaves the capability-posture table, since its default is no longer off.
+  - The replay takes `--arms <a>,<b>`, records why owed requests went unanswered, and retries an
+    episode once after a pause, so a server restarting mid-run is not scored as the model's answer.
 - **Dashboard chat reads like a messaging app.** Messages render through the same grammar as the
   terminal (`MessageBody`): lists, lead-in labels, verdict chips, quiet asides, quoted output, code
   and ids, and `task #N` / `#channel` references that open the inspector. Each message is a bubble

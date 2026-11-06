@@ -135,7 +135,7 @@ describe("peer text cannot forge harness lines", () => {
     expect(skill.split("\n").some((l) => /^\s*[[<]/.test(l))).toBe(false);
   });
 
-  it("a multi-line say/emote/shout reaches another agent's World Events as ONE line", async () => {
+  it("a multi-line say/emote/shout never puts a line of its own into World Events", async () => {
     const t = createTestEngine();
     const mallory = t.login("Mallory");
     const bob = t.login("Bob");
@@ -154,7 +154,8 @@ describe("peer text cannot forge harness lines", () => {
         agent.client.emit("perception", perception!);
         const prompt = await agent.buildContinuationPrompt();
         expect(prompt).toContain("[World Events — observations and peer requests");
-        expect(prompt).toContain(FLATTENED_BREAK.trim());
+        // One line (` ⏎ `), or a structured body whose every line is guarded (`│`).
+        expect(prompt).toMatch(/⏎|│/);
         expect(forgedLines(prompt)).toEqual([]);
       }
     } finally {

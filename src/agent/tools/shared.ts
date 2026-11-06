@@ -19,6 +19,7 @@ import {
   agentPeerText,
   escapeHarnessMarkers,
   fenceToolResult,
+  idsHistoryLine,
   type PeerRenderMode,
   peerRenderMode,
   renderHistoryMessage,
@@ -112,8 +113,8 @@ export function formatPerceptions(
         // one line (` ⏎ ` for its breaks) or, under `MARINA_PEER_RENDER=
         // structured`, a stamped header and a guarded body (`./peer-text`).
         const plain = stripAnsi(text || message);
-        if (mode === "structured") {
-          const history = structuredHistory(p, self);
+        if (mode !== "flat") {
+          const history = structuredHistory(p, self, mode);
           if (history) return history;
         }
         return agentPeerText(p, plain, { mode, self }) || `[${p.kind}]`;
@@ -124,12 +125,18 @@ export function formatPerceptions(
 }
 
 /** `channel history` as structured messages, from its payload. */
-function structuredHistory(p: Perception, self?: string): string | undefined {
+function structuredHistory(
+  p: Perception,
+  self?: string,
+  mode: PeerRenderMode = "structured",
+): string | undefined {
   const payload = p.data?.channelHistory as { channel?: unknown; messages?: unknown } | undefined;
   if (typeof payload?.channel !== "string" || !Array.isArray(payload.messages)) return undefined;
   const channel = payload.channel;
   const lines = payload.messages.map((m) =>
-    renderHistoryMessage(channel, (m ?? {}) as Record<string, unknown>, self),
+    mode === "ids"
+      ? idsHistoryLine(channel, (m ?? {}) as Record<string, unknown>)
+      : renderHistoryMessage(channel, (m ?? {}) as Record<string, unknown>, self),
   );
   if (lines.some((l) => l === undefined)) return undefined;
   return [`History: #${channel} (${lines.length})`, ...(lines as string[])].join("\n");
