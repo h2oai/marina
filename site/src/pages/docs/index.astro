@@ -1,0 +1,19 @@
+---
+// Copyright 2025-2026 H2O.ai, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+// /docs/ has no page of its own: send it to the docs front page, which carries the sidebar.
+const target = `${import.meta.env.BASE_URL.replace(/\/?$/, "/")}docs/overview/`;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="refresh" content={`0; url=${target}`} />
+    <link rel="canonical" href={target} />
+    <title>Marina docs</title>
+  </head>
+  <body>
+    <a href={target}>Marina docs</a>
+  </body>
+</html>
