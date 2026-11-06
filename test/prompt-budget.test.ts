@@ -426,7 +426,6 @@ function makeAdapter(
   i.loopIterationCount = cycleBefore;
   i.lastReflectionCycle = -1000;
   i.notesSinceReflection = 5;
-  i.platformMemory.getNoveltySuggestions = async () => ["explore the market board", "try a watch"];
   i.platformMemory.orient = async () => ({ success: true, text: "orient: 12 notes, 2 stale" });
   i.actionHistory.createSummary = () =>
     ({ totalActions: 10, failedActions: 4, challenges: ["recall kept failing"] }) as never;

@@ -1755,8 +1755,8 @@ export class LeanAgentAdapter implements AgentHandle {
    * Per-section hash + last-emitted-cycle. Replaces the single-cycle
    * global flush that cleared every section's hash at the same instant.
    * Each section now ages out at its own natural cadence so a stable
-   * `[Memory Health]` (every 20 cycles) doesn't get force-re-emitted
-   * when an unrelated section's hash changes.
+   * `[Dream]` line (every 20 cycles) doesn't get force-re-emitted when an
+   * unrelated section's hash changes.
    */
   private sectionHashes = new Map<string, { hash: string; lastEmittedCycle: number }>();
   private sectionHashCycle = 0;
@@ -1770,9 +1770,7 @@ export class LeanAgentAdapter implements AgentHandle {
    */
   private static readonly SECTION_TTL: Record<string, number> = {
     nearby_context: 20, // cadence 5
-    novelty_suggestions: 30, // cadence 5
     relevant_notes: 60, // suppress repeated delivery, never skip authorization
-    memory_health: 60, // cadence 20
     reflection_due: 150, // cadence 75
     current_focus: 30, // every cycle, but content stable
     stuck_detection: 15, // every cycle, must surface promptly
@@ -4868,25 +4866,6 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     }
 
-    // ── 2f. Standing (every 20th cycle, offset 15) ──
-    // One line: LIVE standing and its rank step, the last credits (kind, ref,
-    // age), retired credit labelled as history. With no focus it also names
-    // the live ways to earn. Not for crew responders or a bound coder.
-    if (cycle % 20 === 15 && !this.crewResponderMode && !this.activeCodingTask) {
-      try {
-        const standing = await this.platformMemory.standingSummary();
-        const content =
-          standing.summary && !this.focus && standing.earn
-            ? `${standing.summary} · ${standing.earn}`
-            : standing.summary;
-        if (content && this.shouldIncludeSection("standing", content)) {
-          parts.push(`[Standing] ${content}`, 45, "standing");
-        }
-      } catch {
-        // best-effort; the agent works without the standing line
-      }
-    }
-
     // ── 2g. Dream (every 20th cycle, offset 5) ──
     // One content-free line: what the last dream applied to the agent's own
     // notes (and how to reverse it), and restatements waiting for adoption.
@@ -4899,26 +4878,6 @@ export class LeanAgentAdapter implements AgentHandle {
         }
       } catch {
         // best-effort; the agent works without the dream line
-      }
-    }
-
-    // ── 3. Novelty suggestions (every 5th cycle) ──
-    // Coding-task mode: suppressed — exploration prompts pull a bound coder
-    // off the assigned work.
-    if (cycle % 5 === 0 && !this.activeCodingTask) {
-      try {
-        const suggestions = await this.platformMemory.getNoveltySuggestions();
-        if (suggestions.length > 0) {
-          const noveltyContent = suggestions
-            .slice(0, 3)
-            .map((s, i) => `${i + 1}. ${s}`)
-            .join("\n");
-          if (this.shouldIncludeSection("novelty_suggestions", noveltyContent)) {
-            parts.push(`[Novelty Suggestions]\n${noveltyContent}`);
-          }
-        }
-      } catch {
-        // Non-critical
       }
     }
 
@@ -4980,42 +4939,6 @@ export class LeanAgentAdapter implements AgentHandle {
         }
       } catch {
         // Non-critical
-      }
-    }
-
-    // ── 5. Memory health (every 20th cycle, skipped if agent self-oriented) ──
-    // If the agent ran `orient` itself (the command, or the memory tool's
-    // `orient` action) in the last 5 minutes, the framework already showed it
-    // the orient output — pushing stale orient text back at it wastes
-    // ~100-150 tokens. Also skips the DB round-trip, not just the output.
-    // Crew-responder mode: suppressed — specialists don't need cognitive-state
-    // awareness, they need to answer the coordinator and shut up. Same for a
-    // bound coder mid-task.
-    if (cycle % 20 === 0 && !this.crewResponderMode && !this.activeCodingTask) {
-      const recentSelfOrient = this.actionHistory
-        .getActions(Date.now() - 5 * 60 * 1000)
-        .some((a) => {
-          if (a.type !== "tool_call") return false;
-          const args = a.args as { command?: unknown; action?: unknown } | undefined;
-          if (a.toolName === "memory") return args?.action === "orient";
-          return (
-            a.toolName === "marina_command" &&
-            typeof args?.command === "string" &&
-            /^\s*(?:memory\s+)?orient\b/i.test(args.command)
-          );
-        });
-      if (!recentSelfOrient) {
-        try {
-          const orientResult = await this.platformMemory.orient();
-          if (orientResult.success && orientResult.text) {
-            const orientText = clampText(orientResult.text, 800);
-            if (this.shouldIncludeSection("memory_health", orientText)) {
-              parts.push(`[Memory Health]\n${orientText}`);
-            }
-          }
-        } catch {
-          // Non-critical
-        }
       }
     }
 

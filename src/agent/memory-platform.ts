@@ -500,20 +500,6 @@ export class PlatformMemoryBackend {
   }
 
   /**
-   * `standing summary`: `summary` is the one-line live standing, last credits
-   * and retired history; `earn` names the live ways to earn. Empty when the
-   * world has no standing ledger.
-   */
-  async standingSummary(): Promise<{ summary: string; earn: string }> {
-    const lines = extractText(await this.client.command("standing summary"))
-      .trim()
-      .split("\n");
-    const summary = lines.find((l) => l.startsWith("standing ")) ?? "";
-    const earn = lines.find((l) => l.startsWith("earn standing:")) ?? "";
-    return { summary, earn };
-  }
-
-  /**
    * `memory dream brief`: one content-free line on the latest dream and the
    * restatements awaiting adoption; empty when there is nothing to say.
    */
@@ -525,17 +511,6 @@ export class PlatformMemoryBackend {
     const perceptions = await this.client.command("work");
     const text = extractText(perceptions);
     return { success: true, text };
-  }
-
-  async getNoveltySuggestions(): Promise<string[]> {
-    const perceptions = await this.client.command("novelty suggest");
-    const text = extractText(perceptions);
-    const suggestions: string[] = [];
-    for (const line of text.split("\n")) {
-      const match = line.match(/^\s*\d+\.\s*(.+)/);
-      if (match?.[1]) suggestions.push(match[1].trim());
-    }
-    return suggestions;
   }
 
   async storeSkill(

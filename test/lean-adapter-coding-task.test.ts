@@ -51,10 +51,8 @@ function makeAdapterAtBusyCycle(name: string): {
   internals.lastReflectionCycle = -100;
   internals.notesSinceReflection = 5;
   const platformMemory = internals.platformMemory as {
-    getNoveltySuggestions: () => Promise<string[]>;
     orient: () => Promise<{ success: boolean; text: string }>;
   };
-  platformMemory.getNoveltySuggestions = async () => ["explore the market board"];
   platformMemory.orient = async () => ({
     success: true,
     text: "orient snapshot: 12 notes, 2 stale",
@@ -68,8 +66,10 @@ describe("coding-task mode — continuation prompt assembly", () => {
   it("baseline (no task): the cognitive sections all fire at a busy cycle", async () => {
     const { internals } = makeAdapterAtBusyCycle("coding-task-baseline");
     const prompt = await internals.buildContinuationPrompt();
-    expect(prompt).toContain("[Novelty Suggestions]");
-    expect(prompt).toContain("[Memory Health]");
+    // Novelty and memory health are no longer prompt sections: goals and
+    // \`work\` direct an agent, and dreaming does memory curation.
+    expect(prompt).not.toContain("[Novelty Suggestions]");
+    expect(prompt).not.toContain("[Memory Health]");
     expect(prompt).toContain("[Learning Signal]");
     expect(prompt).toContain("[Reflection Due]");
     expect(prompt).not.toContain("[Active Coding Task]");
@@ -139,8 +139,7 @@ describe("coding-task mode — continuation prompt assembly", () => {
     adapter.setActiveCodingTask(null);
     const prompt = await internals.buildContinuationPrompt(); // cycle 60
     expect(prompt).not.toContain("[Active Coding Task]");
-    expect(prompt).toContain("[Novelty Suggestions]");
-    expect(prompt).toContain("[Memory Health]");
+    expect(prompt).toContain("[Learning Signal]");
   });
 
   it("does NOT set crewResponder semantics — an empty/whitespace task is treated as cleared", () => {
