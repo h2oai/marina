@@ -690,7 +690,7 @@ export function runCapWarningAt(cap: number): number {
  * its reader as 1,200 characters with no way to recover the rest, and the
  * two then spent a cycle reconciling what each had seen.
  */
-export function clampPerceptionLine(text: string, addressed = false, readRef?: number): string {
+export function clampPerceptionLine(text: string, addressed = false, readCommand?: string): string {
   const isModelRequest = text.includes('"type":"model_request"');
   const body = text.replace(/^\[(?:message|broadcast|movement)\]\s*/, "");
   const detailed = addressed || body.startsWith("{") || body.startsWith("[");
@@ -707,7 +707,24 @@ export function clampPerceptionLine(text: string, addressed = false, readRef?: n
   // responder can echo it even when the body was cut.
   const lost = correlationTagsIn(text).filter((tag) => !clamped.includes(tag));
   const withTags = lost.length > 0 ? `${clamped} ${lost.join(" ")}` : clamped;
-  return readRef !== undefined ? `${withTags} [read it whole: tell read ${readRef}]` : withTags;
+  return readCommand ? `${withTags} [read it whole: ${readCommand}]` : withTags;
+}
+
+/**
+ * The command that reads a stored message whole, from the perception's own
+ * ref: a tell (`tell read <id>`) or a channel post (`channel read <channel>
+ * <id>`). Undefined for anything else, which then gets no hint: a channel
+ * post's id is not a tell id, and pointing `tell read` at it opened an
+ * unrelated tell (or "private").
+ */
+export function readCommandFor(data: Record<string, unknown> | undefined): string | undefined {
+  const ref = typeof data?.messageRef === "string" ? data.messageRef : "";
+  const tell = /^tell:(\d+)$/.exec(ref);
+  if (tell) return `tell read ${tell[1]}`;
+  const post = /^channel_msg:(\d+)$/.exec(ref);
+  const channel = typeof data?.channel === "string" ? data.channel : undefined;
+  if (post && channel && /^[\w-]+$/.test(channel)) return `channel read ${channel} ${post[1]}`;
+  return undefined;
 }
 
 /** Correlation tags present in a perception line, in order, deduped. */
@@ -1423,8 +1440,8 @@ export class LeanAgentAdapter implements AgentHandle {
     /** Monotonic per-adapter id — the key of `deliveredViaSteer`. */
     id?: number;
     requestId?: string;
-    /** The stored direct message behind a tell (`tell read <id>` returns it whole when the line is clamped). */
-    messageId?: number;
+    /** Reads the stored message whole when the line is clamped (`readCommandFor`). */
+    readCommand?: string;
     text: string;
     priority: number;
     shouldRespond?: boolean;
@@ -2778,7 +2795,7 @@ export class LeanAgentAdapter implements AgentHandle {
             this.pendingPerceptions.push({
               id: perceptionId,
               requestId,
-              ...(typeof p.data?.messageId === "number" ? { messageId: p.data.messageId } : {}),
+              ...(readCommandFor(p.data) ? { readCommand: readCommandFor(p.data) } : {}),
               text: `[${p.kind}] ${text}${decision.marker}`,
               priority,
               shouldRespond: respond,
@@ -4379,7 +4396,7 @@ export class LeanAgentAdapter implements AgentHandle {
       let firstOverflow = batch.length;
       for (let i = 0; i < batch.length; i++) {
         const event = batch[i]!;
-        const clamped = clampPerceptionLine(event.text, event.shouldRespond, event.messageId);
+        const clamped = clampPerceptionLine(event.text, event.shouldRespond, event.readCommand);
         const cost = Buffer.byteLength(clamped, "utf8") + 5;
         if (topEvents.length >= this.perceptionBufferCap || eventBytes + cost > eventBudget) {
           // Always surface at least one event, even a huge one, so nothing

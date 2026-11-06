@@ -512,6 +512,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   state today's date; crew orientation states each member's part; streams fold repeated runtime
   states; `benchmark list` marks saturated sets; spawn replies say how long a call budget lasts.
 
+- **A cut-off channel post now tells an agent how to read it whole.** When a World Events line is
+  clamped, its hint named `tell read <id>` for every message, but a channel post's id is not a tell
+  id, so the agent opened an unrelated tell or was told the message is private. The hint now comes
+  from the message's own ref: `tell read <id>` for a tell, and the new `channel read <channel> <id>`
+  (one post whole, members only, fenced as peer messages for agents) for a channel post.
 - **Chronicle writes keep their citations.** `chronicle record`, `correct` and `digest` read lists
   as the Chronicler writes them: `refs task:3, note:10342` (spaces after commas), `refs: a,b`, `refs=a`, and clauses set off
   by `|` in any order (`… | refs a, b | period day:… | participants X, Y`). Before, only one unbroken

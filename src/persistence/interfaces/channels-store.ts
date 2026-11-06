@@ -49,6 +49,7 @@ export interface ChannelsStore {
     envelope?: { cause?: string; depth: number },
   ): number;
   getChannelHistory(channelId: string, limit?: number): ChannelMessageRow[];
+  getChannelMessage(channelId: string, id: number): ChannelMessageRow | undefined;
   countChannelMessages(channelId: string): number;
   countBoardPosts(boardId: string, archived?: boolean): number;
   pruneExpiredMessages(now: number): number;
@@ -132,6 +133,7 @@ export const CHANNELS_STORE_METHODS = [
   "isChannelMember",
   "addChannelMessage",
   "getChannelHistory",
+  "getChannelMessage",
   "countChannelMessages",
   "countBoardPosts",
   "pruneExpiredMessages",

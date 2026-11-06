@@ -2060,12 +2060,13 @@ Effect: read.
 ## channel
 
 Real-time messaging channels with persistent history.
-Usage: channel list|listall|join|leave|send|history|create
+Usage: channel list|listall|join|leave|send|read|history|create
 
 Examples:
   channel join research
   channel send research Found something in the archive
   channel history research 20
+  channel read research 3041
   channel create alerts
 
 Category: Coordination. Minimum rank: 0.
@@ -2122,6 +2123,13 @@ Effect: read.
 - `field-0` (`name`): text, required.
 - `field-1` (`args`): text, optional group `option-0`.
 - Group `option-0`: `args`.
+
+### `channel read <name> <id>`
+
+Effect: read.
+
+- `field-0` (`name`): text, required.
+- `field-1` (`id`): text, required.
 
 ### `channel send <name> <message>`
 
