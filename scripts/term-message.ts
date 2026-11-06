@@ -64,7 +64,11 @@ export function paintSpans(
         out += wrap(tok("code"), s.text);
         break;
       case "url":
-        out += wrap(tok("link"), options.link ? options.link(s.raw, s.href) : s.raw);
+        if (s.label)
+          out += options.link
+            ? wrap(tok("link"), options.link(s.label, s.href))
+            : `${s.label} ${wrap(tok("link"), `(${s.href})`)}`;
+        else out += wrap(tok("link"), options.link ? options.link(s.raw, s.href) : s.raw);
         break;
       case "mention": {
         const you = !!options.viewer && s.name.toLowerCase() === options.viewer.toLowerCase();

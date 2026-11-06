@@ -82,7 +82,7 @@ function SpanView({ span, ctx }: { span: Span; ctx: SpanContext }): ReactNode {
           rel="noopener noreferrer"
           className="text-primary underline decoration-primary/40 underline-offset-2 break-all hover:decoration-primary"
         >
-          {span.raw}
+          {span.label ?? span.raw}
         </a>
       );
     case "mention": {

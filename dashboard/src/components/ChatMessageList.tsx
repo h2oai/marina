@@ -3,6 +3,7 @@
 
 import { Check, Copy } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
+import { hasMarkdown } from "../../../src/sdk/message-format";
 import { useChatMedia } from "../hooks/use-chat-media";
 import { type ChatMessage, type StoredPerception, useChatState } from "../hooks/use-chat-state";
 import { useFeedState } from "../hooks/use-feed-state";
@@ -428,7 +429,14 @@ export function ChatMessageList({
           <span>{timestamp}</span>
         </div>
         <div className="mt-1 text-sm leading-relaxed text-inherit">
-          {renderTextContent(body, "text-sm leading-relaxed text-inherit")}
+          {/* A command's answer written in Markdown (ask, research, a pattern run) reads
+              through the shared grammar; preformatted output keeps its layout. Unfolded:
+              the answer is often the last part (`ask` puts its sources first). */}
+          {hasMarkdown(body) ? (
+            <MessageBody text={body} viewer={viewer} fold={false} />
+          ) : (
+            renderTextContent(body, "text-sm leading-relaxed text-inherit")
+          )}
         </div>
         <button
           type="button"
