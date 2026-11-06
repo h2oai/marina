@@ -351,7 +351,7 @@ const tellTarget = (words: string[]) => {
   return words.slice(1).find((w) => !/^[a-z]+[:=]/i.test(w) && !w.startsWith("--"));
 };
 
-const ECHO = /(^|\n|⏎)\s*│|\[#[\w:-]+ post:\d+|\[tell tell:\d+/;
+const ECHO = /(^|\n|⏎)\s*│|\[#[\w:-]+ post:\d+|\[tell (?:re:)?tell:\d+/;
 
 function score(ep: Episode, commands: string[]): Score {
   const senders = new Set(ep.items.map((i) => i.sender.toLowerCase()));
@@ -568,8 +568,16 @@ async function main(): Promise<void> {
     episodes = sample(all, N, SEED).map((e, i) => ({ ...e, injected: injectAll || i % 4 === 0 }));
     process.stderr.write(`${all.length} candidate episodes; ${episodes.length} sampled\n`);
   }
+  // One retry after a pause: a server restarting mid-run (a deploy) refuses
+  // calls for a few seconds, which is not the model's answer.
+  const runOnce = async (ep: Episode, mode: PeerRenderMode) => {
+    const first = await run(ep, mode);
+    if (!("error" in first)) return first;
+    await Bun.sleep(20_000);
+    return run(ep, mode);
+  };
   const jobs = episodes.flatMap((ep) =>
-    (["flat", "structured"] as const).map((mode) => () => run(ep, mode)),
+    (["flat", "structured"] as const).map((mode) => () => runOnce(ep, mode)),
   );
   const results = await pool(jobs, CONCURRENCY);
   const pairs: { ep: Episode; flat: Score; structured: Score }[] = [];

@@ -133,6 +133,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agents read peer messages in the structured form by default (`MARINA_PEER_RENDER=structured`).**
+  - A channel post carries a header Marina stamps (`[#general post:3041 re:post:3040] Critic → you:`),
+    and its body keeps its lines, each behind a `  │ ` guard. A multi-line message of any kind reads
+    the same way.
+  - A one-line direct message (tell, say, shout) keeps the server's line, `Ann tells you: …`.
+  - A tell's header no longer shows the tell's own id. Its reply needs none, and the id invited a
+    turn spent re-reading the message.
+  - The line explaining the header moved from AUTHORITY AND TRUST to COMMANDS.
+  - Measured with `scripts/peer-render-replay.ts`, the paired replay of real requests: the structured
+    form threads replies to the post they answer and answers more multi-line and multi-ask
+    messages, and is no worse on one-line direct messages.
+  - `MARINA_PEER_RENDER=off` (or `flat`) restores one line per message; `split` and
+    `structured:<names>` still run both forms in one world.
+  - The setting leaves the capability-posture table, since its default is no longer off.
+  - The replay retries an episode once after a pause, so a server restarting mid-run is not scored
+    as the model's answer.
 - **Dashboard chat reads like a messaging app.** Messages render through the same grammar as the
   terminal (`MessageBody`): lists, lead-in labels, verdict chips, quiet asides, quoted output, code
   and ids, and `task #N` / `#channel` references that open the inspector. Each message is a bubble

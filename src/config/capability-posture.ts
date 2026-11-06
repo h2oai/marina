@@ -143,11 +143,6 @@ export const KNOB_POSTURE: Readonly<Record<string, Posture>> = {
 
   // ── Agent runtime and routing ───────────────────────────────────────────
   MARINA_AGENT_THINKING: measure(bench(), `${PAIRED} on cost per success`, DEC_1),
-  MARINA_PEER_RENDER: measure(
-    operator,
-    "paired resident runs (structured vs one-line messages) lose no replies and spend fewer turns reconciling what each read",
-    JAN_15,
-  ),
   MARINA_PEER_REPLY_CHAIN: measure(
     judge("attention:"),
     "the converge judge earns and long exchanges end without lost work",

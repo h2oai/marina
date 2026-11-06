@@ -51,14 +51,14 @@ export function isPeerSpeech(p: { tag?: string; data?: Record<string, unknown> }
 
 /**
  * How a peer's message reaches an agent's model (`MARINA_PEER_RENDER`):
- *  - `flat` (default; set as `off` or `flat`): one line, the server's text
- *    with line breaks as ` ⏎ `.
+ *  - `structured` (default): a header the server stamped — where it was said,
+ *    a post's id, what it answers, who said it — then the body as written,
+ *    each line of a multi-line body behind a `  │ ` guard. A list stays a
+ *    list, and no line of the body can begin like a harness line or another
+ *    message's header. A one-line direct message keeps the server's line.
+ *  - `off` (or `flat`): one line, the server's text with line breaks as ` ⏎ `.
  *  - `split` assigns half the agents to each form by name, and
  *    `structured:<name>,<name>` the named ones: both forms in one world.
- *  - `structured`: a header the server stamped — where it was said, its id,
- *    what it answers, who said it — then the body as written, each line of a
- *    multi-line body behind a `  │ ` guard. A list stays a list, and no line
- *    of the body can begin like a harness line or another message's header.
  */
 export type PeerRenderMode = "flat" | "structured";
 
@@ -67,18 +67,19 @@ export function peerRenderMode(
   agent?: string,
 ): PeerRenderMode {
   const raw = env.MARINA_PEER_RENDER?.trim().toLowerCase() ?? "";
-  if (raw === "structured") return "structured";
-  // `split`: half the agents, by a stable hash of the name (the rollout's
-  // two arms in one world); `structured:<a>,<b>`: the named agents.
+  if (raw === "off" || raw === "flat") return "flat";
+  // `split`: half the agents, by a stable hash of the name (two arms in one
+  // world); `structured:<a>,<b>`: the named agents, the rest one-line.
   if (raw === "split") return agent && peerRenderArm(agent) ? "structured" : "flat";
-  if (raw.startsWith("structured:") && agent) {
+  if (raw.startsWith("structured:")) {
+    if (!agent) return "flat";
     const names = raw
       .slice("structured:".length)
       .split(",")
       .map((n) => n.trim());
     return names.includes(agent.trim().toLowerCase()) ? "structured" : "flat";
   }
-  return "flat";
+  return "structured";
 }
 
 /** The `split` arm of an agent: true = structured. FNV-1a over the lower-cased name. */
@@ -101,7 +102,7 @@ export interface PeerMessage {
   where: string;
   sender: string;
   body: string;
-  /** This message's id as a typed ref the agent can use (`post:3041`, `tell:12`). */
+  /** A channel post's id as a typed ref the agent can use (`post:3041`). */
   id?: string;
   /** What it answers (`post:3040`, `tell:9`, `say`). */
   re?: string;
@@ -144,7 +145,11 @@ export function peerMessageOf(p: {
     where,
     sender: data.senderName,
     body,
-    ...(id && id !== "say" && id !== "shout" ? { id } : {}),
+    // A tell's own id is left out: its reply needs none (`re`, or the cause
+    // the harness sends), and showing it invited a `tell read <id>` that spent
+    // a turn re-reading a message already shown whole. Posts keep theirs, for
+    // `channel send <ch> re:<id>`.
+    ...(id?.startsWith("post:") ? { id } : {}),
     ...(re ? { re } : {}),
   };
 }
@@ -197,7 +202,13 @@ export function agentPeerText(
   if (!isPeerSpeech(p)) return text + suffix;
   if ((options.mode ?? peerRenderMode()) === "structured") {
     const m = peerMessageOf(p);
-    if (m) return renderPeerMessage(m, options.self, suffix);
+    // A one-line direct message (tell, say, shout) keeps the server's own
+    // line, "Ann tells you: …": a paired replay of real tells answered fewer
+    // of them under a `[tell] Ann:` header, which no longer says it is to
+    // you. Channel posts (ids for threading) and every multi-line body take
+    // the structured form, where it measured better.
+    if (m && (m.where.startsWith("#") || bodyLines(m.body).length > 1))
+      return renderPeerMessage(m, options.self, suffix);
   }
   return escapePeerMarkers(flattenPeerText(text)) + suffix;
 }
