@@ -10,7 +10,8 @@ opposite: many AI assistants and people work together for weeks, remember what t
 cannot do anything risky without a named person approving it. It runs on your own computers, so
 your data stays with you.
 
-Every example on this page was run on a fresh Marina. The pictures are real output, trimmed. Times
+Every example on this page was run on a fresh Marina. The pictures are real dashboard and
+terminal screenshots of those runs (`site/scripts/capture-field.mjs` takes them again). Times
 and costs are what those runs took on the models named; yours depend on the models you choose.
 The examples run easiest first: 1–5 work on day one, 6–9 use a ready-made setup, and 10 and the
 three larger projects need some design work. For how the pieces fit, see
@@ -33,21 +34,21 @@ three larger projects need some design work. For how the pieces fit, see
 
 ## At a glance
 
-| # | Example | Time per run | Cost per run |
-| --- | --- | --- | --- |
-| 1 | [Forecasting desk](#1-forecasting-desk) | 2–7 min | $1–$4.30 |
-| 2 | [Cited research and document search](#2-cited-research-and-search-over-your-own-documents) | about 1 min | about $0.50; document search free |
-| 3 | [Stress-test a plan](#3-stress-test-a-plan-before-it-ships) | 20 s–1.5 min | $0.05–$0.51 |
-| 4 | [Memory across sessions](#4-memory-that-carries-across-sessions) | instant | free |
-| 5 | [AI gateway with costs and traces](#5-ai-gateway-with-costs-and-traces) | about 1 s per call | the provider's price, shown per call |
-| 6 | [Analyst teams](#6-analyst-teams-due-diligence-research-investigations) | an hour or more | about $0.74 in the first 14 min on low-cost models |
-| 7 | [Scheduled briefings](#7-scheduled-briefings) | as one research run | as one research run |
-| 8 | [Coding agents with tests](#8-coding-agents-with-tests-and-review) | 37 s for a small fix | a few cents |
-| 9 | [Tabletop exercises](#9-tabletop-exercises-and-war-games) | 5–15 min | about $0.06 in 5 min on low-cost models |
-| 10 | [Comparing AI models](#10-comparing-ai-models-on-your-own-work) | 2–6 min per 20 questions | depends on the models |
-| B1 | [A supervised AI security team](#b1-cyber-defense-a-supervised-ai-security-team) | weeks to integrate | — |
-| B2 | [Swarm and society simulation](#b2-swarm-and-society-simulation) | weeks to design | — |
-| B3 | [Claude Code and Codex side by side](#b3-claude-code-and-codex-side-by-side) | 3 min to launch two | each tool's own account |
+| # | Example | Time per run |
+| --- | --- | --- |
+| 1 | [Forecasting desk](#1-forecasting-desk) | 2–7 min |
+| 2 | [Cited research and document search](#2-cited-research-and-search-over-your-own-documents) | about 1 min |
+| 3 | [Stress-test a plan](#3-stress-test-a-plan-before-it-ships) | 20 s–1.5 min |
+| 4 | [Memory across sessions](#4-memory-that-carries-across-sessions) | instant |
+| 5 | [AI gateway with costs and traces](#5-ai-gateway-with-costs-and-traces) | about 1 s per call |
+| 6 | [Analyst teams](#6-analyst-teams-due-diligence-research-investigations) | an hour or more |
+| 7 | [Scheduled briefings](#7-scheduled-briefings) | as one research run |
+| 8 | [Coding agents with tests](#8-coding-agents-with-tests-and-review) | about a minute for a small fix |
+| 9 | [Tabletop exercises](#9-tabletop-exercises-and-war-games) | 5–15 min |
+| 10 | [Comparing AI models](#10-comparing-ai-models-on-your-own-work) | 2–6 min per 20 questions |
+| B1 | [A supervised AI security team](#b1-cyber-defense-a-supervised-ai-security-team) | weeks to integrate |
+| B2 | [Swarm and society simulation](#b2-swarm-and-society-simulation) | weeks to design |
+| B3 | [Claude Code and Codex side by side](#b3-claude-code-and-codex-side-by-side) | 3 min to launch two |
 
 `bun run playbook` runs most of these examples as automated checks against a fresh server
 ([Use-case playbook](testing.md#use-case-playbook)), so an example that stops working is caught.
@@ -83,10 +84,10 @@ and scores it later against what actually happened, so over time you learn how f
 **The problem it solves:** forecasts come from one analyst or one chatbot answer, with no sources
 and no track record.
 
-Three vendors landed within six points of each other, and the reasons cite the actual futures
+Three vendors landed within five points of each other, and the reasons cite the actual futures
 prices:
 
-![Forecast result: 44% yes from Claude, GPT and Gemini, with reasons and 23 verified sources](../assets/field-forecast.png)
+![Forecast result: 42% yes from Claude, GPT and Gemini, with reasons and 64 verified sources](../assets/field-forecast.png)
 
 **Try it**
 
@@ -97,7 +98,7 @@ forecast Which company will have the largest market cap on 2027-06-30? type:rank
 forecast list
 ```
 
-Those runs gave **44% yes** (2 min, $1.02), **3.9% ± 0.55** (6.5 min, $4.29, 77 sources checked)
+Those runs gave **42% yes** (about 5 min, $3.30), **3.9% ± 0.55** (6.5 min, $4.29, 77 sources checked)
 and **Nvidia, Apple, Microsoft** (3 min, $2.02).
 
 **Example prompts**
@@ -118,10 +119,10 @@ can also search your own documents without sending them anywhere.
 **The problem it solves:** chatbot research invents or misquotes sources, and internal documents
 can't be searched without uploading them to a vendor.
 
-The brief opened all 8 sources it cited. One government page would not load, so it said so and
-dropped the claim that depended on it:
+The brief leads with what changed (the AI Office's enforcement powers from 2 August 2026) and
+links each claim to the page it came from:
 
-![Research brief on the EU AI Act with 8 of 8 sources opened and checked](../assets/field-research.png)
+![Research brief on the EU AI Act: what changed in 2026, each claim linked to its source](../assets/field-research.png)
 
 **Try it**
 
@@ -148,7 +149,7 @@ web search engines:corpus:policies data retention for customer logs
 - "Write a two-page brief on our competitors' pricing changes this year. Cite every figure and flag anything only one source says."
 - "Search our policies and list every clause that conflicts with a 30-day log retention rule, with the document and the quote."
 
-**Good to know:** the research brief took 72 seconds and cost $0.49. Document search costs
+**Good to know:** the research brief took about 90 seconds and cost about $0.50. Document search costs
 nothing because no AI model is involved. More: [Search the world](search.md).
 
 ## 3. Stress-test a plan before it ships
@@ -160,10 +161,10 @@ to fix. It is a red team on demand.
 **The problem it solves:** plans are reviewed by the people who wrote them, so the obvious failure
 shows up after launch.
 
-Each side adopted the other's better points, then the judge named two root causes and ranked the
-failures:
+In the final round each side says where the other is right and what it adopts, then restates its
+position:
 
-![Debate result: each side adopts the other's better points, then a ranked failure list](../assets/field-debate.png)
+![Debate result: a side's final position, adopting the other's better points and dropping its weak ones](../assets/field-debate.png)
 
 **Try it**
 
@@ -182,7 +183,7 @@ deliberation, chorus and pipeline.
 - "Here is our data-retention policy draft. Attack it as a regulator, a plaintiff's lawyer and an unhappy admin, then propose the smallest fixes."
 - "Run a pre-mortem on this go-to-market plan. Rank the top five failure modes by likelihood and cost, and keep the minority view."
 
-**Good to know:** the debate took 84 seconds and stopped at its $1 cap after spending $0.51. The
+**Good to know:** the debate took about 90 seconds and stopped at its $1 cap after spending $0.51. The
 fact check took 19 seconds, cost under 5 cents and answered "accurate, with qualifications",
 citing the exact articles. More: [Coordination & crews](coordination.md).
 
@@ -196,7 +197,7 @@ every day, and handovers get lost in chat logs.
 
 A decision saved in one session came back word for word, with its note number:
 
-![A saved decision recalled in a later question, citing note 51](../assets/field-memory.png)
+![A saved decision recalled in a later question, citing note 46](../assets/field-memory.png)
 
 **Try it**
 
@@ -281,11 +282,11 @@ in a shared notebook and on a review board.
 takes weeks.
 
 We started the `due-diligence` setup and sent one instruction: assess Datadog against the thesis
-"Datadog keeps winning mid-market observability despite open-source pressure". Within 10 minutes
-the lead had written the mandate and scoring criteria, posted a draft memo and a 7-item risk
-register, and two analysts had submitted cited workstreams:
+"Datadog keeps winning mid-market observability despite open-source pressure". Within 15 minutes
+the team had posted its thesis, a decision memo and a reviewer's correction to the review board,
+and all five workstreams were submitted for the lead's review:
 
-![Due diligence on Datadog: the lead's mandate and two analysts' cited submissions](../assets/field-dd.png)
+![Due diligence on Datadog: the review board, with memo v2's verdict and the lead's correction](../assets/field-dd.png)
 
 **Try it**
 
@@ -310,8 +311,8 @@ Two other ready-made teams work the same way: `deep-research` (scout, analyst, e
 - "Assess Acme Robotics against our thesis that they own the mid-market warehouse niche. Flag every figure you could not verify."
 
 **Good to know:** `task list` shows who claimed or submitted each task. The team runs on low-cost
-models by default: about $0.47 for the first 10 minutes, all three analysts together. After 14
-minutes three of the four workstreams were submitted ($0.74 so far). The lead reviews each one
+models by default: about $0.47 for the first 10 minutes, all three analysts together. In an earlier run
+three of the four workstreams were submitted after 14 minutes ($0.74 so far). The lead reviews each one
 before writing the final memo, so plan on an hour or more for a finished memo. More:
 [Example worlds](example-worlds.md).
 
@@ -324,11 +325,11 @@ owner's inbox and memory.
 **The problem it solves:** analysts re-run the same searches by hand every week, and nobody
 remembers last week's answer.
 
-We scheduled a daily EU AI regulation brief, then triggered it early. It ran with its owner
-logged off, finished in 2 minutes and recorded status "ok". Official data and market prices came
-back in under a second:
+We read official prices and market odds, scheduled a daily EU AI regulation brief, then ran it at
+once with `schedule run`. The brief started within seconds, found no change in the last 24 hours,
+and named the pages it checked:
 
-![A scheduled brief ran with its owner away; official prices and market odds alongside](../assets/field-schedule.png)
+![Official CPI figures and Fed-cut market odds, then a daily brief scheduled, run and answered](../assets/field-schedule.png)
 
 **Try it**
 
@@ -363,8 +364,8 @@ done unless the tests passed.
 record, and no proof anything was tested.
 
 We made a small project with a deliberate off-by-one bug and a failing test. One sentence later,
-Marina had fixed the line, added its own test for pages 2 and 3, run the tests (passed) and
-submitted the change for review, in 37 seconds:
+Marina had fixed the line, added its own check for pages 1 to 3, run the tests (passed) and
+submitted the change for review, in about a minute:
 
 ![One sentence in; a tested fix out, submitted for review](../assets/field-coding.png)
 
