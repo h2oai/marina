@@ -31,6 +31,42 @@ const BOARD_SUBS: ReadonlySet<string> = new Set([
   "create",
 ]);
 const BOARD_READ_ALIASES: ReadonlySet<string> = new Set(["show", "view", "history"]);
+/** Verbs whose first argument is the board: `board <board> <verb> …` means `board <verb> <board> …`. */
+const BOARD_FIRST_VERBS: ReadonlySet<string> = new Set(["read", "post", "search"]);
+/** Verbs that take a post id, not a board; `board <board> <verb> …` gets their usage. */
+const POST_ID_USAGE: Readonly<Record<string, string>> = {
+  reply: "board reply <postId> <body>",
+  vote: "board vote <postId> up|down [score 1-10]",
+  scores: "board scores <postId>",
+  pin: "board pin <postId>",
+  archive: "board archive <postId>",
+};
+/** A title longer than this with no `|` is cut at a word, and the whole text kept as the body. */
+const TITLE_MAX = 100;
+
+/** Strip one pair of quotes wrapped around the whole text (the tokenizer keeps them). */
+function unquote(text: string): string {
+  const m = /^(["'“])([\s\S]*)(["'”])$/.exec(text);
+  if (!m) return text;
+  const [, open, inner, close] = m as unknown as [string, string, string, string];
+  const pair = open === close || (open === "“" && close === "”");
+  // `"a" and "b"` is two quoted phrases, not one quoted text: leave it.
+  return pair && !inner.includes(close) && !inner.includes(open) ? inner.trim() : text;
+}
+
+/** A short title for a post written without `|`: the text up to TITLE_MAX, cut at a word. */
+function shortTitle(text: string): string {
+  if (text.length <= TITLE_MAX) return text;
+  const cut = text.slice(0, TITLE_MAX);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > TITLE_MAX / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
+/** One line for a reply in a board listing: it has no title, so show whose post it answers. */
+function replyLabel(body: string, parentId: number): string {
+  const first = body.split("\n")[0]!.trim();
+  return `↳ re ${fmtId(parentId)}: ${shortTitle(first).slice(0, 80)}`;
+}
 
 const OP_REFUSAL: Record<BoardOp, string> = {
   read: "You don't have permission to read this board.",
@@ -132,8 +168,31 @@ export function boardCommand(
       // (`board welcome`, `board welcome 3`).
       if (BOARD_READ_ALIASES.has(sub)) sub = "read";
       else if (!BOARD_SUBS.has(sub) && boards.getBoardByName(tokens[0]!)) {
-        tokens = ["read", ...tokens];
-        sub = "read";
+        // `board <board> <verb> …` — the order `pool <name> add` uses. Run the verb on
+        // that board instead of reading it, so a post written this way is not lost.
+        const verb = tokens[1]?.toLowerCase();
+        const asRead = verb && (BOARD_READ_ALIASES.has(verb) || verb === "list") ? "read" : verb;
+        if (asRead && BOARD_FIRST_VERBS.has(asRead)) {
+          tokens = [asRead, tokens[0]!, ...tokens.slice(2)];
+          sub = asRead;
+        } else if (verb && POST_ID_USAGE[verb]) {
+          refuseCommand(
+            ctx,
+            input.entity,
+            `Usage: ${POST_ID_USAGE[verb]} (a post id, not the board name — \`board read ${tokens[0]}\` lists them)`,
+          );
+          return;
+        } else if (verb && !/^\d+$/.test(verb)) {
+          refuseCommand(
+            ctx,
+            input.entity,
+            `Unknown board command "${tokens[1]}". Usage: board read|post|search ${tokens[0]} …`,
+          );
+          return;
+        } else {
+          tokens = ["read", ...tokens];
+          sub = "read";
+        }
       }
 
       switch (sub) {
@@ -183,11 +242,26 @@ export function boardCommand(
             ]
               .filter(Boolean)
               .join(" ");
+            const replies = boards
+              .listPosts(post.boardId, { limit: 200 })
+              .filter((p) => p.parentId === post.id)
+              .reverse();
+            const heading = post.parentId
+              ? `${fmtId(post.id)}: reply to ${fmtId(post.parentId)}`
+              : `${fmtId(post.id)}: ${post.title || "(untitled)"}`;
             const lines = [
-              header(`${fmtId(post.id)}: ${post.title || "(untitled)"}`),
+              header(heading),
               `By ${fmtEntity(post.authorName)} | Votes: ${votes}${scorePart} ${badges}`,
               separator(),
               post.body,
+              ...(replies.length
+                ? [
+                    "",
+                    separator(),
+                    `Replies (${replies.length}):`,
+                    ...replies.map((r) => `${fmtId(r.id)} ${fmtEntity(r.authorName)}: ${r.body}`),
+                  ]
+                : []),
             ];
             ctx.send(input.entity, lines.join("\n"));
             return;
@@ -214,7 +288,11 @@ export function boardCommand(
             separator(),
             ...posts.map((p) => {
               const pin = p.pinned ? ` ${fmtStatus("PIN", "info")}` : "";
-              return `  ${fmtId(p.id)}: ${p.title || "(untitled)"} — ${fmtEntity(p.authorName)}${pin}`;
+              const label =
+                p.parentId && !p.title
+                  ? replyLabel(p.body, p.parentId)
+                  : shortTitle(p.title || "(untitled)");
+              return `  ${fmtId(p.id)}: ${label} — ${fmtEntity(p.authorName)}${pin}`;
             }),
           ];
           ctx.send(input.entity, lines.join("\n"));
@@ -246,13 +324,21 @@ export function boardCommand(
           let title: string;
           let body: string;
           if (pipeIdx >= 0) {
-            title = rest.slice(0, pipeIdx).replace(/\s+/g, " ").trim();
-            body = rest.slice(pipeIdx + 1).trim();
+            title = unquote(rest.slice(0, pipeIdx).replace(/\s+/g, " ").trim());
+            body = unquote(rest.slice(pipeIdx + 1).trim());
           } else {
-            // No `|`: a multi-line post takes its first line as the title.
-            const lineEnd = rest.indexOf("\n");
-            title = (lineEnd >= 0 ? rest.slice(0, lineEnd) : rest).trim();
-            body = lineEnd >= 0 ? rest.slice(lineEnd + 1).trim() : "";
+            // No `|`: a multi-line post takes its first line as the title; a single
+            // long line keeps all of its text as the body under a short title.
+            const text = unquote(rest);
+            const lineEnd = text.indexOf("\n");
+            const first = (lineEnd >= 0 ? text.slice(0, lineEnd) : text).trim();
+            if (first.length > TITLE_MAX) {
+              title = shortTitle(first);
+              body = text;
+            } else {
+              title = first;
+              body = lineEnd >= 0 ? text.slice(lineEnd + 1).trim() : "";
+            }
           }
           if (!title && !body) {
             refuseCommand(ctx, input.entity, "Usage: board post <board> <title> | <body>");

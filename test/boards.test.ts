@@ -284,6 +284,62 @@ describe("Boards", () => {
     }
   });
 
+  describe("the board name before the verb", () => {
+    it("posts, reads and searches when the board comes first", () => {
+      engine.processCommand(conn1.entity!, "board create review");
+      conn1.clear();
+      engine.processCommand(conn1.entity!, 'board review post "Thesis v1" | the skeleton');
+      expect(stripAnsi(conn1.lastText())).toContain("Posted #");
+      engine.processCommand(conn1.entity!, "board review list");
+      expect(stripAnsi(conn1.lastText())).toContain("Thesis v1");
+      engine.processCommand(conn1.entity!, "board review search skeleton");
+      expect(stripAnsi(conn1.lastText())).toContain("Thesis v1");
+      engine.processCommand(conn1.entity!, "board review show 1");
+      expect(stripAnsi(conn1.lastText())).toContain("the skeleton");
+    });
+
+    it("refuses a post-id verb or an unknown verb after the board name instead of reading", () => {
+      engine.processCommand(conn1.entity!, "board create review");
+      conn1.clear();
+      engine.processCommand(conn1.entity!, "board review reply hello there");
+      expect(stripAnsi(conn1.lastText())).toContain("Usage: board reply <postId> <body>");
+      engine.processCommand(conn1.entity!, "board review publish the memo");
+      expect(stripAnsi(conn1.lastText())).toContain('Unknown board command "publish"');
+    });
+  });
+
+  it("shows replies: labelled in the listing, and under the post they answer", () => {
+    engine.processCommand(conn1.entity!, "board create review");
+    engine.processCommand(conn1.entity!, "board post review Skeleton | headers A-F");
+    engine.processCommand(conn1.entity!, "board reply 1 RISK REGISTER draft v0");
+    conn1.clear();
+    engine.processCommand(conn1.entity!, "board read review");
+    const listing = stripAnsi(conn1.lastText());
+    expect(listing).toContain("re #1: RISK REGISTER draft v0");
+    expect(listing).not.toContain("(untitled)");
+    engine.processCommand(conn1.entity!, "board read review 1");
+    const post = stripAnsi(conn1.lastText());
+    expect(post).toContain("Replies (1):");
+    expect(post).toContain("RISK REGISTER draft v0");
+  });
+
+  it("drops quotes around a title, and keeps a long unseparated post whole", () => {
+    engine.processCommand(conn1.entity!, "board create review");
+    engine.processCommand(conn1.entity!, 'board post review "DECISION MEMO v1" | body');
+    const long = `MEMO v2 PUBLISHED ${"with every workstream assembled and cited ".repeat(5)}end`;
+    engine.processCommand(conn1.entity!, `board post review ${long}`);
+    engine.processCommand(conn1.entity!, 'board post review "a" and "b" | two phrases');
+    conn1.clear();
+    engine.processCommand(conn1.entity!, "board read review");
+    const listing = stripAnsi(conn1.lastText());
+    expect(listing).toContain("#1: DECISION MEMO v1");
+    expect(listing).toContain('"a" and "b"');
+    expect(listing).toContain("MEMO v2 PUBLISHED");
+    expect(listing).toContain("…");
+    engine.processCommand(conn1.entity!, "board read review 2");
+    expect(stripAnsi(conn1.lastText())).toContain(" end");
+  });
+
   it("should prevent duplicate board names", () => {
     engine.processCommand(conn1.entity!, "board create general");
     conn1.clear();
