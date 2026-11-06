@@ -320,3 +320,30 @@ describe("hasMarkdown", () => {
     expect(hasMarkdown("a * b * c")).toBe(false);
   });
 });
+
+describe("abbreviations are not sentence ends", () => {
+  const labels = (text: string) =>
+    parseMessage(text)
+      .blocks.filter((b) => b.kind === "paragraph" && b.label)
+      .map((b) => (b.kind === "paragraph" && b.label ? spansText(b.label) : ""));
+
+  it("keeps a figure after U.S. in one paragraph, with no label", () => {
+    const cpi =
+      "2026-09-01 — FRED CPIAUCSL (Consumer Price Index for All Urban Consumers: All Items in U.S. City Average): 336.298 Index 1982-1984=100 for 2026-09-01, as published by 2026-11-06";
+    expect(parseMessage(cpi).blocks).toHaveLength(1);
+    expect(labels(cpi)).toEqual([]);
+  });
+
+  it("does not split after e.g., i.e., vs. or Inc.", () => {
+    for (const abbr of ["e.g.", "i.e.", "vs.", "Inc."]) {
+      const text = `The comparison we ran across the three vendors this quarter used ${abbr} Main Result: a flat curve for every region we priced.`;
+      expect(labels(text)).toEqual([]);
+    }
+  });
+
+  it("still starts a labelled paragraph after a real sentence end", () => {
+    const text =
+      "We reviewed the memo end to end for the board and the auditors this week. Next step: send it to legal for the final read before Friday.";
+    expect(labels(text)).toEqual(["Next step:"]);
+  });
+});

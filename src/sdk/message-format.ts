@@ -438,6 +438,18 @@ const LABEL = /^((?:[A-Z@#][\w'#@.()/+-]*)(?: [\w'#@.()/+-]+){0,5}):\s+(?=\S)/;
 /** Where a recovered list or labelled paragraph starts inside one line. */
 const NEW = "\u0000";
 
+/**
+ * A period that ends an abbreviation, not a sentence: `U.S.`, `e.g.`, `i.e.`, `vs.`,
+ * `Inc.`, `Dr.` … ("All Items in U.S. City Average): 336" is one sentence).
+ */
+const ABBREVIATION_END =
+  /(?:\b[A-Za-z]\.[A-Za-z]|\b(?:e\.g|i\.e|vs|etc|Inc|Ltd|Corp|Mr|Mrs|Ms|Dr|St|Jr|Sr|approx|cf))$/;
+
+/** Whether the `.` at `i` of `t` ends a sentence (not an abbreviation). */
+function endsSentence(t: string, i: number): boolean {
+  return t[i] !== "." || !ABBREVIATION_END.test(t.slice(Math.max(0, i - 8), i));
+}
+
 function splitSequence(t: string, at: (n: number) => RegExp, tail: boolean): string {
   const hits: { at: number; len: number }[] = [];
   let pos = 0;
@@ -458,7 +470,13 @@ function splitSequence(t: string, at: (n: number) => RegExp, tail: boolean): str
   let rest = t.slice(last);
   if (tail) {
     // An in-sentence `(1) … (2) …` ends with its sentence; what follows is a paragraph.
-    const end = rest.search(/[.!?]["”)]? (?=[A-Z])/);
+    let end = -1;
+    for (const m of rest.matchAll(/[.!?]["”)]? (?=[A-Z])/g)) {
+      if (endsSentence(rest, m.index)) {
+        end = m.index;
+        break;
+      }
+    }
     if (end >= 0) {
       const cut = rest.indexOf(" ", end) + 1;
       rest = `${rest.slice(0, cut)}${NEW}${rest.slice(cut)}`;
@@ -482,7 +500,7 @@ function recoverStructure(line: string): string {
   t = t.replace(
     // biome-ignore lint/suspicious/noControlCharactersInRegex: \u0000 is this pass's own break marker (NEW)
     /(?<![\s(\u0000]\d{1,3})([.!?]["”)]?) (?=(?:[A-Z][\w'#-]*)(?: [\w'#()+-]+){0,5}: \S)/g,
-    (_m, end: string) => `${end} ${NEW}`,
+    (m, end: string, at: number, all: string) => (endsSentence(all, at) ? `${end} ${NEW}` : m),
   );
   t = splitSequence(t, (n) => new RegExp(`(^|[\\s${NEW}])\\(${n}\\) (?=\\S)`), true);
   if ((t.match(/[.:;] - (?=\S)/g) ?? []).length >= 2) {
