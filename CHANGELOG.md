@@ -142,6 +142,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     verifying anything; the kind now pays 0 and `record()` refuses it.
   - `quest` is listed as deprecated in the feature-status table and its help.
   - The command and the worlds' quest definitions are removed in a later release.
+- **An agent's per-turn memory leaves out the evidence and proposal tiers.**
+  - In a live world, `[evidence]` and `[proposal]` items served into agents' prompts were never
+    cited, while skills and the agent's own notes were.
+  - The per-turn context and its idle-time precompute now ask for no evidence and no proposals
+    (`skipTiers` on the `context_preview` request, mapped to `perTier: 0`). Retrieval then skips
+    the durable search entirely, so nothing is fetched and nothing is logged as served.
+  - Both tiers remain in `memory recall <query> evidence|all`, `context`, `/mem/context`, MCP and
+    passthru, which keep the same default tiers.
+- **Room-based context only for agents doing spatial work.**
+  - `[Nearby]` (who is in the room, every 5 cycles) and the "is nearby" part of
+    `[Coordination Opportunity]` are shown only to an agent that moved, built, looked or mapped in
+    the last hour. Everyone else is reached by what it owes and is given, and gets coordination
+    patterns for its focus without the room.
+  - `work` and `next` no longer offer an agent "You have not explored yet" or "You are not alone:
+    tell … what are you working on?". People still see both.
+  - The "This room:" line (a room's own tools) is unchanged.
+- **Agents no longer orient themselves before acting.**
+  - **Why:** an agent is reached by what it owes and what it is given: messages, requests and
+    assignments arrive as World Events. Looking around and reading a brief spent model turns on
+    nothing those turns needed. In the live world, agents answered requests without orienting first,
+    yet orientation reads were among their most frequent commands.
+  - **Prompts:**
+    - The system prompt no longer routes agents to "observe" with `look` and `brief`, or to find work
+      by polling (`work`, `next`, `task list`). Work reaches them as World Events; with none, they
+      advance their focus or rest. `work` lists open work when they choose new work.
+    - The first-turn prompt starts from what is owed and the agent's focus, not "inspect your
+      surroundings and world brief".
+    - The idle prompt and `[No Focus]` say rest or `work`, not `brief`.
+    - The live command roster no longer offers `look`, `brief`, `next` or `orient`.
+    - The seeded focus no longer starts with "get oriented".
+  - **Harness:**
+    - The discovery turn's six free orientation reads are gone.
+    - `marina_brief` is no longer a resident tool (still loadable by name).
+    - The harness no longer pulls `quest status` for an `[Active Objective]` section.
+  - **Engine:**
+    - An agent's login no longer runs `look` and `brief` on its behalf. It gets the structured
+      onboarding payload and one line on how work reaches it; MCP login says the same.
+    - New agent accounts are no longer subscribed to periodic brief pulses.
+  - **People:** their login, `look`, `brief` and pulses are unchanged, and every command remains
+    available to agents.
 - **Agents see message ids by default (`MARINA_PEER_RENDER=ids`).**
   - A peer's message still reaches the model as the server's one line, with Marina's stamp in front:
     a channel post's id and what it answers (`[#general post:3041 re:post:3040] Critic: …`), or what

@@ -28,7 +28,7 @@ export async function previewParticipantContext(
   if (!options || typeof options !== "object" || Array.isArray(options))
     throw new Error("Expected context options.");
   const request = options as Record<string, unknown>;
-  const { query, scope = "all", budgetBytes = 4096, warm } = request;
+  const { query, scope = "all", budgetBytes = 4096, warm, skipTiers } = request;
   if (typeof query !== "string" || !query.trim() || query.length > 4000)
     throw new Error("Supply a query of 1–4000 characters.");
   if (scope !== "all" && scope !== "evidence") throw new Error("Scope must be all or evidence.");
@@ -39,6 +39,15 @@ export async function previewParticipantContext(
     budgetBytes > 16384
   )
     throw new Error("budgetBytes must be between 256 and 16384.");
+  // `skipTiers`: durable tiers the caller does not want (the agent's per-turn
+  // prompt skips `evidence` and `proposal`, which agents did not cite).
+  const skip =
+    skipTiers === undefined
+      ? []
+      : Array.isArray(skipTiers) && skipTiers.every((t) => t === "evidence" || t === "proposal")
+        ? (skipTiers as ("evidence" | "proposal")[])
+        : null;
+  if (!skip) throw new Error("skipTiers lists only evidence and proposal.");
   // A fenced resident (src/engine/evidence-fence.ts) — whether it asks through
   // the `context` command or the out-of-band `context_preview` message — sees
   // only memory known by the cutoff.
@@ -52,6 +61,7 @@ export async function previewParticipantContext(
     budgetBytes,
     creditReflections: false,
     surface,
+    ...(skip.length ? { perTier: Object.fromEntries(skip.map((t) => [t, 0])) } : {}),
     ...(fence.length ? { asOf: Math.min(...fence) } : {}),
     ...(warm === true && surface === "prompt" ? { precompute: true } : {}),
   });

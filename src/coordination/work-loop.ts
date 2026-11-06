@@ -48,6 +48,12 @@ export interface WorkLoopDeps {
   peers?: Entity[];
   /** HTTP supplies the actual viewer, never the selected agent's authority. */
   canvasReader?: CanvasReader;
+  /**
+   * The reader is an agent: no "explore" or "you are not alone" items. An
+   * agent is reached by what it owes and is given; walking the map and
+   * opening chats with whoever shares the room are a newcomer's moves.
+   */
+  forAgent?: boolean;
 }
 
 export function listWorkItems(entity: Entity, deps: WorkLoopDeps, limit = 12): WorkItem[] {
@@ -210,7 +216,12 @@ export function listWorkItems(entity: Entity, deps: WorkLoopDeps, limit = 12): W
     }
   }
 
-  if (deps.startRoom && entity.room === deps.startRoom && !entity.properties.quest_move) {
+  if (
+    !deps.forAgent &&
+    deps.startRoom &&
+    entity.room === deps.startRoom &&
+    !entity.properties.quest_move
+  ) {
     items.push({
       kind: "explore",
       title: "You have not explored yet",
@@ -219,7 +230,7 @@ export function listWorkItems(entity: Entity, deps: WorkLoopDeps, limit = 12): W
     });
   }
 
-  const peers = (deps.peers ?? []).filter((peer) => peer.id !== entity.id);
+  const peers = deps.forAgent ? [] : (deps.peers ?? []).filter((peer) => peer.id !== entity.id);
   if (peers.length > 0) {
     const peer = peers[0]!;
     items.push({

@@ -8,6 +8,7 @@ import { bold, dim, header, separator, status } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId } from "../../types";
 import type { QuestDef } from "../../world/world-definition";
+import { principalKind } from "../challenges";
 
 interface WorkDeps {
   getEntity: (id: EntityId) => Entity | undefined;
@@ -38,6 +39,7 @@ export function workCommand(deps: WorkDeps): CommandDef {
           quests: deps.quests,
           startRoom: deps.startRoom,
           peers: ctx.entities,
+          forAgent: principalKind(entity) === "agent",
         },
         12,
       ).filter((item) => item.kind !== "default" || item.priority > 0);
