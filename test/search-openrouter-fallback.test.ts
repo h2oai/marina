@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "bun:test";
+import type { ConnectorRuntime } from "../src/engine/connector-runtime";
 import { openRouterFallbackProvider } from "../src/engine/search-providers/index";
 import { openRouterWebSearchEnabled } from "../src/engine/search-providers/openrouter-web-engines";
 import { describeSearchReadiness } from "../src/engine/search-readiness";
@@ -39,7 +40,11 @@ describe("web search falls back to OpenRouter's Exa plugin", () => {
     );
     expect(provider.name).toBe("openrouter");
     expect(provider.disabled?.()).toBeUndefined();
-    const results = await provider.search("Datadog fiscal 2025 revenue", { maxResults: 5 });
+    const results = await provider.search(
+      "Datadog fiscal 2025 revenue",
+      { maxResults: 5 },
+      undefined as unknown as ConnectorRuntime,
+    );
     expect(results).toEqual([
       expect.objectContaining({
         url: "https://investors.example.com/fy2025",
