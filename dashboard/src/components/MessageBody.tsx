@@ -88,18 +88,18 @@ function SpanView({ span, ctx }: { span: Span; ctx: SpanContext }): ReactNode {
     case "mention": {
       const you = !!viewer && span.name.toLowerCase() === viewer.toLowerCase();
       return (
-        <span
+        // A button so keyboard focus reaches it: focus or hover shows the person's card.
+        <button
+          type="button"
           data-entity-preview={span.name}
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: focus shows the person's preview card
-          tabIndex={0}
           className={
             you
-              ? "rounded bg-warning/25 px-1 font-semibold text-text-bright"
-              : "font-semibold text-primary"
+              ? "inline rounded bg-warning/25 px-1 font-semibold text-text-bright"
+              : "inline font-semibold text-primary"
           }
         >
           {span.raw}
-        </span>
+        </button>
       );
     }
     case "ref":
