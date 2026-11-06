@@ -17,7 +17,7 @@ on installs: that line is optional and never raises an alert. `test/capability-p
 fails when a new
 off-by-default setting has no entry.
 
-## Measure (70)
+## Measure (71)
 
 | Subject | Evidence | Promote when | Decide by |
 |---|---|---|---|
@@ -84,6 +84,7 @@ off-by-default setting has no entry.
 | `MARINA_MEMORY_RELEVANCE_GATE` | benchmark ledger longmemeval-v2-small | a paired run on the memory board wins without a retrieval regression | 2026-12-01 |
 | `MARINA_MEMORY_USEFULNESS_RANKING` | outcomes kind task | task success per cost on shared-memory readers does not fall when the term reorders (paired, time-split) | 2027-01-15 |
 | `MARINA_OBLIGATIONS_CONSENT` | benchmark ledger tau2-airline | a paired `benchmark compare-run` wins on the board | 2026-12-01 |
+| `MARINA_PEER_RENDER` | operator choice: never automatic | paired resident runs (structured vs one-line messages) lose no replies and spend fewer turns reconciling what each read | 2027-01-15 |
 | `MARINA_PEER_REPLY_CHAIN` | judge ledger surface attention: | the converge judge earns and long exchanges end without lost work | 2026-12-01 |
 | `MARINA_RESEARCH_ADVICE` | benchmark ledger frames | a paired `benchmark compare-run` wins on the board | 2026-12-01 |
 | `MARINA_RESEARCH_AUTHORITY` | benchmark ledger futurex-past-clean | a held-out forecast backtest wins by the promotion margin | 2026-12-01 |

@@ -450,6 +450,11 @@ export function createAgentEventRelay(
         onEvent({ type: "agent_decision", name, ...decision, timestamp: now });
         break;
       }
+      case "reply_ledger": {
+        const { type: _type, ...ledger } = event;
+        onEvent({ type: "agent_reply_ledger", name, ...ledger, timestamp: now });
+        break;
+      }
     }
   };
 }

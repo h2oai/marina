@@ -14,6 +14,8 @@ export interface OutstandingRequest {
   speaker?: string;
   correlation?: string;
   modelRequestId?: string;
+  /** The message's own ref (`tell:12`, `channel_msg:40`, `say:<uuid>`): a reply's cause. */
+  ref?: string;
   presented: boolean;
   /**
    * Epoch ms when the request was first recorded. Persisted in the checkpoint
@@ -94,6 +96,7 @@ export function readRequestLedger(value: unknown, now = Date.now()): Outstanding
         (r.correlation !== undefined && typeof r.correlation !== "string") ||
         (r.speaker !== undefined && typeof r.speaker !== "string") ||
         (r.modelRequestId !== undefined && typeof r.modelRequestId !== "string") ||
+        (r.ref !== undefined && typeof r.ref !== "string") ||
         (r.recordedAt !== undefined &&
           (typeof r.recordedAt !== "number" || !Number.isFinite(r.recordedAt))),
     )
@@ -180,6 +183,38 @@ export interface OutstandingRequestsOptions extends RequestLimits {
   now?: () => number;
   /** Told once per request the TTL or the size cap removed. */
   onDrop?: (request: OutstandingRequest, reason: "expired" | "evicted") => void;
+}
+
+const MESSAGE_REF = /^(tell|channel_msg|say|shout):[A-Za-z0-9-]{1,64}$/;
+
+/**
+ * The cause for a speech command: the ref of the ONE presented, unsettled
+ * request it answers — a `tell <name>` to that asker, a `channel send <ch>`
+ * in that channel, a `say` to a room ask. None when the command names its
+ * own (`re`, `channel send <ch> re:<id>`) or when two or more could be meant:
+ * a guess would thread the reply under the wrong message.
+ */
+export function replyCauseFor(
+  requests: readonly OutstandingRequest[],
+  command: string,
+): string | undefined {
+  const words = command.trim().replace(/^\//, "").split(/\s+/);
+  const verb = words[0]?.toLowerCase();
+  let fits: (r: OutstandingRequest) => boolean;
+  if (verb === "channel" && words[1]?.toLowerCase() === "send" && words[2]) {
+    if (/^re:/i.test(words[3] ?? "")) return undefined;
+    const channel = words[2].toLowerCase();
+    fits = (r) => r.kind === "channel" && r.target.toLowerCase() === channel;
+  } else if (verb === "tell") {
+    // Leading `key:value` modifiers (`deadline:5m`) come before the name.
+    const name = words.slice(1).find((w) => !/^[a-z]+[:=]/i.test(w) && !w.startsWith("--"));
+    if (!name) return undefined;
+    fits = (r) => r.kind === "tell" && sameResidentName(r.speaker ?? r.target, name);
+  } else if (verb === "say") {
+    fits = (r) => r.kind === "say";
+  } else return undefined;
+  const open = requests.filter((r) => r.presented && !r.modelRequestId && fits(r));
+  return open.length === 1 ? open[0]!.ref : undefined;
 }
 
 export class OutstandingRequests {
@@ -312,6 +347,9 @@ export class OutstandingRequests {
       text: clean,
       ...(asker ? { speaker: asker } : {}),
       modelRequestId,
+      ...(typeof p.data.messageRef === "string" && MESSAGE_REF.test(p.data.messageRef)
+        ? { ref: p.data.messageRef }
+        : {}),
       correlation: /\[re:([a-z0-9]+)\]/i.exec(message)?.[1],
       presented: false,
       recordedAt: this.now(),
