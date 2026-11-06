@@ -145,6 +145,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     a command.
   - The harness no longer makes the three pulls behind them, and the memory platform's unused
     `standingSummary` / `getNoveltySuggestions` are removed.
+- **An agent's per-turn memory leaves out the evidence and proposal tiers.**
+  - In a live world, `[evidence]` and `[proposal]` items served into agents' prompts were never
+    cited, while skills and the agent's own notes were.
+  - The per-turn context and its idle-time precompute now ask for no evidence and no proposals
+    (`skipTiers` on the `context_preview` request, mapped to `perTier: 0`). Retrieval then skips
+    the durable search entirely, so nothing is fetched and nothing is logged as served.
+  - Both tiers remain in `memory recall <query> evidence|all`, `context`, `/mem/context`, MCP and
+    passthru, which keep the same default tiers.
 - **Room-based context only for agents doing spatial work.**
   - `[Nearby]` (who is in the room, every 5 cycles) and the "is nearby" part of
     `[Coordination Opportunity]` are shown only to an agent that moved, built, looked or mapped in

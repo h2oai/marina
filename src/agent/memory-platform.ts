@@ -177,8 +177,9 @@ export class PlatformMemoryBackend {
   async unifiedContext(
     query: string,
     budgetBytes?: number,
-    /** `warm`: a sleep-time precompute (needs the preview transport; the command fallback ignores it). */
-    opts: { warm?: boolean } = {},
+    /** `warm`: a sleep-time precompute (needs the preview transport; the command fallback ignores it).
+     *  `skipTiers`: durable tiers not to retrieve (the command fallback ignores it). */
+    opts: { warm?: boolean; skipTiers?: readonly ("evidence" | "proposal")[] } = {},
   ): Promise<{ success: boolean; text: string; context: UnifiedContextResult | null }> {
     if (typeof this.client.contextPreview === "function") {
       const result = await this.client.contextPreview(query, budgetBytes, undefined, opts);
