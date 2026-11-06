@@ -17,7 +17,7 @@ import { allRecipeNames, getRecipe } from "../../engine/commands/usecase";
 import type { Engine } from "../../engine/engine";
 import { sameResidentName } from "../../engine/entity-name";
 import { evolutionSessionsWithEvidence } from "../../engine/evolution-qualification";
-import type { MarinaDB, MediaJobRow } from "../../persistence/database";
+import type { ChannelRow, MarinaDB, MediaJobRow } from "../../persistence/database";
 import { supervisedResidentsEnabled } from "../../routing/residents";
 import type { EntityId, RoomId } from "../../types";
 import { normalizePatternName, ORCHESTRATION_PATTERNS } from "../../world/templates/orchestration";
@@ -42,6 +42,7 @@ import {
   numberOrNull,
   PROJECT_ROOT,
   ROOMS_DIR,
+  readsChannel,
   safeParse,
 } from "./shared";
 
@@ -193,10 +194,21 @@ function getBoards(db: MarinaDB): Response {
   return json(boards);
 }
 
-function getChannels(db: MarinaDB): Response {
-  const channels = db.getAllChannels().map((c) => {
-    return { ...c, messageCount: String(db.countChannelMessages(c.id)) };
-  });
+function readableChannel(
+  engine: Engine,
+  db: MarinaDB,
+  callerId: EntityId,
+  channelName: string,
+): ChannelRow | undefined {
+  const channel = db.getAllChannels().find((c) => c.name === channelName);
+  return channel && readsChannel(engine, db, callerId, channel.id) ? channel : undefined;
+}
+
+function getChannels(engine: Engine, db: MarinaDB, callerId: EntityId): Response {
+  const channels = db
+    .getAllChannels()
+    .filter((c) => readsChannel(engine, db, callerId, c.id))
+    .map((c) => ({ ...c, messageCount: String(db.countChannelMessages(c.id)) }));
   return json(channels);
 }
 
@@ -359,8 +371,7 @@ function getBoardPosts(db: MarinaDB, boardName: string, url: URL): Response {
   return json({ items, total: db.countBoardPosts(board.id) });
 }
 
-function getChannelMessages(db: MarinaDB, channelName: string, url: URL): Response {
-  const channel = db.getAllChannels().find((c) => c.name === channelName);
+function getChannelMessages(channel: ChannelRow | undefined, db: MarinaDB, url: URL): Response {
   if (!channel) return json({ error: "Channel not found" }, 404);
   const limit = clampLimit(url.searchParams.get("limit"), 25);
   const items = db.getChannelHistory(channel.id, limit).map((m) => ({
@@ -371,8 +382,12 @@ function getChannelMessages(db: MarinaDB, channelName: string, url: URL): Respon
   return json({ items, total: db.countChannelMessages(channel.id) });
 }
 
-function getChannelMessageDetail(db: MarinaDB, channelName: string, id: number): Response {
-  const channel = db.getAllChannels().find((c) => c.name === channelName);
+function getChannelMessageDetail(
+  channel: ChannelRow | undefined,
+  db: MarinaDB,
+  id: number,
+): Response {
+  const channelName = channel?.name;
   const row =
     channel && Number.isSafeInteger(id) ? db.getChannelMessage(channel.id, id) : undefined;
   if (!row) return json({ error: "Message not found" }, 404);
@@ -407,9 +422,7 @@ function getGroupDetail(db: MarinaDB, groupName: string): Response {
   });
 }
 
-function getChannelDetail(db: MarinaDB, channelName: string): Response {
-  const channels = db.getAllChannels();
-  const channel = channels.find((c) => c.name === channelName);
+function getChannelDetail(channel: ChannelRow | undefined, db: MarinaDB): Response {
   if (!channel) return json({ error: "Channel not found" }, 404);
 
   const messages = db.getChannelHistory(channel.id, 5).map((m) => ({
@@ -520,8 +533,8 @@ export async function handleCoordinationRoutes(
   );
   if (channelMessageMatch && method === "GET" && db) {
     return getChannelMessageDetail(
+      readableChannel(engine, db, callerId, decodeURIComponent(channelMessageMatch[1]!)),
       db,
-      decodeURIComponent(channelMessageMatch[1]!),
       Number(channelMessageMatch[2]),
     );
   }
@@ -553,7 +566,11 @@ export async function handleCoordinationRoutes(
     /^\/api\/coordination\/channels\/(.+)\/messages$/,
   );
   if (channelMessagesMatch && db) {
-    return getChannelMessages(db, decodeURIComponent(channelMessagesMatch[1]!), url);
+    return getChannelMessages(
+      readableChannel(engine, db, callerId, decodeURIComponent(channelMessagesMatch[1]!)),
+      db,
+      url,
+    );
   }
 
   const boardDetailMatch = url.pathname.match(/^\/api\/coordination\/boards\/(.+)$/);
@@ -568,7 +585,10 @@ export async function handleCoordinationRoutes(
 
   const channelDetailMatch = url.pathname.match(/^\/api\/coordination\/channels\/(.+)$/);
   if (channelDetailMatch && db) {
-    return getChannelDetail(db, decodeURIComponent(channelDetailMatch[1]!));
+    return getChannelDetail(
+      readableChannel(engine, db, callerId, decodeURIComponent(channelDetailMatch[1]!)),
+      db,
+    );
   }
 
   const roomMatch = url.pathname.match(/^\/api\/rooms\/(.+)$/);
@@ -865,7 +885,7 @@ export async function handleEntityRoutes(
 export async function handleCoordinationListRoutes(
   ctx: DashboardRouteContext,
 ): Promise<Response | undefined> {
-  const { db, url } = ctx;
+  const { callerId, db, engine, url } = ctx;
   if (url.pathname === "/api/coordination/boards" && db) {
     return getBoards(db);
   }
@@ -880,7 +900,7 @@ export async function handleCoordinationListRoutes(
     return json(db.listTasks({ limit: 50 }));
   }
   if (url.pathname === "/api/coordination/channels" && db) {
-    return getChannels(db);
+    return getChannels(engine, db, callerId);
   }
   if (url.pathname === "/api/coordination/groups" && db) {
     return getGroups(db);

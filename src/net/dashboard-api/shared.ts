@@ -7,6 +7,7 @@
 // imports another `./dashboard-api/*` module.
 
 import { join } from "node:path";
+import { isOperator } from "../../engine/challenges";
 import type { Engine } from "../../engine/engine";
 import { Logger } from "../../engine/logger";
 import {
@@ -295,4 +296,21 @@ export interface DashboardRouteContext {
   memory: MemoryObserver;
   /** Set when the caller presented a supervision credential (routing API only). */
   supervision?: SupervisionCredential;
+}
+
+/**
+ * Who reads a channel through the dashboard: its readers (as in the world,
+ * where `channel history` and `channel read` take membership), an operator
+ * (a person at rank 9), or the desktop operator credential. Anyone else is
+ * answered as if the channel did not exist.
+ */
+export function readsChannel(
+  engine: Engine,
+  db: MarinaDB,
+  callerId: EntityId,
+  channelId: string,
+): boolean {
+  if (isSentinelPrincipal(callerId)) return true;
+  if (isOperator(engine.entities.get(callerId))) return true;
+  return db.getChannelMembers(channelId).some((m) => m.entity_id === callerId && m.can_read);
 }

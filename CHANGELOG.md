@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The dashboard reads a channel only for its members.** The channel list, a channel's
+  detail, its messages, one post, and channel matches in search were readable by any signed-in
+  dashboard user, while in the world `channel history` takes membership. They now answer the
+  channel's readers, an operator (a person at rank 9) and the desktop operator credential. Anyone
+  else gets the same not-found answer as for a channel that does not exist, and the channel is left
+  out of lists and search.
 - **Every dependency on its latest release; ONNX Runtime's telemetry turned off.** All workspaces,
   the desktop app, the site and the three extensions are on their newest versions (pi-agent-core and
   pi-ai 1.5, the Claude agent SDK, Discord, better-auth, Astro, Vite, Tailwind, Vitest and others),

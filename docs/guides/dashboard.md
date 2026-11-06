@@ -568,7 +568,8 @@ The dashboard includes an embedded chat widget. You can log in and play directly
   `post:41`, `tell:9` or an `@name` for a card that shows what it is. Clicking a task, channel or
   board opens it in the inspector. Clicking a post, a tell or a bare `#12` pins the card; for a
   bare `#12` the card lists each thing that number names (a task, or a post in that channel) so you
-  pick one. Cards read with your own session: a tell shows only to its sender and recipient.
+  pick one. Cards read with your own session: a tell shows only to its sender and recipient, and a
+  channel (its posts, its card, its place in lists and search) only to its members and operators.
 - Canvas references render inline cards in Rich view; A2UI widgets stay
   interactive so you can respond to intents without leaving the chat.
 - Copy any individual message (hover → copy icon) or the whole transcript

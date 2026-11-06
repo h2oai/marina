@@ -92,4 +92,37 @@ describe("reference preview reads", () => {
     expect(outsider.status).toBe(404);
     expect(await outsider.json()).toEqual(await missing.json());
   });
+
+  it("channel reads are for its members and operators only", async () => {
+    engine.processCommand(entity("Alice"), "channel create inner");
+    engine.processCommand(entity("Bob"), "channel join inner");
+    engine.processCommand(entity("Alice"), "channel send inner members only");
+    const id = conns.get("Bob")!.messages.at(-1)!.data?.messageId as number;
+    const paths = [
+      "/api/coordination/channels/inner",
+      "/api/coordination/channels/inner/messages",
+      `/api/coordination/channels/inner/messages/${id}`,
+    ];
+    for (const path of paths) {
+      expect((await get(path, "Bob")).status).toBe(200);
+      // A non-member is answered as if the channel did not exist.
+      expect((await get(path, "Carol")).status).toBe(404);
+    }
+    const listed = async (as: string) =>
+      ((await (await get("/api/coordination/channels", as)).json()) as { name: string }[]).map(
+        (c) => c.name,
+      );
+    expect(await listed("Bob")).toContain("inner");
+    expect(await listed("Carol")).not.toContain("inner");
+    const found = async (as: string) =>
+      ((await (await get("/api/search?q=inner", as)).json()) as { kind: string }[]).filter(
+        (r) => r.kind === "channel",
+      ).length;
+    expect(await found("Bob")).toBe(1);
+    expect(await found("Carol")).toBe(0);
+    // An operator (a person at rank 9) reads every channel.
+    engine.entities.get(entity("Carol"))!.properties.rank = 9;
+    for (const path of paths) expect((await get(path, "Carol")).status).toBe(200);
+    expect(await listed("Carol")).toContain("inner");
+  });
 });
