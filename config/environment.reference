@@ -791,6 +791,9 @@
 # MARINA_SEARCH_DUCKDUCKGO=on
 # MARINA_FORECAST_YAHOO=on
 
+# With OPENROUTER_API_KEY, `web search` (and the search room) falls back last to OpenRouter's Exa web plugin: one minimal call per query whose citations are the results (about $0.007 a search, recorded as source `search` and refused at the daily cap), carried by MARINA_RESEARCH_SEARCH_MODEL. It answers only after every other backend failed (an exhausted Tavily plan, a throttled DuckDuckGo), so agents keep working instead of losing search. `off` keeps it out of `web search`; the research retriever's own `openrouter` backend is set by MARINA_RESEARCH_SEARCH_BACKENDS.
+# MARINA_SEARCH_OPENROUTER=on
+
 # Where local corpora live: offline BM25 indexes built with `bun run corpus build <name> <docs.jsonl>` and searched with `web search engines:corpus:<name>`, the search room, or the `corpus:<name>` research retriever. Keep it on a disk with room (a 100k-document corpus is several GB), not a small temp filesystem.
 # MARINA_CORPUS_DIR=~/.local/share/marina/corpora
 

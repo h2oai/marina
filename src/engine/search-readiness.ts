@@ -14,7 +14,10 @@ import { robotsMode } from "../net/robots";
 import { duckDuckGoEnabled } from "./search-providers/duckduckgo";
 import type { SearchBackendHealth } from "./search-providers/health";
 import { isQuotaOrAuthError, SEARCH_BACKOFF_MS } from "./search-providers/health";
-import { OPENROUTER_WEB_ENGINES } from "./search-providers/openrouter-web-engines";
+import {
+  OPENROUTER_WEB_ENGINES,
+  openRouterWebSearchEnabled,
+} from "./search-providers/openrouter-web-engines";
 
 export interface SearchReadiness {
   status: "ok" | "degraded";
@@ -39,7 +42,13 @@ export function describeSearchReadiness(
     ...(ddg ? ["duckduckgo"] : []),
     // Paid fallbacks after the free engine (DeepSeek's key may be set for chat alone).
     ...(deepseek ? ["deepseek (Search API)"] : []),
-    ...(openrouter ? ["openrouter (Exa plugin, research)"] : []),
+    ...(openrouter
+      ? [
+          openRouterWebSearchEnabled(env)
+            ? "openrouter (Exa plugin)"
+            : "openrouter (Exa plugin, research only: MARINA_SEARCH_OPENROUTER=off)",
+        ]
+      : []),
   ];
   const failing = health.filter(
     (h) =>
@@ -71,7 +80,7 @@ export function describeSearchReadiness(
       detail: parts.join("; "),
       remediation: keyedFailing
         ? "A search backend is failing (often an exhausted plan: Tavily answers HTTP 432). Queries fall through to the next backend; top up or replace the key, or set MARINA_RESEARCH_SEARCH_BACKENDS to reorder the chain."
-        : "Keyless search is failing (rate limit or outage). Configure TAVILY_API_KEY, EXA_API_KEY, SEARXNG_URL or DEEPSEEK_API_KEY for a keyed backend.",
+        : "Keyless search is failing (rate limit or outage). Configure TAVILY_API_KEY, EXA_API_KEY, SEARXNG_URL, DEEPSEEK_API_KEY or OPENROUTER_API_KEY for a keyed backend.",
     };
   }
   if (configured.length === 0 && !openrouter && !deepseek && !ddg) {
