@@ -16,6 +16,8 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type { Perception } from "../src/sdk/client";
+import { messageMentions, parseInline, parseMessage } from "../src/sdk/message-format";
+import { blockLines, paintSpans } from "./term-message";
 import { plainText, sanitizeServerText } from "./term-sanitize";
 import type { Theme } from "./term-theme";
 
@@ -97,11 +99,22 @@ export interface RenderOptions {
   isAgent?: (name: string) => boolean;
 }
 
+export interface RenderContext {
+  /** Output of the command you just ran. */
+  own: boolean;
+  failed?: boolean;
+  /** The same sender spoke just before in the same place: no repeated header. */
+  continued?: boolean;
+}
+
+/** Widest a message body runs, whatever the terminal width: long lines are hard to read. */
+export const MESSAGE_MEASURE = 100;
+
 /** Visible lines for one perception. `own` = output of the command you just ran. */
 export function renderPerception(
   p: Perception,
   options: RenderOptions,
-  context: { own: boolean; failed?: boolean },
+  context: RenderContext,
 ): string[] {
   const { theme } = options;
   const g = glyphsFor(theme);
@@ -133,7 +146,10 @@ export function renderPerception(
   }
 
   const voice = voiceOf(p);
-  if (voice && !context.own) return renderVoice(voice, p, options);
+  if (voice && !context.own) return renderVoice(voice, p, options, context.continued);
+
+  const history = channelHistoryOf(p);
+  if (history && !(context.own && context.failed)) return renderHistory(history, options);
 
   if (p.kind === "error" || p.kind === "auth_error" || (context.own && context.failed)) {
     const body = bodyLines(text || JSON.stringify(p.data), options, 4, "error");
@@ -200,13 +216,16 @@ function voiceOf(p: Perception): Voice | undefined {
   };
 }
 
-function renderVoice(v: Voice, p: Perception, options: RenderOptions): string[] {
+function renderVoice(v: Voice, p: Perception, options: RenderOptions, continued = false): string[] {
   const { theme } = options;
   const g = glyphsFor(theme);
   const name = sanitizeServerText(v.name, theme);
   const paint = theme.identity(plainText(name));
   const agent = options.isAgent?.(plainText(name)) ?? false;
   const self = !!options.self && plainText(name) === options.self;
+  // The body is plain text through the shared grammar (any escapes are dropped).
+  const parsed = parseMessage(plainText(sanitizeServerText(v.message, theme)));
+  const mentioned = !self && messageMentions(parsed, options.self);
   const marker =
     v.kind === "tell"
       ? theme.fg("accent2")(g.tell)
@@ -232,20 +251,117 @@ function renderVoice(v: Voice, p: Perception, options: RenderOptions): string[] 
     return body.map((line, i) => `${i === 0 ? `${marker} ` : "  "}${line}`);
   }
   const head = `${marker} ${paint(plainText(name))}${via}${agent ? theme.fg("faint")(" agent") : ""}`;
-  const message = v.kind === "shout" ? theme.bold(v.message) : v.message;
-  const body = looksLikeMarkdown(message)
-    ? markdownLines(message, options, 2)
-    : bodyLines(message, options, 2);
-  // One line when it fits next to the name (chat), else a header and an indented body.
+  const measure = Math.min(options.width, MESSAGE_MEASURE) - 2;
+  const lines = blockLines(
+    parsed,
+    theme,
+    { chips: true, viewer: options.self, link: theme.link },
+    { width: measure },
+  ).map((line) => (v.kind === "shout" ? theme.bold(line) : line));
+  // One line when it fits next to the name (chat), else a header and the body
+  // under a bar in the sender's colour (yours in the warning colour when it
+  // names you), so where one message ends and the next begins is plain.
   const headWidth = visibleWidth(head);
-  if (body.length === 1 && headWidth + 2 + visibleWidth(body[0]!) + 8 <= options.width) {
+  if (
+    !continued &&
+    lines.length === 1 &&
+    parsed.blocks[0]?.kind === "paragraph" &&
+    headWidth + 2 + visibleWidth(lines[0]!) + 8 <= options.width
+  ) {
     const pad = Math.max(
       2,
-      options.width - headWidth - 2 - visibleWidth(body[0]!) - visibleWidth(time) - 1,
+      options.width - headWidth - 2 - visibleWidth(lines[0]!) - visibleWidth(time) - 1,
     );
-    return [`${head}  ${body[0]}${" ".repeat(pad)}${time}`];
+    return [`${head}  ${lines[0]}${" ".repeat(pad)}${time}`];
   }
-  return [`${head}  ${time}`, ...body.map((line) => `  ${line}`)];
+  const barGlyph = theme.unicode ? "▎" : "|";
+  const bar = mentioned
+    ? theme.fg("warning")(barGlyph)
+    : self
+      ? theme.fg("faint")(barGlyph)
+      : paint(barGlyph);
+  const body = lines.map((line) => `${bar} ${line}`);
+  if (continued) return body;
+  const flag = mentioned ? theme.fg("warning")(theme.unicode ? " ◂ you" : " < you") : "";
+  return [`${head}${flag}  ${time}`, ...body];
+}
+
+interface HistoryMessage {
+  senderName: string;
+  content: string;
+  createdAt?: number;
+}
+
+/** `channel history`'s structured payload, when the server sent one. */
+function channelHistoryOf(
+  p: Perception,
+): { channel: string; messages: HistoryMessage[] } | undefined {
+  const h = p.data?.channelHistory as { channel?: unknown; messages?: unknown } | undefined;
+  if (!h || typeof h.channel !== "string" || !Array.isArray(h.messages)) return undefined;
+  const messages = h.messages.filter(
+    (m): m is HistoryMessage =>
+      !!m &&
+      typeof (m as HistoryMessage).senderName === "string" &&
+      typeof (m as HistoryMessage).content === "string",
+  );
+  return { channel: h.channel, messages };
+}
+
+/** A channel's history as a conversation: day lines, grouped senders, the same bodies. */
+function renderHistory(
+  h: { channel: string; messages: HistoryMessage[] },
+  options: RenderOptions,
+): string[] {
+  const { theme } = options;
+  const out: string[] = [
+    theme.bold(theme.fg("accent")(`#${sanitizeServerText(h.channel, theme)}`)),
+  ];
+  let lastDay = "";
+  let last: HistoryMessage | undefined;
+  for (const m of h.messages) {
+    const day = m.createdAt ? dayLabel(m.createdAt) : "";
+    if (day && day !== lastDay) {
+      out.push(dayRule(day, options));
+      lastDay = day;
+      last = undefined;
+    }
+    const continued =
+      !!last &&
+      last.senderName === m.senderName &&
+      !!m.createdAt &&
+      !!last.createdAt &&
+      m.createdAt - last.createdAt < GROUP_MS;
+    out.push(
+      ...renderVoice(
+        { name: m.senderName, message: m.content, kind: "say" },
+        { kind: "message", tag: "say", timestamp: m.createdAt ?? 0, data: {} } as Perception,
+        options,
+        continued,
+      ),
+    );
+    last = m;
+  }
+  return out;
+}
+
+/** Consecutive messages from one sender within this window share a header. */
+export const GROUP_MS = 5 * 60_000;
+
+export function dayLabel(ts: number): string {
+  return new Date(ts).toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/** `── Wed, Nov 4 ──────` between messages of different days. */
+export function dayRule(label: string, options: RenderOptions): string {
+  const { theme } = options;
+  const g = glyphsFor(theme);
+  const width = Math.min(options.width, MESSAGE_MEASURE);
+  const lead = `${g.rule.repeat(2)} ${label} `;
+  return theme.fg("faint")(`${lead}${g.rule.repeat(Math.max(2, width - visibleWidth(lead)))}`);
 }
 
 function renderRoom(p: Perception, options: RenderOptions): string[] {
@@ -293,8 +409,6 @@ const STATUS_GLYPH: Record<string, "success" | "warning" | "error" | "faint" | "
   "→": "info",
   "↳": "info",
 };
-// biome-ignore lint/suspicious/noControlCharactersInRegex: a URL ends at an escape byte
-const URL_RE = /\bhttps?:\/\/[^\s<>"'`\x1b)]+[^\s<>"'`\x1b).,;:!?]/g;
 
 /**
  * Server text → wrapped, themed lines. Server colour survives (remapped to the
@@ -351,17 +465,9 @@ export function decorate(line: string, theme: Theme): string {
         text = text.slice(lead[0].length);
       }
     } else if (/\S/.test(part)) first = false;
-    text = text
-      // With colour off the markers are the only emphasis there is: keep them.
-      .replace(/`([^`\n]+)`/g, (m, code: string) =>
-        theme.level ? span(theme.fg("code"))(code) : m,
-      )
-      .replace(/\*\*([^*\n]+)\*\*/g, (m, b: string) => (theme.level ? span(theme.bold)(b) : m))
-      .replace(URL_RE, (url) => span(theme.fg("link"))(theme.link(url, url)))
-      .replace(
-        /(^|[\s(])(#\d+|(?:task|note|chronicle|trace|challenge):[\w-]+)/g,
-        (_, pre: string, ref: string) => `${pre}${span(theme.fg("highlight"))(ref)}`,
-      );
+    // The shared grammar styles code, links, refs, asides and ids; verdict
+    // colours only where the server set no colour of its own.
+    text = paintSpans(parseInline(text), theme, { verdicts: !active, link: theme.link }, active);
     out += head + text;
   }
   return out;

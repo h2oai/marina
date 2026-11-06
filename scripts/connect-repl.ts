@@ -24,7 +24,15 @@ import {
   type SegmentContext,
   saveCliSetting,
 } from "./term-prompt";
-import { glyphsFor, type RenderOptions, renderPerception, wrap } from "./term-render";
+import {
+  dayLabel,
+  dayRule,
+  GROUP_MS,
+  glyphsFor,
+  type RenderOptions,
+  renderPerception,
+  wrap,
+} from "./term-render";
 import { defaultHistoryFile, ReplScreen } from "./term-repl";
 import { httpBase, WorldStatus } from "./term-status";
 import { createTheme, PALETTES, paletteFor, type Theme } from "./term-theme";
@@ -116,6 +124,8 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
     return { theme, self: session.name, width: out.columns || 80, isAgent: (n) => agents.has(n) };
   };
 
+  const conversation = new Conversation(renderOptions);
+
   const screen = new ReplScreen({
     input: process.stdin,
     output: out,
@@ -163,8 +173,16 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
       flushTimer ??= setTimeout(flushPending, 1_200);
       return;
     }
-    const lines = renderPerception(p, renderOptions(), { own: !!p.command_request_id });
-    screen.print(p.command_request_id && abandoned.length ? [lateHeader(), ...lines] : lines);
+    if (!p.command_request_id) {
+      const lines = conversation.render(p);
+      // A long message from someone else folds to its first lines; ctrl+o opens it.
+      if (lines.length > AMBIENT_FOLD_ROWS + 4) screen.printResult(lines, AMBIENT_FOLD_ROWS);
+      else screen.print(lines);
+      return;
+    }
+    conversation.reset();
+    const lines = renderPerception(p, renderOptions(), { own: true });
+    screen.print(abandoned.length ? [lateHeader(), ...lines] : lines);
   };
   // A dropped socket (server restart, network) is a state, not an exit: the
   // status bar says offline and the session comes back on its own token.
@@ -194,6 +212,7 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
 
   function flushPending() {
     flushTimer = undefined;
+    conversation.reset();
     const lines: string[] = [];
     for (const [p, shown] of pending) {
       if (shown) continue;
@@ -435,7 +454,7 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
   const burst = options
     .handoff()
     .filter((p) => !isLoginNoise(p))
-    .flatMap((p) => renderPerception(p, renderOptions(), { own: false }));
+    .flatMap((p) => conversation.render(p));
   if (burst.length) screen.printResult([...burst, ""], pageBudget(out.rows || 24, card.length + 2));
   agent.onPerception(onPerception);
   status.onChange(() => screen.refresh());
@@ -510,4 +529,47 @@ function isLoginNoise(p: Perception): boolean {
     typeof p.data?.token === "string" ||
     /^Joined channel "[^"]+"\.$/.test(text)
   );
+}
+
+/** Rows a long message from someone else shows before it folds behind ctrl+o. */
+const AMBIENT_FOLD_ROWS = 10;
+
+/**
+ * What arrives unasked, as a conversation: consecutive messages from one
+ * sender in one place share a header (as chat apps group them), and a line
+ * marks the day changing mid-session. Your own command's output ends a group.
+ */
+export class Conversation {
+  private last?: { key: string; at: number };
+  private day = "";
+
+  constructor(private readonly options: () => RenderOptions) {}
+
+  render(p: Perception): string[] {
+    const at = p.timestamp || Date.now();
+    const day = dayLabel(at);
+    const out: string[] = [];
+    if (this.day && day !== this.day) {
+      out.push(dayRule(day, this.options()));
+      this.last = undefined;
+    }
+    this.day = day;
+    const key = speakerKey(p);
+    const continued = !!key && this.last?.key === key && at - this.last.at < GROUP_MS;
+    out.push(...renderPerception(p, this.options(), { own: false, continued }));
+    this.last = key ? { key, at } : undefined;
+    return out;
+  }
+
+  /** Something else was printed in between: the next message gets its header again. */
+  reset(): void {
+    this.last = undefined;
+  }
+}
+
+/** Sender + tag + channel of a spoken message, or undefined for anything else. */
+function speakerKey(p: Perception): string | undefined {
+  const d = p.data as { senderName?: unknown; channel?: unknown } | undefined;
+  if (typeof d?.senderName !== "string" || p.tag === "emote") return undefined;
+  return `${d.senderName}\u0000${p.tag ?? ""}\u0000${typeof d.channel === "string" ? d.channel : ""}`;
 }
