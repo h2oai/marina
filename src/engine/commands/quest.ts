@@ -115,7 +115,7 @@ export function questCommand(deps: {
     ],
     name: "quest",
     aliases: ["checklist", "onboarding"],
-    help: "Guided objectives and onboarding checklists. Structured step-by-step workflows that track your progress. Usage: quest [start|status|list|complete|abandon]",
+    help: "[deprecated: use goals (`memory set goal`), tasks, crews, skills and guides] Guided objectives and onboarding checklists. Structured step-by-step workflows that track your progress. Usage: quest [start|status|list|complete|abandon]",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;

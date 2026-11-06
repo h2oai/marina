@@ -406,9 +406,15 @@ export class AuthCoordinator {
 
     this.applyAdminBootstrap(entity, connId, identity);
 
-    // Auto-start quest for new entities (rank 0)
+    // Auto-start quest for new people (rank 0). Quests are deprecated
+    // (goals, tasks, crews, skills and guides cover them); an agent is never
+    // given one: its focus and what it is given direct it.
     const rank = (entity.properties.rank as number) ?? 0;
-    if (rank === 0 && this.host.world?.autoQuest) {
+    if (
+      rank === 0 &&
+      this.host.world?.autoQuest &&
+      !this.isAgentLogin(entity, this.host.connections.get(connId))
+    ) {
       entity.properties.active_quest = this.host.world.autoQuest;
     }
 

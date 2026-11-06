@@ -185,7 +185,7 @@ describe("Quest System", () => {
     expect(entity.properties.active_quest).toBeUndefined();
   });
 
-  it("awards quest_complete standing on completion, idempotently", () => {
+  it("a completed quest earns no standing: quests are deprecated and the kind is retired", () => {
     engine.login("c1", "Player");
     const entity = engine.entities.get(conn.entity!)!;
     engine.processCommand(conn.entity!, "look");
@@ -193,18 +193,9 @@ describe("Quest System", () => {
     engine.processCommand(conn.entity!, "note this is interesting");
     engine.processCommand(conn.entity!, "quest complete");
 
-    // The completion credit is wired in quest.ts via record(... "quest_complete"
-    // "quest:tutorial"). The rank>=1 assertion above is satisfied by the
-    // fixture's onComplete (not the credit), so assert the ledger directly.
+    // `quest_complete` is a retired kind: record() refuses it, so no row.
     const ledger = db.ledgerForEntity(entity.id, 20);
-    const credit = ledger.find((r) => r.kind === "quest_complete");
-    expect(credit).toBeDefined();
-    expect(credit?.ref).toBe("quest:tutorial");
-
-    // Re-running on the now-inactive quest must not double-credit.
-    engine.processCommand(conn.entity!, "quest complete");
-    const after = db.ledgerForEntity(entity.id, 20).filter((r) => r.kind === "quest_complete");
-    expect(after.length).toBe(1);
+    expect(ledger.find((r) => r.kind === "quest_complete")).toBeUndefined();
   });
 
   it("should not complete quest if steps are missing", () => {

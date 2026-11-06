@@ -112,6 +112,9 @@ export const RETIRED_STANDING_KINDS: ReadonlySet<StandingKind> = new Set<Standin
   "crew_stage_completed",
   "crew_artifact_deposited",
   "helping_act",
+  // Quests are deprecated, and a completed quest was paid with no other
+  // account verifying anything; no row was ever written in the live world.
+  "quest_complete",
 ]);
 
 /** Largest standing value one task pays (`task create … standing:N`). */
@@ -131,9 +134,8 @@ export const STANDING_AMOUNTS: Record<StandingKind, number> = {
   // credit the claimant (`standingVerifierRefusal`: another account; an agent
   // approver inside the claimant's lineage has no grounding signal here).
   task_complete: 0,
-  // An onboarding quest the ENGINE checked, once per quest. Kept small: it
-  // moves a newcomer toward rank 1 (standing 5) without clearing gates.
-  quest_complete: 3,
+  // Retired (quests are deprecated) — see RETIRED_STANDING_KINDS.
+  quest_complete: 0,
   // A Code Mode attempt whose checks passed, approved by another account —
   // grounded, so an agent reviewer in the worker's lineage may credit it;
   // once per attempt (`src/outcomes/live.ts`).
