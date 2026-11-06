@@ -60,7 +60,8 @@ shortest useful path is:
 1. Open the dashboard and connect with a name in **Web Chat**.
 2. Use the **Start Here** actions to run `look`, `brief`, and `next`.
 3. Run `board read demo-scenarios`.
-4. Copy the recommended Launch Brief and send it to Host after an AI provider is connected.
+4. [Connect an AI provider](#connect-an-ai-provider) if you have not yet, then copy the recommended
+   Launch Brief and send it to Host.
 5. Watch Host → Builder → Critic produce and independently review an inspectable result.
 
 The equivalent command sequence is:
@@ -92,7 +93,12 @@ folder session and `marina start` read; run inside the source checkout, it write
 
 ### Dashboard or desktop
 
-Open **Admin → Keys**, choose a provider, paste the key, save it, and use **Test**. Database-backed
+Open **Admin → Keys**, click **+ Add**, choose a provider, paste the key, click **Save Key**, and use
+**Test**:
+
+![Admin, Keys tab: the + Add form with a key name, the provider list and the key field](../assets/connect-provider.png)
+
+Database-backed
 keys take effect without a restart. The Security panel reports whether database key encryption is
 enabled; masked display alone does not mean encrypted storage. Packaged desktop builds create a
 local, owner-readable encryption secret automatically, but do not claim OS-keychain storage.
