@@ -23,9 +23,9 @@ function server(overrides: Record<string, () => Response> = {}) {
       json({
         worldName: "Harbor",
         rooms: [{ id: "h/dock", short: "Dock", entityCount: 2 }],
-        entities: [{ name: "Jeff", room: "h/dock", kind: "person", rank: 1 }],
+        entities: [{ name: "Rowan", room: "h/dock", kind: "person", rank: 1 }],
       }),
-    "/api/entity/Jeff/profile": () =>
+    "/api/entity/Rowan/profile": () =>
       json({ identity: { rank: 1, standing: 6.5 }, stats: { total_actions: 3 } }),
     "/api/ops/overview": () =>
       json({ scope: "resident", agents: [], spend: { daily: { spentUsd: 1.5, capUsd: 50 } } }),
@@ -71,7 +71,7 @@ describe("live world status for the CLI", () => {
 
   test("reads every part with the session's own bearer token", async () => {
     const { calls, fetcher } = server();
-    const status = new WorldStatus("http://x", () => "tok", "Jeff", fetcher);
+    const status = new WorldStatus("http://x", () => "tok", "Rowan", fetcher);
     await status.refresh(true);
     expect(calls.every((c) => c.auth === "Bearer tok")).toBe(true);
     const s = status.snapshot;
@@ -90,7 +90,7 @@ describe("live world status for the CLI", () => {
     const { fetcher } = server({
       "/health": () => (up ? json({ status: "ok", connections: 9 }) : json({}, 503)),
     });
-    const status = new WorldStatus("http://x", () => undefined, "Jeff", fetcher);
+    const status = new WorldStatus("http://x", () => undefined, "Rowan", fetcher);
     await status.refresh(true, ["health"]);
     up = false;
     await status.refresh(true, ["health"]);
@@ -99,7 +99,7 @@ describe("live world status for the CLI", () => {
 
   test("parts are only re-read when due", async () => {
     const { calls, fetcher } = server();
-    const status = new WorldStatus("http://x", () => "t", "Jeff", fetcher);
+    const status = new WorldStatus("http://x", () => "t", "Rowan", fetcher);
     await status.refresh(true);
     const first = calls.length;
     await status.refresh(false);
@@ -108,7 +108,7 @@ describe("live world status for the CLI", () => {
 
   test("reads the caller's own held actions", async () => {
     const { fetcher } = server();
-    const status = new WorldStatus("http://x", () => "t", "Jeff", fetcher);
+    const status = new WorldStatus("http://x", () => "t", "Rowan", fetcher);
     await status.refresh(true, ["challenges"]);
     expect(status.snapshot.challenges?.answerable[0]).toMatchObject({
       token: "t1",
@@ -123,7 +123,7 @@ describe("live world status for the CLI", () => {
       "/api/operations/alerts": () =>
         allowed ? json([{ status: "open", severity: "warning", title: "A" }]) : json({}, 403),
     });
-    const status = new WorldStatus("http://x", () => "t", "Jeff", fetcher);
+    const status = new WorldStatus("http://x", () => "t", "Rowan", fetcher);
     await status.refresh(true, ["alerts"]);
     expect(status.snapshot.alerts).toHaveLength(1);
     allowed = false;
@@ -137,7 +137,7 @@ describe("live world status for the CLI", () => {
 
   test("listeners hear about a successful read", async () => {
     const { fetcher } = server();
-    const status = new WorldStatus("http://x", () => "t", "Jeff", fetcher);
+    const status = new WorldStatus("http://x", () => "t", "Rowan", fetcher);
     let heard = 0;
     status.onChange(() => heard++);
     await status.refresh(true, ["health"]);

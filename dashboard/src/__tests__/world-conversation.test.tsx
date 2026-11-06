@@ -80,7 +80,7 @@ describe("EntityContext attention box", () => {
     expect(attentionCommand({ name: "Ash" }, "@all stop")).toBe("@all stop");
     expect(
       attentionCommand(
-        { name: "Wren", resident: { vendor: "claude", owner: "Jeff" } },
+        { name: "Wren", resident: { vendor: "claude", owner: "Rowan" } },
         "look here",
       ),
     ).toBe("agent attention Wren look here");

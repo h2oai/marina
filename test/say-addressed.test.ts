@@ -49,7 +49,7 @@ function assess(p: Perception, selfName: string) {
 
 describe("room speech addressed by name", () => {
   it("a say that opens with a listener's name is addressed to it, and wakes it now", async () => {
-    const speaker = join("Jeff");
+    const speaker = join("Rowan");
     const fern = join("Fern");
     const reed = join("Reed");
     await engine.dispatchCommand(speaker.id, "say Fern, add a subtract function to math.ts");
@@ -61,7 +61,7 @@ describe("room speech addressed by name", () => {
   });
 
   it("a shout carries its words for listeners too", async () => {
-    const speaker = join("Jeff");
+    const speaker = join("Rowan");
     const fern = join("Fern");
     await engine.dispatchCommand(speaker.id, "shout @Fern the build is red");
     const p = await heard(fern.conn, "shout");

@@ -140,7 +140,7 @@ const message = (over: Partial<Perception>): Perception =>
   ({ kind: "message", timestamp: Date.UTC(2026, 9, 21, 14, 2), data: {}, ...over }) as Perception;
 
 describe("perception rendering", () => {
-  const opts = { theme: truecolor, width: 80, self: "Jeff" };
+  const opts = { theme: truecolor, width: 80, self: "Rowan" };
 
   test("your command's result hangs off ⎿ and continues under it", () => {
     const lines = renderPerception(message({ data: { text: "Open Tasks\n#17 review" } }), opts, {
@@ -283,7 +283,7 @@ describe("perception rendering", () => {
 
 const context = (over: Partial<SegmentContext> = {}): SegmentContext => ({
   theme: truecolor,
-  name: "Jeff",
+  name: "Rowan",
   connected: true,
   queued: 0,
   snapshot: {

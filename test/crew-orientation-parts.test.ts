@@ -31,20 +31,20 @@ describe("crew orientation names each member's part", () => {
     db.saveAgentConfig({
       name: "Red_Actor",
       model: "m",
-      spawnedBy: "jeff",
+      spawnedBy: "olive",
       goal: "Play a ransomware crew that already holds domain admin",
     });
     db.saveAgentConfig({
       name: "Blue_Lead",
       model: "m",
-      spawnedBy: "jeff",
+      spawnedBy: "olive",
       goal: "Lead incident response for Acme",
     });
     const crew = crews.create({
       name: "ir",
       goal: "billing cluster encrypted",
-      owner: entityId("e_jeff"),
-      members: [{ agentName: "jeff", role: "owner" }, { agentName: "Blue_Lead" }],
+      owner: entityId("e_olive"),
+      members: [{ agentName: "olive", role: "owner" }, { agentName: "Blue_Lead" }],
       formation: "debate",
     });
     crews.dispatch(crew.id, "go");

@@ -70,7 +70,7 @@ describe("a resident is reached by any spelling of its name", () => {
   test("the config spelling `agent list` shows finds the sanitized live entity", async () => {
     // A seeded agent configured as "Diligence-Lead" logs in as "DiligenceLead".
     const lead = fixture.login("DiligenceLead");
-    const sender = fixture.login("Jeff");
+    const sender = fixture.login("Olive");
     expect(fixture.engine.findEntityGlobal("Diligence-Lead")?.id).toBe(lead.entityId);
     expect(fixture.engine.findEntityGlobal("diligence-lead")?.id).toBe(lead.entityId);
     const before = sender.connection.messages.length;
