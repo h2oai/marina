@@ -110,6 +110,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dashboard chat reads like a messaging app.** Messages render through the same grammar as the
+  terminal (`MessageBody`): lists, lead-in labels, verdict chips, quiet asides, quoted output, code
+  and ids, and `task #N` / `#channel` references that open the inspector. Each message is a bubble
+  with the sender's avatar and colour (the same colour as in `marina connect`); consecutive
+  messages from one sender share a header, your own sit on the right, one that names you is marked,
+  days are divided, long messages fold behind "Read more", and arrivals and departures are small
+  centred lines. Compact view, `channel history` and the channel and board inspectors use the same
+  renderer. Speech is read from the server's structured fields, so a multi-line message keeps its
+  speaker. Message text is rendered as React elements, never injected as HTML.
 - **Messages in `marina connect` read like a conversation.** A shared message grammar
   (`src/sdk/message-format.ts`) parses every message body once for display: lists (including the
   inline `1. … 2. …` and `(1) (2)` lists agents write on one line), lead-in labels such as
