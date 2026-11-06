@@ -200,8 +200,12 @@ jobs:
           done
           exit 1
       - name: Run participation journeys
+        # About 4 minutes. A hang once ran to the job's 20-minute limit, and a
+        # cancelled job skips the evidence upload below; a failed step keeps it.
+        timeout-minutes: 8
         run: bun run test:browser
       - name: Run API explorer journeys
+        timeout-minutes: 5
         run: bun run test:explorer
       - name: Preserve browser failure evidence
         if: failure()
