@@ -369,7 +369,9 @@ export function ReferencePreview() {
       }
       if (
         pinnedRef.current &&
-        !(event.target instanceof Node && card.current?.contains(event.target))
+        // The path as dispatched: a choice inside the card may already be
+        // re-rendered away, and must not read as a click outside it.
+        !(card.current && event.composedPath().includes(card.current))
       )
         setShown(null);
     };
