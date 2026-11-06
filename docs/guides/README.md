@@ -27,7 +27,7 @@ what's switched off, and the one thing to do next.
 
 | Guide | What you'll get |
 | --- | --- |
-| [What you can do with Marina](use-cases.md) | Ten use cases, easiest first, each a handful of commands you can run today. |
+| [Field use case examples](field-use-cases.md) | Thirteen worked examples, easiest first: what each is for, real output, the commands to run it, and typical time and cost. |
 | [Code with an agent](coding.md) | Run `marina .` in a project: inspect, run, patch, review and checkpoint, alone or with a crew. |
 | [Put memory to work](memory-workflows.md) | Pull evidence back right now, or hand work to a task that a fresh agent can pick up. |
 | [Shared task work](shared-task-work.md) | Preserve citations, propose field edits and reuse advisory checks without changing agent loops. |
