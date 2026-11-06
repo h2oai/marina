@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Connection, EntityId } from "../types";
+import { principalKind } from "./challenges";
 import type { Engine } from "./engine";
 
 export type ParticipationProtocol = "websocket" | "mcp" | "telnet" | "passthru";
@@ -35,6 +36,10 @@ export function participantOrientation(
   };
 }
 
+/** What an agent is told on arrival instead of the room and the brief. */
+export const AGENT_ARRIVAL =
+  "Requests, messages and assigned work reach you as they arrive. `work` lists open work; `help catalog` lists commands; `context <query>` previews your memory.";
+
 const arrivals = new WeakMap<Connection, Map<string, Promise<void>>>();
 /** Await and deduplicate an arrival on this connection; reconnects have a new connection. */
 export function onboardParticipant(
@@ -66,6 +71,15 @@ async function deliverOrientation(
 ): Promise<void> {
   const orientation = participantOrientation(engine, id, protocol, resumed);
   if (!orientation) return;
+  const entity = engine.entities.get(id);
+  // An agent does not need to look around to act: it is reached by what it
+  // owes and is given (World Events), and the room and brief it would be shown
+  // cost a model turn to read. It gets the structured onboarding payload only;
+  // a person gets the room, the brief and the hint, as before.
+  if (entity && principalKind(entity) === "agent") {
+    engine.sendToEntity(id, AGENT_ARRIVAL, "onboarding", { onboarding: orientation });
+    return;
+  }
   await engine.dispatchCommand(id, "look", { bypassModal: true });
   if (engine.getConnectionForEntity(id) !== connection) return;
   await engine.dispatchCommand(id, "brief", { bypassModal: true });

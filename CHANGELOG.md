@@ -141,6 +141,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the durable search entirely, so nothing is fetched and nothing is logged as served.
   - Both tiers remain in `memory recall <query> evidence|all`, `context`, `/mem/context`, MCP and
     passthru, which keep the same default tiers.
+- **Agents no longer orient themselves before acting.**
+  - **Why:** an agent is reached by what it owes and what it is given: messages, requests and
+    assignments arrive as World Events. Looking around and reading a brief spent model turns on
+    nothing those turns needed. In the live world, agents answered requests without orienting first,
+    yet orientation reads were among their most frequent commands.
+  - **Prompts:**
+    - The system prompt no longer routes agents to "observe" with `look` and `brief`, or to find work
+      by polling (`work`, `next`, `task list`). Work reaches them as World Events; with none, they
+      advance their focus or rest. `work` lists open work when they choose new work.
+    - The first-turn prompt starts from what is owed and the agent's focus, not "inspect your
+      surroundings and world brief".
+    - The idle prompt and `[No Focus]` say rest or `work`, not `brief`.
+    - The live command roster no longer offers `look`, `brief`, `next` or `orient`.
+    - The seeded focus no longer starts with "get oriented".
+  - **Harness:**
+    - The discovery turn's six free orientation reads are gone.
+    - `marina_brief` is no longer a resident tool (still loadable by name).
+    - The harness no longer pulls `quest status` for an `[Active Objective]` section.
+  - **Engine:**
+    - An agent's login no longer runs `look` and `brief` on its behalf. It gets the structured
+      onboarding payload and one line on how work reaches it; MCP login says the same.
+    - New agent accounts are no longer subscribed to periodic brief pulses.
+  - **People:** their login, `look`, `brief` and pulses are unchanged, and every command remains
+    available to agents.
 - **Agents see message ids by default (`MARINA_PEER_RENDER=ids`).**
   - A peer's message still reaches the model as the server's one line, with Marina's stamp in front:
     a channel post's id and what it answers (`[#general post:3041 re:post:3040] Critic: …`), or what

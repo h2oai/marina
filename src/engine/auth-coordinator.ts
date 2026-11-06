@@ -419,9 +419,11 @@ export class AuthCoordinator {
       }
     }
 
-    // Auto-subscribe new users to brief compass and set first-login flag
+    // Auto-subscribe new users to brief compass and set first-login flag. An
+    // agent is not polled with a brief: new work reaches it as World Events.
     if (isNewUser) {
-      this.host.briefs.subscribe(entity.id, 120);
+      if (!this.isAgentLogin(entity, this.host.connections.get(connId)))
+        this.host.briefs.subscribe(entity.id, 120);
       // Transient flag: consumed by sendCompass() in brief.ts to emit bootstrap packet
       entity.properties._isFirstLogin = true;
     }

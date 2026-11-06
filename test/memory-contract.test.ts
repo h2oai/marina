@@ -97,8 +97,9 @@ describe("MEMORY contract in the system prompt", () => {
     // (4) supersede, don't delete
     expect(block).toContain("Supersede, don't delete");
     expect(block).toContain("`memory note correct <id> <text>`");
-    // (5) health
-    expect(block).toContain("`orient`");
+    // (5) health is pushed (`[Memory Health]`), so the contract does not send
+    // the agent to read it.
+    expect(block).not.toContain("`orient`");
   });
 
   it("stays within the token cap in both the gated and ungated renderings", () => {

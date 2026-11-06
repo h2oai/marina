@@ -3,16 +3,10 @@
 /**
  * A resumed agent's orientation turn: the adapter states what it already
  * restored (focus and loop preferences) so the turn does not re-read it, and
- * read-only orientation calls do not count against the per-run tool cap
- * (`isOrientationRead`, `ORIENTATION_FREE_READS`).
+ * it starts from what is owed and its focus, not from looking around.
  */
 import { describe, expect, it } from "bun:test";
-import {
-  defaultLoopPreferences,
-  describeLoadedState,
-  isOrientationRead,
-  ORIENTATION_FREE_READS,
-} from "../src/agent/loop-preferences";
+import { defaultLoopPreferences, describeLoadedState } from "../src/agent/loop-preferences";
 import { getLeanDiscoveryPrompt } from "../src/agent/prompts/lean-system";
 
 describe("describeLoadedState", () => {
@@ -43,49 +37,11 @@ describe("describeLoadedState", () => {
   });
 });
 
-describe("isOrientationRead", () => {
-  it("accepts read-only orientation commands and tools", () => {
-    for (const command of [
-      "look",
-      "brief",
-      "recall standby note",
-      "task list",
-      "task info 17",
-      "tell inbox",
-      "channel history general",
-      "chronicle pending",
-      "memory get focus",
-      "memory kv get rest",
-      "work",
-    ])
-      expect(isOrientationRead("marina_command", { command })).toBe(true);
-    expect(isOrientationRead("marina_brief", {})).toBe(true);
-    expect(isOrientationRead("marina_look", {})).toBe(true);
-    expect(isOrientationRead("memory", { action: "get", key: "focus" })).toBe(true);
-    expect(isOrientationRead("memory", { action: "recall", query: "x" })).toBe(true);
-  });
-
-  it("never exempts a write, a send or a spend", () => {
-    for (const command of [
-      "task claim 17",
-      "memory set focus x",
-      "memory delete rest",
-      "tell Builder hi",
-      "channel send general hello",
-      "say hello",
-      "forecast will it rain",
-      "build code workbench/start",
-      "lookup", // not `look`: the word boundary matters
-    ])
-      expect(isOrientationRead("marina_command", { command })).toBe(false);
-    expect(isOrientationRead("memory", { action: "rest", content: "why" })).toBe(false);
-    expect(isOrientationRead("memory", { action: "set", key: "focus" })).toBe(false);
-    expect(isOrientationRead("marina_channel", { action: "send" })).toBe(false);
-    expect(isOrientationRead("marina_command", {})).toBe(false);
-  });
-
-  it("the free-read allowance is bounded", () => {
-    expect(ORIENTATION_FREE_READS).toBeGreaterThan(0);
-    expect(ORIENTATION_FREE_READS).toBeLessThanOrEqual(8);
+describe("an agent does not look around to start", () => {
+  it("the first-turn prompt starts from what is in hand, not the surroundings or a brief", () => {
+    const p = getLeanDiscoveryPrompt();
+    expect(p).not.toMatch(/surroundings|world brief/);
+    expect(p).toContain("answer what is owed");
+    expect(p).toContain("You do not need to look around first");
   });
 });

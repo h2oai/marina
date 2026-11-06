@@ -885,7 +885,10 @@ describe("MCP Server", () => {
       const sid = await initSession(url);
       const text = await toolCall(url, sid, "login", { name: "McpBot" });
       expect(text).toContain("Logged in as **McpBot**");
-      expect(text).toContain("Starting Room");
+      // An agent is not shown the room or a brief on arrival: it is told how
+      // work reaches it and where to look things up.
+      expect(text).not.toContain("Starting Room");
+      expect(text).toContain("reach you as they arrive");
     });
 
     it("should return session token on login", async () => {
@@ -904,10 +907,8 @@ describe("MCP Server", () => {
     it("should include quick reference in login output", async () => {
       const sid = await initSession(url);
       const text = await toolCall(url, sid, "login", { name: "RefBot" });
-      expect(text).toContain("think");
-      expect(text).toContain("memory");
-      expect(text).toContain("next");
-      expect(text).toContain("brief");
+      expect(text).toContain("`work`");
+      expect(text).toContain("help catalog");
       expect(text).toContain("context <query>");
     });
   });
