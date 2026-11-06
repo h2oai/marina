@@ -152,7 +152,12 @@ export function ChatMessageList({
           {name}
           {meta.channel && <span className="font-normal text-text-dim"> #{meta.channel}</span>}
         </span>
-        <MessageBody text={meta.body} viewer={viewer} className="min-w-0 flex-1" />
+        <MessageBody
+          text={meta.body}
+          viewer={viewer}
+          channel={meta.channel}
+          className="min-w-0 flex-1"
+        />
         <button
           type="button"
           onClick={() => copy(messageText(m), i)}
@@ -345,6 +350,7 @@ export function ChatMessageList({
         body={meta.body}
         timestamp={m.timestamp}
         where={where}
+        channel={meta.channel}
         mine={self || sentTell}
         tone={meta.tone}
         mentioned={mentioned}
@@ -373,6 +379,7 @@ export function ChatMessageList({
             colorName={message.senderName}
             body={message.content}
             timestamp={message.createdAt}
+            channel={history.channel}
             mine={self}
             mentioned={!self && mentionsViewer(message.content, viewer)}
             grouped={grouped}
@@ -629,6 +636,7 @@ function ChatBubble({
   body,
   timestamp,
   where,
+  channel,
   mine,
   tone,
   mentioned,
@@ -643,6 +651,8 @@ function ChatBubble({
   body: string;
   timestamp?: number;
   where?: string;
+  /** The channel it was posted in: a bare `#12` in it may be one of its posts. */
+  channel?: string;
   mine: boolean;
   tone?: SpeechMeta["tone"];
   mentioned: boolean;
@@ -697,7 +707,7 @@ function ChatBubble({
               )}
             </div>
           )}
-          <MessageBody text={body} viewer={viewer} />
+          <MessageBody text={body} viewer={viewer} channel={channel} />
           <div className="mt-0.5 text-right text-[10px] leading-none text-text-dim tabular-nums">
             {formatTimestamp(timestamp)}
           </div>

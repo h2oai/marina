@@ -5,7 +5,7 @@ import { getStanding } from "../../agent/standing";
 import { listWorkItems } from "../../coordination/work-loop";
 import { commandManifest } from "../../engine/command-manifest";
 import type { DiscoveryResult, EntityPreview, QuestProgress } from "../discovery-types";
-import { authorizeEntityRead, type DashboardRouteContext, json } from "./shared";
+import { authorizeEntityRead, type DashboardRouteContext, json, readsChannel } from "./shared";
 
 /** Read-only discovery. Execution still goes through the ordinary command router. */
 export async function handleDiscoveryRoutes(
@@ -138,7 +138,7 @@ export async function handleDiscoveryRoutes(
     }
     for (const channel of db
       .getAllChannels()
-      .filter((c) => matches(c.name))
+      .filter((c) => matches(c.name) && readsChannel(engine, db, callerId, c.id))
       .slice(0, 10)) {
       results.push({
         kind: "channel",

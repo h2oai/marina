@@ -368,7 +368,7 @@ export function operatorRequiredRefusal(
 }
 
 /** An operator: a person at sovereign rank. A rank-9 agent is not one. */
-function isOperator(entity: Entity | undefined): boolean {
+export function isOperator(entity: Entity | undefined): boolean {
   return !!entity && getRank(entity) >= ADMIN_RANK && principalKind(entity) === "person";
 }
 
