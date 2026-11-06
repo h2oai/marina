@@ -15,6 +15,7 @@ import { listWorkItems } from "../../coordination/work-loop";
 import { canvasReaderFor, mayReadAsset } from "../../engine/canvas-access";
 import { allRecipeNames, getRecipe } from "../../engine/commands/usecase";
 import type { Engine } from "../../engine/engine";
+import { sameResidentName } from "../../engine/entity-name";
 import { evolutionSessionsWithEvidence } from "../../engine/evolution-qualification";
 import type { MarinaDB, MediaJobRow } from "../../persistence/database";
 import { supervisedResidentsEnabled } from "../../routing/residents";
@@ -370,6 +371,21 @@ function getChannelMessages(db: MarinaDB, channelName: string, url: URL): Respon
   return json({ items, total: db.countChannelMessages(channel.id) });
 }
 
+function getChannelMessageDetail(db: MarinaDB, channelName: string, id: number): Response {
+  const channel = db.getAllChannels().find((c) => c.name === channelName);
+  const row =
+    channel && Number.isSafeInteger(id) ? db.getChannelMessage(channel.id, id) : undefined;
+  if (!row) return json({ error: "Message not found" }, 404);
+  return json({
+    id: row.id,
+    channel: channelName,
+    sender_name: row.sender_name,
+    content: row.content,
+    created_at: row.created_at,
+    ...(row.cause ? { cause: row.cause } : {}),
+  });
+}
+
 function getGroupDetail(db: MarinaDB, groupName: string): Response {
   const groups = db.getAllGroups();
   const group = groups.find((g) => g.name === groupName);
@@ -495,6 +511,42 @@ export async function handleCoordinationRoutes(
   const boardPostsMatch = url.pathname.match(/^\/api\/coordination\/boards\/(.+)\/posts$/);
   if (boardPostsMatch && db) {
     return getBoardPosts(db, decodeURIComponent(boardPostsMatch[1]!), url);
+  }
+
+  // One post by id, for a reference preview (`post:12`, `#12` in a channel):
+  // the same readers as the channel's message list.
+  const channelMessageMatch = url.pathname.match(
+    /^\/api\/coordination\/channels\/([^/]+)\/messages\/(\d+)$/,
+  );
+  if (channelMessageMatch && method === "GET" && db) {
+    return getChannelMessageDetail(
+      db,
+      decodeURIComponent(channelMessageMatch[1]!),
+      Number(channelMessageMatch[2]),
+    );
+  }
+
+  // One tell by id: only its sender or recipient reads it; anyone else gets
+  // the same 404 as a missing id, so a preview never reveals that it exists.
+  const tellMatch = url.pathname.match(/^\/api\/coordination\/tells\/(\d+)$/);
+  if (tellMatch && method === "GET" && db) {
+    const row = db.getDirectMessage(Number(tellMatch[1]));
+    const viewer = engine.entities.get(callerId)?.name;
+    if (
+      !row ||
+      !viewer ||
+      !(sameResidentName(row.sender_name, viewer) || sameResidentName(row.target_name, viewer))
+    )
+      return json({ error: "Message not found" }, 404);
+    return json({
+      id: row.id,
+      sender_name: row.sender_name,
+      target_name: row.target_name,
+      content: row.content,
+      created_at: row.created_at,
+      status: row.status,
+      ...(row.cause ? { cause: row.cause } : {}),
+    });
   }
 
   const channelMessagesMatch = url.pathname.match(

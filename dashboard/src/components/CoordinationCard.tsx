@@ -591,7 +591,13 @@ export function ChannelDetailView({ name }: { name: string }) {
                     {formatTime(m.created_at)}
                   </span>
                 </div>
-                <MessageBody text={m.content} viewer={viewer} dense className="text-text" />
+                <MessageBody
+                  text={m.content}
+                  viewer={viewer}
+                  channel={data.name}
+                  dense
+                  className="text-text"
+                />
               </div>
             ))}
           </div>

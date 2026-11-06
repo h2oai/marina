@@ -20,6 +20,7 @@ import {
   parseMessage,
   type Span,
 } from "../../../src/sdk/message-format";
+import { referenceKey } from "../lib/reference-key";
 
 export interface MessageBodyProps {
   text: string;
@@ -32,6 +33,8 @@ export interface MessageBodyProps {
   className?: string;
   /** A parsed message, when the caller already has one (avoids a second parse). */
   parsed?: ParsedMessage;
+  /** The channel the message was posted in: a bare `#12` may then be a post of it. */
+  channel?: string;
 }
 
 const TONE: Record<"good" | "bad" | "warn", string> = {
@@ -55,7 +58,13 @@ export function referenceHref(
   return undefined;
 }
 
-function SpanView({ span, viewer }: { span: Span; viewer?: string | null }): ReactNode {
+interface SpanContext {
+  viewer?: string | null;
+  channel?: string;
+}
+
+function SpanView({ span, ctx }: { span: Span; ctx: SpanContext }): ReactNode {
+  const { viewer } = ctx;
   switch (span.kind) {
     case "text":
       return span.raw;
@@ -80,6 +89,9 @@ function SpanView({ span, viewer }: { span: Span; viewer?: string | null }): Rea
       const you = !!viewer && span.name.toLowerCase() === viewer.toLowerCase();
       return (
         <span
+          data-entity-preview={span.name}
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: focus shows the person's preview card
+          tabIndex={0}
           className={
             you
               ? "rounded bg-warning/25 px-1 font-semibold text-text-bright"
@@ -93,15 +105,27 @@ function SpanView({ span, viewer }: { span: Span; viewer?: string | null }): Rea
     case "ref":
     case "channel": {
       const href = referenceHref(span);
+      const key = referenceKey(span, { channel: ctx.channel });
       const cls =
         "inline-block whitespace-nowrap rounded bg-primary/10 px-1 font-medium text-primary leading-snug";
-      return href ? (
-        <a href={href} className={`${cls} hover:bg-primary/20`} title={`Open ${span.raw}`}>
-          {span.raw}
-        </a>
-      ) : (
-        <span className={cls}>{span.raw}</span>
-      );
+      if (href)
+        return (
+          <a href={href} data-ref-preview={key} className={`${cls} hover:bg-primary/20`}>
+            {span.raw}
+          </a>
+        );
+      // No page of its own (a post, a tell, a bare #12): a click pins its preview.
+      if (key)
+        return (
+          <button
+            type="button"
+            data-ref-preview={key}
+            className={`${cls} cursor-pointer hover:bg-primary/20`}
+          >
+            {span.raw}
+          </button>
+        );
+      return <span className={cls}>{span.raw}</span>;
     }
     case "verdict":
       return (
@@ -115,17 +139,17 @@ function SpanView({ span, viewer }: { span: Span; viewer?: string | null }): Rea
       return <span className="font-semibold [font-variant-caps:all-small-caps]">{span.raw}</span>;
     case "strong":
       return (
-        <strong className="font-semibold text-text-bright">{spans(span.children, viewer)}</strong>
+        <strong className="font-semibold text-text-bright">{spans(span.children, ctx)}</strong>
       );
     case "em":
-      return <em>{spans(span.children, viewer)}</em>;
+      return <em>{spans(span.children, ctx)}</em>;
     case "aside":
-      return <span className="text-text-dim">({spans(span.children, viewer)})</span>;
+      return <span className="text-text-dim">({spans(span.children, ctx)})</span>;
     case "quote":
       return (
         <q className="font-mono text-[0.9em] text-text-bright/85 [quotes:none]">
           <span className="text-text-dim">“</span>
-          {spans(span.children, viewer)}
+          {spans(span.children, ctx)}
           <span className="text-text-dim">”</span>
         </q>
       );
@@ -150,31 +174,29 @@ function SpanView({ span, viewer }: { span: Span; viewer?: string | null }): Rea
   }
 }
 
-function spans(list: readonly Span[], viewer?: string | null): ReactNode[] {
+function spans(list: readonly Span[], ctx: SpanContext): ReactNode[] {
   return list.map((s, i) => (
     // Spans are a fixed sequence of the message: index keys are stable.
     // biome-ignore lint/suspicious/noArrayIndexKey: spans never reorder
-    <SpanView key={i} span={s} viewer={viewer} />
+    <SpanView key={i} span={s} ctx={ctx} />
   ));
 }
 
-function BlockView({ block, viewer }: { block: Block; viewer?: string | null }): ReactNode {
+function BlockView({ block, ctx }: { block: Block; ctx: SpanContext }): ReactNode {
   switch (block.kind) {
     case "paragraph":
       return (
         <p className="my-1 first:mt-0 last:mb-0 whitespace-pre-wrap">
           {block.label && (
-            <strong className="font-semibold text-text-bright">
-              {spans(block.label, viewer)}{" "}
-            </strong>
+            <strong className="font-semibold text-text-bright">{spans(block.label, ctx)} </strong>
           )}
-          {spans(block.spans, viewer)}
+          {spans(block.spans, ctx)}
         </p>
       );
     case "heading":
       return (
         <p className="mt-2 mb-1 font-semibold text-text-bright first:mt-0">
-          {spans(block.spans, viewer)}
+          {spans(block.spans, ctx)}
         </p>
       );
     case "list": {
@@ -182,9 +204,9 @@ function BlockView({ block, viewer }: { block: Block; viewer?: string | null }):
         // biome-ignore lint/suspicious/noArrayIndexKey: list items never reorder
         <li key={i} className="my-0.5 pl-0.5 whitespace-pre-wrap" value={item.n}>
           {item.label && (
-            <strong className="font-semibold text-text-bright">{spans(item.label, viewer)} </strong>
+            <strong className="font-semibold text-text-bright">{spans(item.label, ctx)} </strong>
           )}
-          {spans(item.spans, viewer)}
+          {spans(item.spans, ctx)}
         </li>
       ));
       return block.ordered ? (
@@ -196,7 +218,7 @@ function BlockView({ block, viewer }: { block: Block; viewer?: string | null }):
     case "quote":
       return (
         <blockquote className="my-1 border-l-2 border-border pl-2 italic text-text-dim whitespace-pre-wrap">
-          {spans(block.spans, viewer)}
+          {spans(block.spans, ctx)}
         </blockquote>
       );
     case "code":
@@ -217,7 +239,7 @@ function BlockView({ block, viewer }: { block: Block; viewer?: string | null }):
                     key={i}
                     className="border-b border-border px-2 py-0.5 text-left font-semibold"
                   >
-                    {spans(c, viewer)}
+                    {spans(c, ctx)}
                   </th>
                 ))}
               </tr>
@@ -229,7 +251,7 @@ function BlockView({ block, viewer }: { block: Block; viewer?: string | null }):
                   {row.map((c, i) => (
                     // biome-ignore lint/suspicious/noArrayIndexKey: table cells never reorder
                     <td key={i} className="border-b border-border/50 px-2 py-0.5">
-                      {spans(c, viewer)}
+                      {spans(c, ctx)}
                     </td>
                   ))}
                 </tr>
@@ -250,7 +272,9 @@ export function MessageBody({
   dense = false,
   className = "",
   parsed: given,
+  channel,
 }: MessageBodyProps) {
+  const ctx = useMemo(() => ({ viewer, channel }), [viewer, channel]);
   const parsed = useMemo(() => given ?? parseMessage(text), [given, text]);
   const [open, setOpen] = useState(false);
   const folded = fold && parsed.fold && !open;
@@ -267,7 +291,7 @@ export function MessageBody({
       >
         {parsed.blocks.map((b, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: blocks never reorder
-          <BlockView key={i} block={b} viewer={viewer} />
+          <BlockView key={i} block={b} ctx={ctx} />
         ))}
       </div>
       {fold && parsed.fold && (

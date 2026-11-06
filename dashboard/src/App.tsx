@@ -21,6 +21,7 @@ import {
   RecentActivity,
   ShortcutHelp,
 } from "./components/OperatorFeedback";
+import { ReferencePreview } from "./components/ReferencePreview";
 import { WorkspaceCanvas as CanvasWorkspace } from "./components/workspace-canvas";
 import { useWorkspacePanels } from "./components/workspace-panels-registry";
 import { useSystem, useWorld } from "./hooks/use-api";
@@ -423,6 +424,7 @@ export default function App() {
         </p>
       )}
       <EntityPreviewTooltip />
+      <ReferencePreview />
       <RecentActivity onOpen={() => setDrawer("pulse")} />
       {searchOpen && <DiscoveryPalette onClose={() => setSearchOpen(false)} />}
       {shortcutsOpen && <ShortcutHelp onClose={() => setShortcutsOpen(false)} />}

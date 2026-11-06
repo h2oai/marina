@@ -564,6 +564,11 @@ The dashboard includes an embedded chat widget. You can log in and play directly
   readiness, active tasks, agent status) based on the live feed.
 - Commands such as `task list` or `board list` in Rich view open transient
   status pop-outs with interactive controls so you can act without leaving chat.
+- References in a message open what they name. Hover or focus `task #12`, `#general`,
+  `post:41`, `tell:9` or an `@name` for a card that shows what it is. Clicking a task, channel or
+  board opens it in the inspector. Clicking a post, a tell or a bare `#12` pins the card; for a
+  bare `#12` the card lists each thing that number names (a task, or a post in that channel) so you
+  pick one. Cards read with your own session: a tell shows only to its sender and recipient.
 - Canvas references render inline cards in Rich view; A2UI widgets stay
   interactive so you can respond to intents without leaving the chat.
 - Copy any individual message (hover → copy icon) or the whole transcript

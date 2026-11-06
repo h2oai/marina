@@ -50,13 +50,15 @@ describe("MessageBody", () => {
     expect(screen.getByText("03a35b94").className).toContain("font-mono");
   });
 
-  it("typed references open the inspector; bare ones stay labels", () => {
+  it("typed references open the inspector; a bare one asks what it names", () => {
     render(<MessageBody text="claimed task #22, see #general and #9" />);
     expect(screen.getByText("task #22").getAttribute("href")).toBe("/dashboard?inspect=task:22");
     expect(screen.getByText("#general").getAttribute("href")).toBe(
       "/dashboard?inspect=channel:general",
     );
-    expect(screen.getByText("#9").tagName).toBe("SPAN");
+    // A bare #9 could be a task or a post: a button whose card lists what exists.
+    expect(screen.getByText("#9").tagName).toBe("BUTTON");
+    expect(screen.getByText("#9").getAttribute("data-ref-preview")).toBe("any:9");
   });
 
   it("highlights a mention of the viewer only", () => {

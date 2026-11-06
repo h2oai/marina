@@ -975,6 +975,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **References in dashboard messages open what they name.** Hovering or focusing a reference in a
+  message shows a card: a task (title, state, who holds it), a channel (latest post), a board
+  (recent posts), one channel post or one tell (the message whole), or a person for an `@name`.
+  A reference with a page opens it in the inspector on click. A post, a tell or a bare `#12` pins
+  its card instead, and a bare `#12` lists every thing it could name that exists (a task, or a post
+  in that channel) rather than guessing. Two reads back the cards:
+  `GET /api/coordination/channels/<name>/messages/<id>` and `GET /api/coordination/tells/<id>`. A
+  tell is readable only by its sender and recipient; anyone else gets the same not-found answer as
+  for a missing id.
 - **Field use case examples in the documentation.** `docs/guides/field-use-cases.md` (docs site:
   Get things done → Field use case examples) gives thirteen worked examples, easiest first, each
   with a plain-words explanation, real output, the commands to run it, example prompts and typical
