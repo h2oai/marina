@@ -895,7 +895,17 @@ export async function handleCoordinationListRoutes(
     // Without `paged`, returns a bare array (back-compat for other consumers).
     if (url.searchParams.get("paged")) {
       const limit = clampLimit(url.searchParams.get("limit"), 50);
-      return json({ items: db.listTasks({ limit }), total: db.countTasks() });
+      // Each row says how much work is in it: a task stays `open` until its
+      // creator approves, so an open task with submissions is awaiting review.
+      const items = db.listTasks({ limit }).map((task) => {
+        const claims = db.getTaskClaims(task.id);
+        return {
+          ...task,
+          claimed: claims.filter((c) => c.status === "claimed").length,
+          submitted: claims.filter((c) => c.status === "submitted").length,
+        };
+      });
+      return json({ items, total: db.countTasks() });
     }
     return json(db.listTasks({ limit: 50 }));
   }

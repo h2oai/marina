@@ -245,6 +245,50 @@ describe("seeded tasks are reviewable", () => {
     expect(db.getUserByName("Critic")?.rank ?? 0).toBe(0);
   });
 
+  it("hands seeded tasks to the account the reviewer logs in as", () => {
+    fixture = createTestEngine();
+    const { db } = fixture;
+    seedProject(db, {
+      name: "Diligence",
+      description: "a seeded team whose agent names carry a hyphen",
+      orchestration: "pipeline",
+      tasks: [{ title: "memo", description: "x", validationMode: "single" }],
+      poolNotes: [],
+    });
+    const project = db.getProjectByName("Diligence")!;
+    const [task] = db.listTasks({ groupId: project.group_id!, limit: 10 });
+    assignSeededTaskReviewer(db, "Diligence", "Diligence-Lead");
+    const login = db.getUserByName("DiligenceLead");
+    expect(login).toBeDefined();
+    expect(db.getTask(task!.id)?.creator_name).toBe("DiligenceLead");
+    expect(db.getUserByName("Diligence-Lead")).toBeFalsy();
+  });
+
+  it("moves tasks an earlier release gave the unsanitized reviewer name", () => {
+    fixture = createTestEngine();
+    const { db } = fixture;
+    seedProject(db, {
+      name: "Old Diligence",
+      description: "seeded under the hyphenated account",
+      orchestration: "pipeline",
+      tasks: [
+        { title: "open one", description: "x", validationMode: "single" },
+        { title: "done one", description: "y", validationMode: "single" },
+      ],
+      poolNotes: [],
+    });
+    const project = db.getProjectByName("Old Diligence")!;
+    const [open, done] = db.listTasks({ groupId: project.group_id!, limit: 10 });
+    const stale = crypto.randomUUID();
+    db.createUser({ id: stale, name: "Diligence-Lead" });
+    db.setTaskCreator(open!.id, stale, "Diligence-Lead");
+    db.setTaskCreator(done!.id, stale, "Diligence-Lead");
+    db.updateTaskStatus(done!.id, "completed");
+    assignSeededTaskReviewer(db, "Old Diligence", "Diligence-Lead");
+    expect(db.getTask(open!.id)?.creator_name).toBe("DiligenceLead");
+    expect(db.getTask(done!.id)?.creator_name).toBe("Diligence-Lead");
+  });
+
   it("posts the Demo Pulse kickoff once, keyed on a stored flag", () => {
     fixture = createTestEngine();
     const { db, engine } = fixture;
