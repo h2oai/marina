@@ -155,48 +155,59 @@ export function error(text: string): string {
 
 // ─── Communication Formatters ───────────────────────────────────────────────
 
+/**
+ * A spoken body's continuation lines hang two columns in, so a multi-line
+ * message never puts a line at column 0 where it could pass for another
+ * speaker's `Name says:` or `[channel] Name:` line.
+ */
+export function hang(msg: string): string {
+  if (!/[\r\n]/.test(msg)) return msg;
+  // Blank lines stay empty (no trailing spaces); every other line hangs.
+  return msg.replace(/\r\n?/g, "\n").replace(/\n(?=[^\n])/g, "\n  ");
+}
+
 /** "Alice says: hello" — colored name */
 export function say(name: string, msg: string): string {
-  return `${entity(name)} says: ${msg}`;
+  return `${entity(name)} says: ${hang(msg)}`;
 }
 
 /** "You say: hello" — dim prefix */
 export function saySelf(msg: string): string {
-  return `${A.dim}You say:${R} ${msg}`;
+  return `${A.dim}You say:${R} ${hang(msg)}`;
 }
 
 /** Tell messages — magenta arrow prefix */
 export function tell(name: string, msg: string, dir: "from" | "to"): string {
   const arrow = `${A.magenta}>${R}`;
   if (dir === "from") {
-    return `${arrow} ${entity(name)} tells you: ${msg}`;
+    return `${arrow} ${entity(name)} tells you: ${hang(msg)}`;
   }
-  return `${arrow} You tell ${entity(name)}: ${msg}`;
+  return `${arrow} You tell ${entity(name)}: ${hang(msg)}`;
 }
 
 /** "Someone shouts: HEY" — bold bright yellow, stands out */
 export function shout(name: string, msg: string): string {
-  return `${A.bold}${A.brightYellow}${name} shouts: ${msg}${R}`;
+  return `${A.bold}${A.brightYellow}${name} shouts: ${hang(msg)}${R}`;
 }
 
 /** "You shout: HEY" — bold bright yellow */
 export function shoutSelf(msg: string): string {
-  return `${A.bold}${A.brightYellow}You shout: ${msg}${R}`;
+  return `${A.bold}${A.brightYellow}You shout: ${hang(msg)}${R}`;
 }
 
 /** "* Alice waves" — italic cyan */
 export function emote(name: string, action: string): string {
-  return `${A.italic}${A.cyan}* ${name} ${action}${R}`;
+  return `${A.italic}${A.cyan}* ${name} ${hang(action)}${R}`;
 }
 
 /** "[general] Alice: hello" — green channel tag + colored name */
 export function channel(ch: string, name: string, msg: string): string {
-  return `${A.green}[${ch}]${R} ${entity(name)}: ${msg}`;
+  return `${A.green}[${ch}]${R} ${entity(name)}: ${hang(msg)}`;
 }
 
 /** "[general] You: hello" — green channel tag */
 export function channelSelf(ch: string, msg: string): string {
-  return `${A.green}[${ch}]${R} You: ${msg}`;
+  return `${A.green}[${ch}]${R} You: ${hang(msg)}`;
 }
 
 /** "Guide says: ..." — bold magenta NPC name */

@@ -6,7 +6,7 @@ import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { failCommandResponse, refuseCommand } from "../command-response";
 import { envelopeFields, type MessageCause, messageEnvelope } from "../message-envelope";
-import { parseModifiers } from "../parse-input";
+import { parseModifiers, restRaw } from "../parse-input";
 
 export interface TellDeps {
   getEntity: (id: EntityId) => Entity | undefined;
@@ -249,7 +249,9 @@ export function tellCommand(deps: TellDeps): CommandDef {
         return;
       }
       const ttl = values.ttl as number | undefined;
-      const message = rest.join(" ");
+      // Leading modifiers are a prefix of the tokens; the body after them is
+      // kept as typed, line breaks included.
+      const message = restRaw(input, input.tokens.length - rest.length);
       if (!message) {
         ctx.send(input.entity, `Tell whom what? ${TELL_USAGE}`);
         return;
@@ -302,7 +304,7 @@ export function replyCommand(deps: TellDeps): CommandDef {
           failCommandResponse(`No tell #${id} addressed to you.`);
           return;
         }
-        const message = input.tokens.slice(1).join(" ");
+        const message = restRaw(input, 1);
         if (!message) {
           refuseCommand(ctx, input.entity, `Reply what? Usage: re #${id} <message>`);
           return;
@@ -335,7 +337,7 @@ export function replyCommand(deps: TellDeps): CommandDef {
         return;
       }
 
-      const message = input.tokens.join(" ");
+      const message = restRaw(input, 0);
       const priorId = Number(sender.properties.last_tell_id);
       // The reply's cause is the tell it answers (the explicit reply path of
       // src/engine/message-envelope.ts) — only a stored tell addressed to us.

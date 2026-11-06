@@ -1,12 +1,14 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { flattenPeerText } from "../../agent/peer-text";
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { channelSelf, header, separator } from "../../net/ansi";
 import { modelResponseError } from "../../net/model-api/response-envelope";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { refuseCommand } from "../command-response";
 import { envelopeFields, messageEnvelope } from "../message-envelope";
+import { restRaw } from "../parse-input";
 
 export function channelCommand(
   channels: ChannelManager,
@@ -209,10 +211,8 @@ export function channelCommand(
             return;
           }
           // `channel send <name> | <message>`: a leading `|` only separates.
-          const message = tokens
-            .slice(2)
-            .join(" ")
-            .replace(/^\|\s*/, "");
+          // The body is kept as typed, line breaks included (`restRaw`).
+          const message = restRaw(input, 2).replace(/^\|\s*/, "");
           if (!message) {
             refuseCommand(ctx, input.entity, "Usage: channel send <name> <message>");
             return;
@@ -277,12 +277,26 @@ export function channelCommand(
             ctx.send(input.entity, `No messages in channel "${name}".`);
             return;
           }
+          // One line per message in the text (a body's line breaks show as
+          // ` ⏎ `, so no message can pass for another sender's line); clients
+          // that render conversations read the structured `channelHistory`.
           const lines = [
             header(`History: ${name}`),
             separator(),
-            ...history.map((m) => `  ${m.senderName}: ${m.content}`),
+            ...history.map((m) => `  ${m.senderName}: ${flattenPeerText(m.content)}`),
           ];
-          ctx.send(input.entity, lines.join("\n"));
+          ctx.send(input.entity, lines.join("\n"), undefined, {
+            channelHistory: {
+              channel: name,
+              messages: history.map((m) => ({
+                id: m.id,
+                senderName: m.senderName,
+                content: m.content,
+                createdAt: m.createdAt,
+                ...(m.cause ? { cause: m.cause } : {}),
+              })),
+            },
+          });
           return;
         }
 

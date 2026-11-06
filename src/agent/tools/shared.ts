@@ -15,7 +15,7 @@ import type { MarinaClient } from "../../sdk/client";
 import type { Perception } from "../../types";
 import { stripCommandPleasantry } from "../acknowledgement";
 import type { GameStateManager } from "../game-state";
-import { escapeHarnessMarkers, fenceToolResult } from "../peer-text";
+import { escapeHarnessMarkers, fenceToolResult, flattenPeerText, isPeerSpeech } from "../peer-text";
 import { toolResultTrust } from "../tool-policy";
 
 // ─── Shared Context ─────────────────────────────────────────────────────────
@@ -86,8 +86,10 @@ export function formatPerceptions(perceptions: Perception[]): string {
       .map((p) => {
         const text = (p.data?.text as string) ?? "";
         const message = (p.data?.message as string) ?? "";
-        // Agents read text, not terminal colour codes.
-        return stripAnsi(text || message) || `[${p.kind}]`;
+        // Agents read text, not terminal colour codes, and a peer's message
+        // as one line: its line breaks show as ` ⏎ ` (see `isPeerSpeech`).
+        const plain = stripAnsi(text || message);
+        return (isPeerSpeech(p) ? flattenPeerText(plain) : plain) || `[${p.kind}]`;
       })
       .filter(Boolean)
       .join("\n\n") || "(no response)"
