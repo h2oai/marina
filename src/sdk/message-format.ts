@@ -31,7 +31,8 @@ export type Span =
   | { kind: "text"; raw: string }
   /** `code`, and identifiers such as `MARINA_AUTONOMY`. `text` is what to show. */
   | { kind: "code"; raw: string; text: string }
-  | { kind: "url"; raw: string; href: string }
+  /** A bare URL, or a Markdown link `[label](https://…)` (`label` set; only http(s) targets). */
+  | { kind: "url"; raw: string; href: string; label?: string }
   | { kind: "mention"; raw: string; name: string }
   /** `#22`, `task #22`, `note #23676`, `#181-#186`, `task:22`. `refKind` when the text names it. */
   | { kind: "ref"; raw: string; refKind?: string; id: string }
@@ -170,6 +171,9 @@ function matchClose(t: string, i: number, open: string, close: string, max: numb
 }
 
 const URL_AT = /^https?:\/\/[^\s<>"'`]+/;
+/** `[label](https://…)`: one line, an http(s) target, one level of parentheses inside it. */
+const MD_LINK_AT =
+  /^\[([^\]\n]{1,200})\]\((https?:\/\/[^\s()<>"'`]+(?:\([^\s()<>"'`]*\)[^\s()<>"'`]*)*)\)/;
 function urlAt(t: string, i: number): string | undefined {
   const m = URL_AT.exec(t.slice(i, i + 2048));
   if (!m) return undefined;
@@ -250,6 +254,14 @@ export function parseInline(t: string, depth = 0): Span[] {
       if (code) {
         push({ kind: "code", raw: t.slice(i, code.end), text: code.body });
         i = code.end;
+        continue;
+      }
+    }
+    if (ch === "[") {
+      const link = MD_LINK_AT.exec(t.slice(i, i + 2400));
+      if (link) {
+        push({ kind: "url", raw: link[0], href: link[2]!, label: link[1]!.trim() });
+        i += link[0].length;
         continue;
       }
     }
@@ -654,6 +666,8 @@ export function spansText(spans: readonly Span[]): string {
       switch (s.kind) {
         case "code":
           return s.text;
+        case "url":
+          return s.label ?? s.raw;
         case "strong":
         case "em":
           return spansText(s.children);
@@ -704,6 +718,20 @@ export function allSpans(message: ParsedMessage): Span[] {
       for (const row of [b.header, ...b.rows]) for (const c of row) walk(c);
   }
   return out;
+}
+
+/**
+ * Whether text is written in Markdown (a heading, bold, a link or a fenced block), so a
+ * surface that shows command output preformatted should render it through the grammar
+ * instead. Tables and aligned columns written as plain text stay preformatted.
+ */
+export function hasMarkdown(text: string): boolean {
+  return (
+    /^#{1,6} \S/m.test(text) ||
+    /\*\*[^*\s][^*\n]*\*\*/.test(text) ||
+    /\[[^\]\n]+\]\(https?:\/\//.test(text) ||
+    /^```/m.test(text)
+  );
 }
 
 /** Does this message address `viewer` with an @mention? */

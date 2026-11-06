@@ -12,6 +12,7 @@ import {
   allSpans,
   type Block,
   excerpt,
+  hasMarkdown,
   messageMentions,
   parseInline,
   parseMessage,
@@ -281,5 +282,41 @@ describe("properties", () => {
       }),
       propertyOptions(100),
     );
+  });
+});
+
+describe("Markdown links", () => {
+  it("reads [label](https://…) as one link span that keeps every character", () => {
+    const text =
+      "See the [Commission factpage](https://digital-strategy.ec.europa.eu/en/x_(y)) now.";
+    const spans = parseInline(text);
+    const link = spans.find((s) => s.kind === "url");
+    expect(link).toMatchObject({
+      kind: "url",
+      label: "Commission factpage",
+      href: "https://digital-strategy.ec.europa.eu/en/x_(y)",
+    });
+    expect(spansRaw(spans)).toBe(text);
+    expect(spansText(spans)).toBe("See the Commission factpage now.");
+  });
+
+  it("never links a non-http target", () => {
+    const spans = parseInline("[click](javascript:alert(1)) and [x](data:text/html,hi)");
+    expect(spans.some((s) => s.kind === "url")).toBe(false);
+  });
+});
+
+describe("hasMarkdown", () => {
+  it("is true for headings, bold, links and fences", () => {
+    expect(hasMarkdown("## 1. Enforcement started")).toBe(true);
+    expect(hasMarkdown("You chose **Vendor B**.")).toBe(true);
+    expect(hasMarkdown("([FAQ](https://example.com/faq))")).toBe(true);
+    expect(hasMarkdown("```ts\nx\n```")).toBe(true);
+  });
+
+  it("is false for preformatted command output", () => {
+    expect(hasMarkdown('Tools on "deepwiki"\n  read_wiki_contents — View docs')).toBe(false);
+    expect(hasMarkdown("#12 [score=1.35 imp=6] (Builder): Task #1 launch plan")).toBe(false);
+    expect(hasMarkdown("a * b * c")).toBe(false);
   });
 });

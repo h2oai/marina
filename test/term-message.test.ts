@@ -135,6 +135,17 @@ describe("command output", () => {
     expect(coloured).not.toContain(theme.params("success"));
   });
 
+  test("a Markdown link shows its label and, without terminal links, its address", () => {
+    const plain = paintSpans(parseInline("see [the FAQ](https://example.com/faq)"), theme, {});
+    expect(plain).toContain("the FAQ");
+    expect(plain).toContain("(https://example.com/faq)");
+    expect(plain).not.toContain("[the FAQ]");
+    const linked = paintSpans(parseInline("see [the FAQ](https://example.com/faq)"), theme, {
+      link: (label, url) => `<${label}|${url}>`,
+    });
+    expect(linked).toContain("<the FAQ|https://example.com/faq>");
+  });
+
   test("an aside's colour comes back after a ref inside it", () => {
     const out = paintSpans(parseInline("x (see #12 now) y"), theme, {});
     const muted = `${ESC}[${theme.params("muted")}m`;

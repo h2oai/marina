@@ -28,6 +28,23 @@ describe("MessageBody", () => {
     expect(screen.getByText("Not claimed:").tagName).toBe("STRONG");
   });
 
+  it("renders a Markdown link as its label, linking only to http(s)", () => {
+    const { container } = render(
+      <MessageBody
+        text={
+          "Duties apply ([Commission factpage](https://example.eu/gpai)). [bad](javascript:alert(1))"
+        }
+        fold={false}
+      />,
+    );
+    const links = [...container.querySelectorAll("a")];
+    expect(links).toHaveLength(1);
+    expect(links[0]!.textContent).toBe("Commission factpage");
+    expect(links[0]!.getAttribute("href")).toBe("https://example.eu/gpai");
+    expect(container.textContent).not.toContain("](https://");
+    expect(container.textContent).toContain("[bad](javascript:alert(1))");
+  });
+
   it("renders a message's markup as text, never as HTML", () => {
     const { container } = render(
       <MessageBody text={'<img src=x onerror="alert(1)"> <b>bold</b> **real**'} />,
