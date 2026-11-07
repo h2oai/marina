@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { FOCUS_MAX_CHARS, focusValueText } from "../../agent/loop-preferences";
 import { memoryResult } from "../../memory/command-result";
 import {
   adoptProposal,
@@ -1014,6 +1015,17 @@ function runKv(
       if (!key || !value) {
         refuseCommand(ctx, entityId, `Usage: memory kv set <key> <value> ${canon("set")}`.trim());
         return;
+      }
+      if (/^(focus|goal)$/i.test(key)) {
+        const length = focusValueText(value).length;
+        if (length > FOCUS_MAX_CHARS) {
+          refuseCommand(
+            ctx,
+            entityId,
+            `Not set: a ${key.toLowerCase()} is one objective of at most ${FOCUS_MAX_CHARS} characters (this one has ${length}). Keep the objective here and put the details in a note: memory note <text>.`,
+          );
+          return;
+        }
       }
       db.setCoreMemory(entity.name, key, value);
       ctx.send(

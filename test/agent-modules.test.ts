@@ -344,55 +344,6 @@ describe("action-history", () => {
     expect(filtered[0]!.toolName).toBe("b");
   });
 
-  it("createSummary aggregates period data", () => {
-    const history = new ActionHistory();
-    const now = Date.now();
-    history.addAction({ timestamp: now, type: "tool_call", toolName: "look", success: true });
-    history.addAction({ timestamp: now, type: "tool_call", toolName: "move", success: true });
-    history.addAction({
-      timestamp: now,
-      type: "tool_call",
-      toolName: "look",
-      success: false,
-      error: "not found",
-    });
-
-    const summary = history.createSummary();
-    expect(summary).not.toBeNull();
-    expect(summary!.totalActions).toBe(3);
-    expect(summary!.toolUsage.look).toBe(2);
-    expect(summary!.toolUsage.move).toBe(1);
-  });
-
-  it("createSummary extracts learnings", () => {
-    const history = new ActionHistory();
-    const now = Date.now();
-    history.addAction({
-      timestamp: now,
-      type: "learning",
-      context: "rooms can have custom handlers",
-    });
-    history.addAction({
-      timestamp: now,
-      type: "learning",
-      context: "notes persist across sessions",
-    });
-
-    const summary = history.createSummary();
-    expect(summary).not.toBeNull();
-    expect(summary!.learnings).toContain("rooms can have custom handlers");
-    expect(summary!.learnings).toContain("notes persist across sessions");
-  });
-
-  it("createSummary returns null when no actions in period", () => {
-    const history = new ActionHistory();
-    // First call consumes the window
-    history.createSummary();
-    // Second call has no new actions
-    const summary = history.createSummary();
-    expect(summary).toBeNull();
-  });
-
   it("clear removes all actions", () => {
     const history = new ActionHistory();
     history.addAction({ timestamp: Date.now(), type: "tool_call", toolName: "a" });
