@@ -602,16 +602,6 @@ has its own read-only command so the most-read pool is easy to reach:
 > guide audit                        Lint the guide pool (alias: guide lint)
 ```
 
-## Guided Objectives
-
-```
-> quest list                         Available objectives and onboarding checklists
-> quest start                        Start an objective (or auto-start onboarding)
-> quest start tutorial               Start a specific objective
-> quest status                       Check progress
-> quest abandon                      Abandon current objective
-```
-
 ## Prediction Markets
 
 ```

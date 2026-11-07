@@ -4,7 +4,7 @@
 import { getStanding } from "../../agent/standing";
 import { listWorkItems } from "../../coordination/work-loop";
 import { commandManifest } from "../../engine/command-manifest";
-import type { DiscoveryResult, EntityPreview, QuestProgress } from "../discovery-types";
+import type { DiscoveryResult, EntityPreview } from "../discovery-types";
 import { authorizeEntityRead, type DashboardRouteContext, json, readsChannel } from "./shared";
 
 /** Read-only discovery. Execution still goes through the ordinary command router. */
@@ -22,7 +22,6 @@ export async function handleDiscoveryRoutes(
     });
     return json(catalog);
   }
-  const questMatch = url.pathname.match(/^\/api\/entities\/([^/]+)\/quests$/);
   const previewMatch = url.pathname.match(/^\/api\/entities\/([^/]+)\/preview$/);
   if (previewMatch) {
     const name = decodeURIComponent(previewMatch[1]!);
@@ -35,7 +34,6 @@ export async function handleDiscoveryRoutes(
             db,
             taskManager: engine.taskManager,
             crewManager: engine.crewManager,
-            quests: engine.world?.quests ?? [],
             startRoom: engine.config.startRoom,
             peers: engine.entities.inRoom(entity.room),
           })
@@ -54,27 +52,6 @@ export async function handleDiscoveryRoutes(
       privateVisible,
     };
     return json(preview);
-  }
-  if (questMatch) {
-    const name = decodeURIComponent(questMatch[1]!);
-    const denied = authorizeEntityRead(engine, db, callerId, name);
-    if (denied) return denied;
-    const entity = engine.findEntityGlobal(name);
-    if (!entity) return json({ error: "Entity not found" }, 404);
-    const completed = entity.properties.completed_quests ?? [];
-    const quests: QuestProgress[] = (engine.world?.quests ?? []).map((quest) => ({
-      id: quest.id,
-      name: quest.name,
-      active: entity.properties.active_quest === quest.id,
-      completed: completed.includes(quest.id),
-      steps: quest.steps.map((step) => ({
-        id: step.id,
-        description: step.description,
-        hint: step.hint,
-        done: completed.includes(quest.id) || step.check(entity),
-      })),
-    }));
-    return json(quests);
   }
   if (url.pathname !== "/api/search") return undefined;
   const query = (url.searchParams.get("q") ?? "").trim();

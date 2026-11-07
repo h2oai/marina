@@ -856,7 +856,6 @@ export async function handleEntityRoutes(
         canvasReader: callerId ? canvasReaderFor(engine, callerId) : {},
         taskManager: engine.taskManager,
         crewManager: engine.crewManager,
-        quests: engine.world?.quests ?? [],
         startRoom: engine.config.startRoom,
         peers: engine.entities.inRoom(entity.room),
       }),

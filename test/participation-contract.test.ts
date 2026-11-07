@@ -172,7 +172,7 @@ describe("shared participation contracts", () => {
     await engine.processCommand(alice.entity!, "context quartz");
     expect(alice.lastText()).not.toContain("private observation");
   });
-  it("awaits orientation and emits one contract after look and brief, preserving quest state on resume", async () => {
+  it("awaits orientation and emits one contract after look and brief, once per arrival", async () => {
     alice.clear();
     await onboardParticipant(engine, alice.entity!, "mcp");
     const first = alice.messages.findLast((p) => p.data.onboarding)?.data.onboarding;
@@ -184,10 +184,8 @@ describe("shared participation contracts", () => {
     expect(
       alice.messages.filter((p) => String(p.data.text).includes("A plain room for testing")),
     ).toHaveLength(1);
-    const quest = engine.entities.get(alice.entity!)!.properties.active_quest;
     alice.clear();
     await onboardParticipant(engine, alice.entity!, "telnet", true);
     expect(alice.messages.filter((p) => p.data.onboarding)).toHaveLength(1);
-    expect(engine.entities.get(alice.entity!)!.properties.active_quest).toEqual(quest);
   });
 });

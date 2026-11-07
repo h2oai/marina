@@ -4,7 +4,7 @@
 import { Database } from "bun:sqlite";
 import type { AgentSupports, AgentThinkingLevel } from "../agent/agent-types";
 import type { Session } from "../auth/session-manager";
-import { DURABLE_KEY_CACHE_MAX, type NoteTier } from "../engine/constants";
+import { DURABLE_KEY_CACHE_MAX } from "../engine/constants";
 import { Logger } from "../engine/logger";
 import type { MemoryStorageAmounts } from "../sdk/memory-types";
 import type {

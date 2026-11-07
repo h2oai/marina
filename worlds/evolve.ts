@@ -30,10 +30,41 @@ function scorecard(entity: Entity): string {
   return `Benchmark Scores — ${entity.name}:\n${rows.join("\n")}`;
 }
 
-// ─── Quest Helpers ────────────────────────────────────────────────────────────
+// ─── Gym Helpers ──────────────────────────────────────────────────────────────
 
-function isQuestActive(entity: Entity, questId: string): boolean {
-  return entity.properties.active_quest === questId;
+/**
+ * A benchmark gym the room runs by itself: entering its room starts (or
+ * resumes) an attempt, and the room records the score the moment the attempt
+ * is finished. `score` and the hub's scoreboard read the `bench_*_best`
+ * properties `onComplete` writes.
+ */
+interface Gym {
+  id: string;
+  name: string;
+  description: string;
+  onComplete(entity: Entity, db?: MarinaDB): void;
+}
+
+/** The world's database, for scoring that reads it (Code-Gen); set at seed and on every boot. */
+let evolveDb: MarinaDB | undefined;
+
+/** The gym whose room the entity is in (`bench_gym`, set on entering a gym room). */
+function inGym(entity: Entity, gymId: string): boolean {
+  return entity.properties.bench_gym === gymId;
+}
+
+/** Entering a gym's room makes it the entity's current gym. */
+function enterGym(entity: Entity, gymId: string): boolean {
+  entity.properties.bench_gym = gymId;
+  return true;
+}
+
+/** Record the finished attempt's score and say so. */
+function finishGym(ctx: RoomContext, entity: Entity, gym: Gym): string {
+  gym.onComplete(entity, evolveDb);
+  entity.properties.bench_gym = undefined;
+  ctx.broadcastExcept(entity.id, `${entity.name} has completed "${gym.name}"!`, "action");
+  return `Score recorded for ${gym.name}: 'score' or 'examine scoreboard' in bench/hub shows it. Re-enter the room to try again.`;
 }
 
 /** Benchmark answers are complete answers, normalized only for case and punctuation. */
@@ -63,31 +94,10 @@ function examineBenchmarkItem(ctx: RoomContext, input: CommandInput, room: RoomM
 
 // ─── Navigation Benchmark ────────────────────────────────────────────────────
 
-const BENCH_NAVIGATION = {
+const BENCH_NAVIGATION: Gym = {
   id: "bench_navigation",
   name: "Navigation Benchmark",
   description: "Find the correct marker in the course using the fewest clue examinations.",
-  reward: "Navigation score recorded",
-  steps: [
-    {
-      id: "start",
-      description: "Receive your assignment from the NavProctor.",
-      hint: "With the quest active, enter bench/navigation: the NavProctor assigns it on arrival.",
-      check: (e: Entity) => (e.properties.bench_nav_active as boolean) === true,
-    },
-    {
-      id: "find_marker",
-      description: "Find the correct marker.",
-      hint: "Examine the clues and items in the room to deduce which marker is correct.",
-      check: (e: Entity) => (e.properties.bench_nav_found as boolean) === true,
-    },
-    {
-      id: "report",
-      description: "Report your finding to the NavProctor.",
-      hint: 'Type "report <marker-name>" to submit your answer.',
-      check: (e: Entity) => (e.properties.bench_nav_reported as boolean) === true,
-    },
-  ],
   onComplete(entity: Entity) {
     const examinations = (entity.properties.bench_nav_examinations as number) ?? 99;
     // Score: 100 if found in 1, decreasing by 10 per extra examination, min 10
@@ -100,7 +110,7 @@ const BENCH_NAVIGATION = {
     entity.properties.bench_nav_reported = false;
     entity.properties.bench_nav_examinations = 0;
   },
-} satisfies WorldDefinition["quests"][number];
+};
 
 const MARKERS = ["alpha", "beta", "gamma", "delta"];
 
@@ -147,10 +157,10 @@ const ROOM_NAVIGATION: RoomModule = {
         });
       }
     }
-    // Reset per-attempt flags on fresh entry if quest just started
+    // Entering the room starts an attempt (resets its per-attempt flags)
     const entity = ctx.getEntity(entityId);
     if (entity?.kind !== "agent") return;
-    if (isQuestActive(entity, "bench_navigation") && !entity.properties.bench_nav_active) {
+    if (enterGym(entity, "bench_navigation") && !entity.properties.bench_nav_active) {
       entity.properties.bench_nav_active = true;
       entity.properties.bench_nav_found = false;
       entity.properties.bench_nav_reported = false;
@@ -189,16 +199,16 @@ const ROOM_NAVIGATION: RoomModule = {
     examine(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
       const examined = examineBenchmarkItem(ctx, input, ROOM_NAVIGATION);
-      if (!examined || !entity || !isQuestActive(entity, "bench_navigation")) return;
+      if (!examined || !entity || !inGym(entity, "bench_navigation")) return;
       entity.properties.bench_nav_examinations =
         ((entity.properties.bench_nav_examinations as number) ?? 0) + 1;
     },
     report(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_navigation")) {
+      if (!entity || !inGym(entity, "bench_navigation")) {
         ctx.send(
           input.entity,
-          "No active Navigation Benchmark. Start with 'quest start Navigation Benchmark'.",
+          "No attempt in progress: enter this room (bench/navigation) to start one.",
         );
         return;
       }
@@ -215,7 +225,7 @@ const ROOM_NAVIGATION: RoomModule = {
         entity.properties.bench_nav_reported = true;
         ctx.send(
           input.entity,
-          `\x1b[1;32mCorrect!\x1b[0m marker-${target} was the target. Quest step complete — type 'quest complete' to record your score.`,
+          `\x1b[1;32mCorrect!\x1b[0m marker-${target} was the target. ${finishGym(ctx, entity, BENCH_NAVIGATION)}`,
         );
       } else if (MARKERS.includes(guess)) {
         entity.properties.bench_nav_examinations =
@@ -248,31 +258,10 @@ const RETRIEVAL_FACTS = [
   { q: "How many days are in a week?", a: "7", fact: "A week has 7 days." },
 ];
 
-const BENCH_RETRIEVAL = {
+const BENCH_RETRIEVAL: Gym = {
   id: "bench_retrieval",
   name: "Retrieval Benchmark",
   description: "Answer 5 factual questions using the knowledge in the bench-facts pool.",
-  reward: "Retrieval score recorded",
-  steps: [
-    {
-      id: "start",
-      description: "Receive your first question from the Archivist.",
-      hint: "With the quest active, enter bench/retrieval: the Archivist asks question 1 on arrival. Find answers with 'pool bench-facts recall <topic>'.",
-      check: (e: Entity) => (e.properties.bench_ret_active as boolean) === true,
-    },
-    {
-      id: "answer_three",
-      description: "Answer at least 3 questions correctly.",
-      hint: 'Type "answer <your-answer>" to submit. Use recall and pool to find facts.',
-      check: (e: Entity) => ((e.properties.bench_ret_correct as number) ?? 0) >= 3,
-    },
-    {
-      id: "finish",
-      description: "Complete all 5 questions.",
-      hint: "Keep answering until all questions are done.",
-      check: (e: Entity) => ((e.properties.bench_ret_idx as number) ?? 0) >= 5,
-    },
-  ],
   onComplete(entity: Entity) {
     const correct = (entity.properties.bench_ret_correct as number) ?? 0;
     const score = Math.round((correct / 5) * 100);
@@ -282,7 +271,7 @@ const BENCH_RETRIEVAL = {
     entity.properties.bench_ret_idx = 0;
     entity.properties.bench_ret_correct = 0;
   },
-} satisfies WorldDefinition["quests"][number];
+};
 
 const ROOM_RETRIEVAL: RoomModule = {
   short: "The Archive Vault",
@@ -322,7 +311,7 @@ const ROOM_RETRIEVAL: RoomModule = {
     }
     const entity = ctx.getEntity(entityId);
     if (entity?.kind !== "agent") return;
-    if (isQuestActive(entity, "bench_retrieval") && !entity.properties.bench_ret_active) {
+    if (enterGym(entity, "bench_retrieval") && !entity.properties.bench_ret_active) {
       entity.properties.bench_ret_active = true;
       entity.properties.bench_ret_idx = 0;
       entity.properties.bench_ret_correct = 0;
@@ -345,7 +334,7 @@ const ROOM_RETRIEVAL: RoomModule = {
         properties: {
           role: "benchmark",
           dialogue: {
-            greeting: "Retrieval Benchmark. Start the quest, then enter this room.",
+            greeting: "Retrieval Benchmark. Enter this room to begin.",
             topics: {},
           },
         },
@@ -355,20 +344,13 @@ const ROOM_RETRIEVAL: RoomModule = {
   commands: {
     answer(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
-      if (
-        !entity ||
-        !isQuestActive(entity, "bench_retrieval") ||
-        !entity.properties.bench_ret_active
-      ) {
+      if (!entity || !inGym(entity, "bench_retrieval") || !entity.properties.bench_ret_active) {
         ctx.send(input.entity, "No active Retrieval Benchmark.");
         return;
       }
       const idx = (entity.properties.bench_ret_idx as number) ?? 0;
       if (idx >= RETRIEVAL_FACTS.length) {
-        ctx.send(
-          input.entity,
-          "All questions answered. Type 'quest complete' to record your score.",
-        );
+        ctx.send(input.entity, "All questions answered; this attempt is recorded.");
         return;
       }
       const fact = RETRIEVAL_FACTS[idx]!;
@@ -397,7 +379,7 @@ const ROOM_RETRIEVAL: RoomModule = {
         const score = (entity.properties.bench_ret_correct as number) ?? 0;
         ctx.send(
           input.entity,
-          `\x1b[1;33mArchivist:\x1b[0m "Done. ${score}/5 correct. Type 'quest complete' to record your score."`,
+          `\x1b[1;33mArchivist:\x1b[0m "Done. ${score}/5 correct." ${finishGym(ctx, entity, BENCH_RETRIEVAL)}`,
         );
       }
     },
@@ -415,32 +397,11 @@ Use: build command create bench_greet
      build command validate bench_greet
 Then type: forge submit bench_greet`;
 
-const BENCH_CODEGEN = {
+const BENCH_CODEGEN: Gym = {
   id: "bench_codegen",
   name: "Code-Gen Benchmark",
   description:
     "Write a dynamic command matching the Forge Master's specification. Needs the `build` rank and the world.code gate (see 'help build'; both are lifted on the local profile).",
-  reward: "Code-Gen score recorded",
-  steps: [
-    {
-      id: "read_spec",
-      description: "Read the specification from the Forge Master.",
-      hint: "With the quest active, enter bench/codegen: the Forge Master gives the spec on arrival.",
-      check: (e: Entity) => (e.properties.bench_cg_spec_given as boolean) === true,
-    },
-    {
-      id: "write_command",
-      description: "Write and validate the command.",
-      hint: "Use 'build command create/code/validate' then 'forge submit <name>'.",
-      check: (e: Entity) => (e.properties.bench_cg_submitted as boolean) === true,
-    },
-    {
-      id: "validate",
-      description: "Command passes sandbox validation.",
-      hint: "Run 'build command validate <name>' before submitting.",
-      check: (e: Entity) => (e.properties.bench_cg_validated as boolean) === true,
-    },
-  ],
   onComplete(entity: Entity, db?: MarinaDB) {
     let score = 0;
     const cmdName = entity.properties.bench_cg_cmd_name as string | undefined;
@@ -460,7 +421,7 @@ const BENCH_CODEGEN = {
     entity.properties.bench_cg_validated = false;
     entity.properties.bench_cg_cmd_name = undefined;
   },
-} satisfies WorldDefinition["quests"][number];
+};
 
 const ROOM_CODEGEN: RoomModule = {
   short: "The Forge",
@@ -500,7 +461,7 @@ const ROOM_CODEGEN: RoomModule = {
     }
     const entity = ctx.getEntity(entityId);
     if (entity?.kind !== "agent") return;
-    if (isQuestActive(entity, "bench_codegen") && !entity.properties.bench_cg_spec_given) {
+    if (enterGym(entity, "bench_codegen") && !entity.properties.bench_cg_spec_given) {
       entity.properties.bench_cg_spec_given = true;
       ctx.send(
         entityId,
@@ -530,7 +491,7 @@ const ROOM_CODEGEN: RoomModule = {
   commands: {
     forge(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_codegen")) {
+      if (!entity || !inGym(entity, "bench_codegen")) {
         ctx.send(input.entity, "No active Code-Gen Benchmark.");
         return;
       }
@@ -544,7 +505,7 @@ const ROOM_CODEGEN: RoomModule = {
       entity.properties.bench_cg_validated = true;
       ctx.send(
         input.entity,
-        `\x1b[1;33mForgeMaster:\x1b[0m "Submission received for '${cmdName}'. Scoring will check whether the command exists and passes validation. Type 'quest complete' to record your score."`,
+        `\x1b[1;33mForgeMaster:\x1b[0m "Submission received for '${cmdName}'. Scoring checks whether the command exists and passes validation." ${finishGym(ctx, entity, BENCH_CODEGEN)}`,
       );
     },
   },
@@ -558,31 +519,10 @@ const PASSPHRASES = [
   ["pulse", "orbit", "nexus"],
 ];
 
-const BENCH_COORDINATION = {
+const BENCH_COORDINATION: Gym = {
   id: "bench_coordination",
   name: "Coordination Benchmark",
   description: "Talk to all three Speakers and assemble the passphrase from their fragments.",
-  reward: "Coordination score recorded",
-  steps: [
-    {
-      id: "collect_two",
-      description: "Collect at least 2 fragments from the Speakers.",
-      hint: 'Type "talk Speaker-Alpha", "talk Speaker-Beta", "talk Speaker-Gamma" to collect fragments.',
-      check: (e: Entity) => ((e.properties.bench_co_fragments as string[]) ?? []).length >= 2,
-    },
-    {
-      id: "collect_all",
-      description: "Collect all 3 fragments.",
-      hint: "Talk to all three Speakers.",
-      check: (e: Entity) => ((e.properties.bench_co_fragments as string[]) ?? []).length >= 3,
-    },
-    {
-      id: "assemble",
-      description: "Assemble and submit the passphrase.",
-      hint: 'Type "assemble <word1> <word2> <word3>".',
-      check: (e: Entity) => (e.properties.bench_co_correct as boolean) === true,
-    },
-  ],
   onComplete(entity: Entity) {
     const correct = (entity.properties.bench_co_correct as boolean) ? 1 : 0;
     const prev = (entity.properties.bench_coordination_best as number) ?? 0;
@@ -590,7 +530,7 @@ const BENCH_COORDINATION = {
     entity.properties.bench_co_fragments = [];
     entity.properties.bench_co_correct = false;
   },
-} satisfies WorldDefinition["quests"][number];
+};
 
 const ROOM_COORDINATION: RoomModule = {
   short: "The Council Chamber",
@@ -635,7 +575,7 @@ const ROOM_COORDINATION: RoomModule = {
     const entity = ctx.getEntity(entityId);
     if (entity?.kind !== "agent") return;
     if (
-      isQuestActive(entity, "bench_coordination") &&
+      enterGym(entity, "bench_coordination") &&
       !(entity.properties.bench_co_fragments as string[])?.length
     ) {
       entity.properties.bench_co_fragments = [];
@@ -680,7 +620,7 @@ const ROOM_COORDINATION: RoomModule = {
       const speaker = ctx.entities.find((e) => e.name === speakerName && e.kind === "npc");
       if (!speaker) return; // let normal talk command handle it
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_coordination")) return;
+      if (!entity || !inGym(entity, "bench_coordination")) return;
       const fragment = speaker.properties.fragment as string | undefined;
       if (!fragment) return;
       const frags = (entity.properties.bench_co_fragments as string[]) ?? [];
@@ -697,7 +637,7 @@ const ROOM_COORDINATION: RoomModule = {
     },
     assemble(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_coordination")) {
+      if (!entity || !inGym(entity, "bench_coordination")) {
         ctx.send(input.entity, "No active Coordination Benchmark.");
         return;
       }
@@ -709,7 +649,7 @@ const ROOM_COORDINATION: RoomModule = {
       if (correct) {
         ctx.send(
           input.entity,
-          "\x1b[1;32mCorrect passphrase!\x1b[0m Type 'quest complete' to record your score.",
+          `\x1b[1;32mCorrect passphrase!\x1b[0m ${finishGym(ctx, entity, BENCH_COORDINATION)}`,
         );
       } else {
         ctx.send(
@@ -758,32 +698,11 @@ const ADAPT_VARIANTS: AdaptVariant[] = [
   },
 ];
 
-const BENCH_ADAPTATION = {
+const BENCH_ADAPTATION: Gym = {
   id: "bench_adaptation",
   name: "Adaptation Benchmark",
   description:
     "Answer 5 prompts under a rule set revealed only on entry. The rules change each session.",
-  reward: "Adaptation score recorded",
-  steps: [
-    {
-      id: "read_rules",
-      description: "Receive the rule set from the Shapeshifter.",
-      hint: "With the quest active, enter bench/adaptation: the Shapeshifter states the rules on arrival.",
-      check: (e: Entity) => (e.properties.bench_ad_rules_read as boolean) === true,
-    },
-    {
-      id: "answer_three",
-      description: "Answer at least 3 prompts correctly.",
-      hint: 'Type "respond <answer>" to each prompt.',
-      check: (e: Entity) => ((e.properties.bench_ad_correct as number) ?? 0) >= 3,
-    },
-    {
-      id: "finish_all",
-      description: "Complete all 5 prompts.",
-      hint: "Keep responding until all prompts are done.",
-      check: (e: Entity) => ((e.properties.bench_ad_idx as number) ?? 0) >= 5,
-    },
-  ],
   onComplete(entity: Entity) {
     const correct = (entity.properties.bench_ad_correct as number) ?? 0;
     const score = Math.round((correct / 5) * 100);
@@ -793,7 +712,7 @@ const BENCH_ADAPTATION = {
     entity.properties.bench_ad_correct = 0;
     entity.properties.bench_ad_idx = 0;
   },
-} satisfies WorldDefinition["quests"][number];
+};
 
 const ROOM_ADAPTATION: RoomModule = {
   short: "Shifting Sands",
@@ -834,7 +753,7 @@ const ROOM_ADAPTATION: RoomModule = {
     }
     const entity = ctx.getEntity(entityId);
     if (entity?.kind !== "agent") return;
-    if (isQuestActive(entity, "bench_adaptation") && !entity.properties.bench_ad_rules_read) {
+    if (enterGym(entity, "bench_adaptation") && !entity.properties.bench_ad_rules_read) {
       const variantIdx = (ctx.store.get<number>("adapt_variant") ?? 0) % ADAPT_VARIANTS.length;
       const variant = ADAPT_VARIANTS[variantIdx]!;
       entity.properties.bench_ad_rules_read = true;
@@ -874,11 +793,7 @@ const ROOM_ADAPTATION: RoomModule = {
   commands: {
     respond(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
-      if (
-        !entity ||
-        !isQuestActive(entity, "bench_adaptation") ||
-        !entity.properties.bench_ad_rules_read
-      ) {
+      if (!entity || !inGym(entity, "bench_adaptation") || !entity.properties.bench_ad_rules_read) {
         ctx.send(input.entity, "No active Adaptation Benchmark or rules not yet received.");
         return;
       }
@@ -886,7 +801,7 @@ const ROOM_ADAPTATION: RoomModule = {
       const variantIdx = (entity.properties.bench_ad_variant as number) ?? 0;
       const variant = ADAPT_VARIANTS[variantIdx % ADAPT_VARIANTS.length]!;
       if (idx >= variant.prompts.length) {
-        ctx.send(input.entity, "All prompts answered. Type 'quest complete' to record your score.");
+        ctx.send(input.entity, "All prompts answered; this attempt is recorded.");
         return;
       }
       const prompt = variant.prompts[idx]!;
@@ -914,7 +829,7 @@ const ROOM_ADAPTATION: RoomModule = {
         const correct = (entity.properties.bench_ad_correct as number) ?? 0;
         ctx.send(
           input.entity,
-          `\x1b[1;33mShapeshifter:\x1b[0m "Done. ${correct}/5. Type 'quest complete' to record."`,
+          `\x1b[1;33mShapeshifter:\x1b[0m "Done. ${correct}/5." ${finishGym(ctx, entity, BENCH_ADAPTATION)}`,
         );
       }
     },
@@ -943,7 +858,7 @@ const MEMORY_FACTS = [
   "reflect synthesizes notes into higher-order understanding.",
   "Memory pools are shared knowledge spaces for groups.",
   "Dynamic commands have full CommandContext including memory and notes.",
-  "The quest system supports onComplete callbacks for recording scores.",
+  "Each benchmark room records your score itself when you finish.",
 ];
 
 const MEMORY_QUESTIONS = [
@@ -954,32 +869,11 @@ const MEMORY_QUESTIONS = [
   { q: "How can the collaboration benchmark be completed alone?", a: "bridge keeper", fact: 10 },
 ];
 
-const BENCH_MEMORY = {
+const BENCH_MEMORY: Gym = {
   id: "bench_memory",
   name: "Memory Benchmark",
   description:
     "Study the 20 memory stones, then answer 5 synthesis questions from the Memory Keeper.",
-  reward: "Memory score recorded",
-  steps: [
-    {
-      id: "study_ten",
-      description: "Study at least 10 memory stones.",
-      hint: 'Type "examine stone-<N>" or "study all" to study them. Use recall to retrieve them later.',
-      check: (e: Entity) => ((e.properties.bench_mem_studied as number) ?? 0) >= 10,
-    },
-    {
-      id: "switch_to_test",
-      description: "Enter the test phase.",
-      hint: 'Type "recall test" when ready.',
-      check: (e: Entity) => entity_phase(e) === "test",
-    },
-    {
-      id: "pass_test",
-      description: "Answer at least 4 of 5 questions correctly.",
-      hint: 'Use "recall <topic>" and "pool bench-memory recall <topic>" to find answers. Then "answer <text>".',
-      check: (e: Entity) => ((e.properties.bench_mem_correct as number) ?? 0) >= 4,
-    },
-  ],
   onComplete(entity: Entity) {
     const correct = (entity.properties.bench_mem_correct as number) ?? 0;
     const score = Math.round((correct / 5) * 100);
@@ -990,7 +884,7 @@ const BENCH_MEMORY = {
     entity.properties.bench_mem_qidx = 0;
     entity.properties.bench_mem_correct = 0;
   },
-} satisfies WorldDefinition["quests"][number];
+};
 
 function entity_phase(e: Entity): string {
   return (e.properties.bench_mem_phase as string) ?? "study";
@@ -1039,7 +933,7 @@ const ROOM_MEMORY: RoomModule = {
     }
     const entity = ctx.getEntity(entityId);
     if (entity?.kind !== "agent") return;
-    if (isQuestActive(entity, "bench_memory") && !entity.properties.bench_mem_phase) {
+    if (enterGym(entity, "bench_memory") && !entity.properties.bench_mem_phase) {
       entity.properties.bench_mem_phase = "study";
       entity.properties.bench_mem_studied = 0;
       entity.properties.bench_mem_qidx = 0;
@@ -1076,7 +970,7 @@ const ROOM_MEMORY: RoomModule = {
     examine(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
       const examined = examineBenchmarkItem(ctx, input, ROOM_MEMORY);
-      if (!examined || !entity || !isQuestActive(entity, "bench_memory")) return;
+      if (!examined || !entity || !inGym(entity, "bench_memory")) return;
       if (
         entity_phase(entity) === "study" &&
         normalizeLookTarget(input.args).startsWith("stone-")
@@ -1089,7 +983,7 @@ const ROOM_MEMORY: RoomModule = {
       // intercept only "recall test"
       if (input.args.trim() !== "test") return;
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_memory")) return;
+      if (!entity || !inGym(entity, "bench_memory")) return;
       entity.properties.bench_mem_phase = "test";
       entity.properties.bench_mem_qidx = 0;
       const first = MEMORY_QUESTIONS[0]!;
@@ -1100,13 +994,13 @@ const ROOM_MEMORY: RoomModule = {
     },
     answer(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_memory") || entity_phase(entity) !== "test") {
+      if (!entity || !inGym(entity, "bench_memory") || entity_phase(entity) !== "test") {
         ctx.send(input.entity, "Not in test phase. Type 'recall test' first.");
         return;
       }
       const qidx = (entity.properties.bench_mem_qidx as number) ?? 0;
       if (qidx >= MEMORY_QUESTIONS.length) {
-        ctx.send(input.entity, "All questions answered. Type 'quest complete' to record.");
+        ctx.send(input.entity, "All questions answered; this attempt is recorded.");
         return;
       }
       const q = MEMORY_QUESTIONS[qidx]!;
@@ -1137,7 +1031,7 @@ const ROOM_MEMORY: RoomModule = {
         const correct = (entity.properties.bench_mem_correct as number) ?? 0;
         ctx.send(
           input.entity,
-          `\x1b[1;33mMemoryKeeper:\x1b[0m "${correct}/5 correct. Type 'quest complete'."`,
+          `\x1b[1;33mMemoryKeeper:\x1b[0m "${correct}/5 correct." ${finishGym(ctx, entity, BENCH_MEMORY)}`,
         );
       }
     },
@@ -1146,31 +1040,10 @@ const ROOM_MEMORY: RoomModule = {
 
 // ─── Self-Modification Benchmark ─────────────────────────────────────────────
 
-const BENCH_SELFMOD = {
+const BENCH_SELFMOD: Gym = {
   id: "bench_selfmod",
   name: "Self-Modification Benchmark",
   description: "Establish a baseline score, modify your approach, then demonstrate improvement.",
-  reward: "Self-Modification score recorded",
-  steps: [
-    {
-      id: "set_baseline",
-      description: "Record your current retrieval score as baseline.",
-      hint: 'Type "baseline" in the Mirror Room to record your current retrieval score.',
-      check: (e: Entity) => (e.properties.bench_sm_baseline_set as boolean) === true,
-    },
-    {
-      id: "modify",
-      description: "Make at least one improvement attempt.",
-      hint: "Improve your recall, notes, or commands, then 'evaluate' here.",
-      check: (e: Entity) => ((e.properties.bench_sm_attempts as number) ?? 0) >= 1,
-    },
-    {
-      id: "improve",
-      description: "Demonstrate improvement over baseline.",
-      hint: "Your retrieval score must exceed your baseline. Complete the Retrieval Benchmark, then evaluate here.",
-      check: (e: Entity) => (e.properties.bench_sm_improved as boolean) === true,
-    },
-  ],
   onComplete(entity: Entity) {
     const baseline = (entity.properties.bench_sm_baseline as number) ?? 0;
     const best = (entity.properties.bench_retrieval_best as number) ?? 0;
@@ -1181,7 +1054,7 @@ const BENCH_SELFMOD = {
     entity.properties.bench_sm_improved = false;
     entity.properties.bench_sm_attempts = 0;
   },
-} satisfies WorldDefinition["quests"][number];
+};
 
 const ROOM_SELFMOD: RoomModule = {
   short: "The Mirror Room",
@@ -1231,7 +1104,7 @@ const ROOM_SELFMOD: RoomModule = {
     }
     const entity = ctx.getEntity(entityId);
     if (entity?.kind !== "agent") return;
-    if (isQuestActive(entity, "bench_selfmod")) {
+    if (enterGym(entity, "bench_selfmod")) {
       ctx.send(
         entityId,
         "\x1b[1;33mMirrorGuide:\x1b[0m \"Type 'baseline' to record your current retrieval score as a starting point.\"",
@@ -1263,7 +1136,7 @@ const ROOM_SELFMOD: RoomModule = {
   commands: {
     baseline(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_selfmod")) {
+      if (!entity || !inGym(entity, "bench_selfmod")) {
         ctx.send(input.entity, "No active Self-Modification Benchmark.");
         return;
       }
@@ -1277,7 +1150,7 @@ const ROOM_SELFMOD: RoomModule = {
     },
     evaluate(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_selfmod")) {
+      if (!entity || !inGym(entity, "bench_selfmod")) {
         ctx.send(input.entity, "No active Self-Modification Benchmark.");
         return;
       }
@@ -1289,7 +1162,7 @@ const ROOM_SELFMOD: RoomModule = {
         entity.properties.bench_sm_improved = true;
         ctx.send(
           input.entity,
-          `\x1b[1;32mImprovement confirmed!\x1b[0m Baseline: ${baseline} → Current: ${current} (+${current - baseline}). Type 'quest complete'.`,
+          `\x1b[1;32mImprovement confirmed!\x1b[0m Baseline: ${baseline} → Current: ${current} (+${current - baseline}). ${finishGym(ctx, entity, BENCH_SELFMOD)}`,
         );
       } else {
         ctx.send(
@@ -1309,31 +1182,10 @@ const COLLAB_PUZZLES = [
   { half1: "42", half2: "11", answer: "53" },
 ];
 
-const BENCH_COLLABORATION = {
+const BENCH_COLLABORATION: Gym = {
   id: "bench_collaboration",
   name: "Collaboration Benchmark",
   description: "Each agent holds half a puzzle. Share information and submit the combined answer.",
-  reward: "Collaboration score recorded",
-  steps: [
-    {
-      id: "get_role",
-      description: "Receive your role from the Bridge Keeper.",
-      hint: "With the quest active, enter bench/collaboration: the Bridge Keeper hands you a half on arrival.",
-      check: (e: Entity) => e.properties.bench_col_half !== undefined,
-    },
-    {
-      id: "share_and_get",
-      description: "Tell another agent your half and learn theirs.",
-      hint: "Use 'tell <name> my half is <N>' and ask for theirs. Or use the BridgeKeeper's solo mode.",
-      check: (e: Entity) => (e.properties.bench_col_other_half as string) !== undefined,
-    },
-    {
-      id: "submit",
-      description: "Submit the combined answer.",
-      hint: 'Type "submit <combined-answer>".',
-      check: (e: Entity) => (e.properties.bench_col_correct as boolean) === true,
-    },
-  ],
   onComplete(entity: Entity) {
     const correct = (entity.properties.bench_col_correct as boolean) ? 1 : 0;
     const prev = (entity.properties.bench_collaboration_best as number) ?? 0;
@@ -1342,7 +1194,7 @@ const BENCH_COLLABORATION = {
     entity.properties.bench_col_other_half = undefined;
     entity.properties.bench_col_correct = false;
   },
-} satisfies WorldDefinition["quests"][number];
+};
 
 const ROOM_COLLABORATION: RoomModule = {
   short: "The Bridge",
@@ -1387,17 +1239,14 @@ const ROOM_COLLABORATION: RoomModule = {
     }
     const entity = ctx.getEntity(entityId);
     if (entity?.kind !== "agent") return;
-    if (
-      isQuestActive(entity, "bench_collaboration") &&
-      entity.properties.bench_col_half === undefined
-    ) {
+    if (enterGym(entity, "bench_collaboration") && entity.properties.bench_col_half === undefined) {
       const pIdx = (ctx.store.get<number>("collab_puzzle") ?? 0) % COLLAB_PUZZLES.length;
       const puzzle = COLLAB_PUZZLES[pIdx]!;
       // Assign halves alternately based on how many agents have already got a half
       const assigned = ctx.entities.filter(
         (e) =>
           e.kind === "agent" &&
-          isQuestActive(e, "bench_collaboration") &&
+          inGym(e, "bench_collaboration") &&
           e.properties.bench_col_half !== undefined,
       ).length;
       const half = assigned % 2 === 0 ? puzzle.half1 : puzzle.half2;
@@ -1435,7 +1284,7 @@ const ROOM_COLLABORATION: RoomModule = {
   commands: {
     submit(ctx: RoomContext, input: CommandInput) {
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_collaboration")) {
+      if (!entity || !inGym(entity, "bench_collaboration")) {
         ctx.send(input.entity, "No active Collaboration Benchmark.");
         return;
       }
@@ -1446,7 +1295,7 @@ const ROOM_COLLABORATION: RoomModule = {
         entity.properties.bench_col_correct = true;
         ctx.send(
           input.entity,
-          "\x1b[1;32mCorrect!\x1b[0m Combined answer accepted. Type 'quest complete' to record.",
+          `\x1b[1;32mCorrect!\x1b[0m Combined answer accepted. ${finishGym(ctx, entity, BENCH_COLLABORATION)}`,
         );
       } else {
         ctx.send(
@@ -1458,7 +1307,7 @@ const ROOM_COLLABORATION: RoomModule = {
     share(ctx: RoomContext, input: CommandInput) {
       // Allow agents to post their half to the room
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_collaboration")) return;
+      if (!entity || !inGym(entity, "bench_collaboration")) return;
       const half = entity.properties.bench_col_half as string;
       if (!half) {
         ctx.send(input.entity, "You have not received your half yet.");
@@ -1473,7 +1322,7 @@ const ROOM_COLLABORATION: RoomModule = {
     receive(ctx: RoomContext, input: CommandInput) {
       // Allow agent to record the other half they heard
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_collaboration")) return;
+      if (!entity || !inGym(entity, "bench_collaboration")) return;
       entity.properties.bench_col_other_half = input.args.trim();
       ctx.send(input.entity, `Other half recorded: ${input.args.trim()}. Now 'submit <sum>'.`);
     },
@@ -1483,7 +1332,7 @@ const ROOM_COLLABORATION: RoomModule = {
       const topic = input.tokens.slice(1).join(" ").toLowerCase();
       if (topic !== "solo") return;
       const entity = ctx.getEntity(input.entity);
-      if (!entity || !isQuestActive(entity, "bench_collaboration")) return;
+      if (!entity || !inGym(entity, "bench_collaboration")) return;
       const pIdx = (entity.properties.bench_col_puzzle_idx as number) ?? 0;
       const puzzle = COLLAB_PUZZLES[pIdx % COLLAB_PUZZLES.length]!;
       entity.properties.bench_col_other_half =
@@ -1520,8 +1369,8 @@ const ROOM_HUB: RoomModule = {
     "arena-rules":
       "Rules of The Arena:\n" +
       "1. Each benchmark tests a different capability.\n" +
-      "2. Start a benchmark with: quest start <Benchmark Name>\n" +
-      "3. When you finish, record your result with: quest complete\n" +
+      "2. Start a benchmark by entering its room (bench/<name>).\n" +
+      "3. When you finish, the room records your score.\n" +
       "4. Scores are cumulative — your best result is kept.\n" +
       "5. View all scores with: examine scoreboard  OR  score\n" +
       "6. The self-modification benchmark requires completing retrieval first.\n" +
@@ -1548,10 +1397,10 @@ const ROOM_HUB: RoomModule = {
             role: "guide",
             dialogue: {
               greeting:
-                "Welcome to The Arena. Eight benchmarks await. Type 'quest list' to see them, 'quest start <name>' to begin, and 'quest complete' to record a result. New here? Ask me about 'order', or run 'evolve' for the self-improvement loop. 'examine scoreboard' shows your progress.",
+                "Welcome to The Arena. Eight benchmarks await: enter a benchmark's room to begin, and the room records your score when you finish. New here? Ask me about 'order', or run 'evolve' for the self-improvement loop. 'examine scoreboard' shows your progress.",
               topics: {
                 order:
-                  "Suggested path (easy → hard): Navigation, Retrieval, Memory, Adaptation, Code-Gen, Coordination, Collaboration, then Self-Modification (it needs a Retrieval baseline first). Finish each with 'quest complete'.",
+                  "Suggested path (easy → hard): Navigation, Retrieval, Memory, Adaptation, Code-Gen, Coordination, Collaboration, then Self-Modification (it needs a Retrieval baseline first). Each room records your score when you finish.",
                 evolve:
                   "The whole point is to improve, not just score once. Baseline → change one approach (sharper notes, better recall, a stored skill) → re-run → keep what helped → 'reflect'. Run 'evolve' anywhere to see your next step.",
                 benchmarks:
@@ -1595,7 +1444,7 @@ const ROOM_HUB: RoomModule = {
           role: "guide",
           dialogue: {
             greeting:
-              "Welcome to The Arena. 'quest list' to see benchmarks. 'examine scoreboard' for scores.",
+              "Welcome to The Arena. Enter a benchmark's room to begin. 'examine scoreboard' for scores.",
             topics: {},
           },
         },
@@ -1607,8 +1456,8 @@ const ROOM_HUB: RoomModule = {
     ctx.store.set("tip_counter", counter);
     if (counter % 120 !== 0) return;
     const tips = [
-      "Start a benchmark with 'quest start <name>'. Type 'quest list' to see all 8.",
-      "Finished a benchmark? Record your result with 'quest complete'.",
+      "Start a benchmark by entering its room: 'examine arena-rules' lists all 8.",
+      "Each benchmark room records your score the moment you finish.",
       "Your scores are stored permanently. Use 'score' or 'examine scoreboard' to review.",
       "New here? Ask me about 'order', or run 'evolve' for the self-improvement loop.",
       "The Self-Modification benchmark requires a retrieval baseline — do Retrieval first.",
@@ -1626,7 +1475,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "Welcome to The Arena — a benchmark world for measuring and improving agent capabilities. " +
       "Eight benchmarks test: navigation, retrieval, code-gen, coordination, adaptation, memory, self-modification, and collaboration. " +
-      "Start with: 'quest start Navigation Benchmark'. View scores: 'score' or 'examine scoreboard' in bench/hub.",
+      "Start with the Navigation Benchmark: enter bench/navigation. View scores: 'score' or 'examine scoreboard' in bench/hub.",
     importance: 10,
     type: "skill",
   },
@@ -1674,8 +1523,8 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
-      "Two benchmark systems — don't confuse them. (1) This world's quests are in-world capability " +
-      "gyms: `quest start <name>`, finish with `quest complete`, review with `score`. They need " +
+      "Two benchmark systems — don't confuse them. (1) This world's benchmark rooms are in-world capability " +
+      "gyms: enter a room to start, it records your score when you finish, review with `score`. They need " +
       "no rank except Code-Gen (see its note). (2) The `benchmark` command runs academic evals " +
       `against a model: \`benchmark run <name>\` needs ${rankLabel(BENCHMARK_RUN_MIN_RANK)} and ` +
       "spends real tokens. `evolve loop` summarizes both.",
@@ -1686,7 +1535,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "Suggested benchmark order (easy → hard): Navigation, Retrieval, Memory, Adaptation, " +
       "Code-Gen, Coordination, Collaboration, then Self-Modification (it needs a Retrieval " +
-      "baseline first). Start with 'quest start <name>', finish each with 'quest complete'. " +
+      "baseline first). Enter a benchmark's room to start; it records your score when you finish. " +
       "You don't have to follow this order — but Self-Modification depends on Retrieval.",
     importance: 9,
     type: "skill",
@@ -1764,18 +1613,15 @@ const evolveWorld: WorldDefinition = {
     "bench/coordination": ROOM_COORDINATION,
     "bench/collaboration": ROOM_COLLABORATION,
   },
-  quests: [
-    BENCH_NAVIGATION,
-    BENCH_RETRIEVAL,
-    BENCH_CODEGEN,
-    BENCH_COORDINATION,
-    BENCH_ADAPTATION,
-    BENCH_MEMORY,
-    BENCH_SELFMOD,
-    BENCH_COLLABORATION,
-  ],
   guideNotes: GUIDE_NOTES,
-  seed,
+  seed(db: MarinaDB) {
+    evolveDb = db;
+    seed(db);
+  },
+  // Every boot: Code-Gen scoring reads the world's commands.
+  afterAgentsReady(engine) {
+    evolveDb = engine.db ?? evolveDb;
+  },
 };
 
 export default evolveWorld;

@@ -127,17 +127,6 @@ export function registerNamedWorldTools(
     },
   );
 
-  mcp.tool(
-    "quest",
-    describeTool("quest"),
-    mcpNamedCommandSchema(NAMED_COMMAND_FORMS.quest),
-    async ({ action, name }, extra) => {
-      const sub = action ?? "status";
-      const cmd = sub === "start" && name ? `quest start ${name}` : `quest ${sub}`;
-      return runCmd(extra, cmd);
-    },
-  );
-
   // ── World ─────────────────────────────────────────────────────────────
 
   mcp.tool(

@@ -139,8 +139,8 @@ Kira
 Rank: Newcomer (0)
 ```
 
-Newcomers can still observe, remember, coordinate, claim work, and earn standing. Run `next`,
-`standing`, or `quest list` to see the fastest available path. Under the default `local` profile a
+Newcomers can still observe, remember, coordinate, claim work, and earn standing. Run `next`
+or `standing` to see the fastest available path. Under the default `local` profile a
 person logging in over loopback is already the operator (sovereign), so no setting is needed. On a
 `shared` or `public` instance without sign-in (or `local` with `MARINA_AUTONOMY=guarded`), name yourself as the bootstrap operator (honoured only
 for a loopback login):

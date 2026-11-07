@@ -9,7 +9,7 @@ export type ParticipationProtocol = "websocket" | "mcp" | "telnet" | "passthru";
 
 import { ORIENTATION_COMMANDS } from "../sdk/onboarding";
 
-/** Shared orientation; quest creation remains solely in authentication. */
+/** Shared orientation for a participant's arrival. */
 export function participantOrientation(
   engine: Engine,
   id: EntityId,

@@ -7,8 +7,6 @@ import { useState } from "react";
 import { ORIENTATION_COMMANDS } from "../../../src/sdk/onboarding";
 import { useChatState } from "../hooks/use-chat-state";
 
-import { QuestProgressCard } from "./QuestProgressCard";
-
 const STORAGE_KEY = "marina:first-run-guide:v2";
 
 function readDismissed(): boolean {
@@ -124,7 +122,6 @@ export function FirstRunGuide({ onFocusChat, onOpenKeys }: FirstRunGuideProps) {
                     Begin
                   </button>
                 </form>
-                {entityName && <QuestProgressCard name={entityName} onFocusChat={onFocusChat} />}
                 <div className="mb-1 text-[10px] font-bold tracking-wide text-text-muted">
                   EXPLORE MARINA
                 </div>

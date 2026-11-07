@@ -45,7 +45,6 @@ import { noteCommand } from "../commands/note";
 import { patternCommand } from "../commands/pattern";
 import { probeCommand } from "../commands/probe";
 import { quantCommand } from "../commands/quant";
-import { questCommand } from "../commands/quest";
 import { rankCommand } from "../commands/rank";
 import { reproduceCommand } from "../commands/reproduce";
 import { sayCommand } from "../commands/say";
@@ -299,15 +298,6 @@ export function registerGeneralCommands(engine: Engine): void {
     rankCommand({
       findEntity: (name) => engine.findEntityGlobal(name),
       db: engine.db,
-    }),
-  );
-
-  // Quest command
-  engine.commands.registerBuiltin(
-    questCommand({
-      getEntity: (id) => engine.entities.get(id),
-      db: engine.db,
-      quests: engine.world?.quests ?? [],
     }),
   );
 

@@ -7,8 +7,7 @@
  * A credit lands only when someone OTHER than the worker verified the work:
  * a task's approver, a requester adopting a helper's proposal, an external
  * resolution of a filed forecast, a reviewer approving a Code Mode attempt
- * whose checks passed, a replication of an experiment, the engine checking a
- * quest. Recognition (being chronicled) and volume (pool notes, recalls,
+ * whose checks passed, a replication of an experiment. Recognition (being chronicled) and volume (pool notes, recalls,
  * self-declared crew stages, self-reported helping acts) earn nothing: those
  * kinds are RETIRED — their historical rows stay in the append-only ledger as
  * history, no new row is written (`record` refuses them), and by default they
@@ -112,7 +111,7 @@ export const RETIRED_STANDING_KINDS: ReadonlySet<StandingKind> = new Set<Standin
   "crew_stage_completed",
   "crew_artifact_deposited",
   "helping_act",
-  // Quests are deprecated, and a completed quest was paid with no other
+  // Quests were removed, and a completed quest was paid with no other
   // account verifying anything; no row was ever written in the live world.
   "quest_complete",
 ]);
@@ -134,7 +133,7 @@ export const STANDING_AMOUNTS: Record<StandingKind, number> = {
   // credit the claimant (`standingVerifierRefusal`: another account; an agent
   // approver inside the claimant's lineage has no grounding signal here).
   task_complete: 0,
-  // Retired (quests are deprecated) — see RETIRED_STANDING_KINDS.
+  // Retired (quests were removed) — see RETIRED_STANDING_KINDS.
   quest_complete: 0,
   // A Code Mode attempt whose checks passed, approved by another account —
   // grounded, so an agent reviewer in the worker's lineage may credit it;

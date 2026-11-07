@@ -363,7 +363,7 @@ function sendCompass(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Brie
   }
 
   if (!hasMemory) {
-    lines.push(dim("Hint: next | brief social | guide | quest | brief full"));
+    lines.push(dim("Hint: next | brief social | guide | brief full"));
   }
 
   ctx.send(eid, lines.join("\n"));
@@ -588,7 +588,6 @@ function sendFullBrief(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Br
       "",
       dim("New here? Try:"),
       bullet(bold("guide")),
-      bullet(bold("quest")),
       bullet(bold("help")),
       bullet(bold("look")),
     );

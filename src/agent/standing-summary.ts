@@ -40,7 +40,7 @@ const HOW_EARNED: Record<StandingKind, (() => string) | null> = {
     `assistance answer its requester adopts (${STANDING_AMOUNTS.assistance_adopted})`,
   assistance_abstained_confirmed: () =>
     `honest abstention the requester confirms (${STANDING_AMOUNTS.assistance_abstained_confirmed})`,
-  quest_complete: () => `onboarding quest (${STANDING_AMOUNTS.quest_complete})`,
+  quest_complete: () => `onboarding quest, removed (${STANDING_AMOUNTS.quest_complete})`,
   assistance_superseded: null,
   crew_member_stalled: null,
   pool_note: null,

@@ -3,7 +3,7 @@
 
 import { rankFloorRefusal } from "../src/engine/rank-floor";
 import type { MarinaDB } from "../src/persistence/database";
-import type { CommandInput, Entity, EntityId, RoomContext, RoomId, RoomModule } from "../src/types";
+import type { CommandInput, EntityId, RoomContext, RoomId, RoomModule } from "../src/types";
 import { rankLabel } from "../src/world/seed-guide";
 import type { WorldDefinition } from "../src/world/world-definition";
 import {
@@ -279,7 +279,6 @@ function marketRoom(opts: {
             answer: { marketId: opts.marketId, roomId: ctx.roomId, direction, confidence },
           });
         }
-        entity.properties.quest_predict = true;
         const marketsTraded = (entity.properties.markets_traded as number) ?? 0;
         entity.properties.markets_traded = marketsTraded + 1;
       },
@@ -336,8 +335,6 @@ function marketRoom(opts: {
           agreement,
           timestamp: Date.now(),
         });
-        const entity = ctx.getEntity(input.entity);
-        if (entity) entity.properties.quest_consensus = true;
       },
 
       resolve(ctx: RoomContext, input: CommandInput) {
@@ -908,49 +905,6 @@ const MARKET_ECON = marketRoom({
   marketId: "market:econ",
 });
 
-// ─── Quests ─────────────────────────────────────────────────────────────────
-//
-// Tutorial and analyst ceremonies were removed — they only re-checked flags
-// the agent could set by running ordinary commands. The guide pool (recalled
-// at boot for lean agents, surfaced via `pool guide recall` for humans) is
-// the inheritance surface. Forecaster stays because its `predict` /
-// `consensus` flags are set by market-room handlers and the steps trace a
-// real workflow that isn't obvious from the command list alone.
-
-const FORECASTER_QUEST = {
-  id: "forecaster",
-  name: "Apprentice Forecaster",
-  description:
-    "Learn the prediction workflow. Check live data, take a position, research evidence, and read the consensus.",
-  reward: "Forecaster badge + standing",
-  steps: [
-    {
-      id: "predict",
-      description: "Take a position in any market.",
-      hint: 'Enter a market room and type "predict yes 70 I believe this because..."',
-      check: (e: Entity) => (e.properties.quest_predict as boolean) === true,
-    },
-    {
-      id: "note",
-      description: "Record a research note supporting your position.",
-      hint: 'Type "note <evidence> importance 7 type fact".',
-      check: (e: Entity) => (e.properties.quest_note as boolean) === true,
-    },
-    {
-      id: "recall",
-      description: "Search for existing evidence.",
-      hint: 'Type "recall <topic>" to find relevant notes.',
-      check: (e: Entity) => (e.properties.quest_recall as boolean) === true,
-    },
-    {
-      id: "consensus",
-      description: "Check the market consensus.",
-      hint: 'Type "consensus" in a market room to see the weighted view.',
-      check: (e: Entity) => (e.properties.quest_consensus as boolean) === true,
-    },
-  ],
-} satisfies WorldDefinition["quests"][number];
-
 // ─── Guide Notes ────────────────────────────────────────────────────────────
 
 const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
@@ -1344,7 +1298,6 @@ const marketsWorld: WorldDefinition = {
     "markets/econ": MARKET_ECON,
     "markets/meta": META_ROOM,
   },
-  quests: [FORECASTER_QUEST],
   guideNotes: GUIDE_NOTES,
   canvas: {
     name: "markets",

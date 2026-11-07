@@ -1025,7 +1025,6 @@ export interface BriefData {
 }
 
 export type WorkItemKind =
-  | "quest_step"
   | "claimed_task"
   | "review_task"
   | "crew_active"

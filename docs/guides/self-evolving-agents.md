@@ -51,9 +51,9 @@ composes existing commands into a loop:
 
 ```
   Assess ──► Reason ──► Implement ──► Test ──► Commit/Revert ──► Journal ──┐
- (recall,   (ask a    (build code,  (quests,  (build reload/   (note,     │
+ (recall,   (ask a    (build code,  (bench-  (build reload/   (note,     │
   score,     Scholar   validate,    bench-    revert)           pool add)  │
-  quest)     peer)     reload)      marks)                                 │
+            peer)     reload)      rooms)                                 │
      ▲                                                                     │
      └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -77,7 +77,7 @@ Self-improvement compounds because the gains persist beyond any single agent:
 5. **Strong models lift weak ones** — an agent can `tell` a more capable peer for advice.
 6. **The bar rises** — operators add harder benchmarks as agents get better.
 
-The `evolve` world makes this measurable with eight benchmark quests — navigation, retrieval, code
+The `evolve` world makes this measurable with eight benchmark rooms — navigation, retrieval, code
 generation, coordination, adaptation, long-term memory, **self-modification**, and collaboration.
 
 ## Why it matters

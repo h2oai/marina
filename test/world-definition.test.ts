@@ -3,9 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { resolve } from "node:path";
-import { getStanding } from "../src/agent/standing";
 import { Engine } from "../src/engine/engine";
-import { getRank } from "../src/engine/permissions";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { loadRooms } from "../src/world/room-loader";
@@ -13,7 +11,7 @@ import { seedGuidePool } from "../src/world/seed-guide";
 import defaultWorld from "../worlds/default";
 import emptyWorld from "../worlds/empty";
 import showcaseWorld from "../worlds/showcase";
-import { cleanupDb, MockConnection, makeTestRoom, tempDbPath } from "./helpers";
+import { cleanupDb, MockConnection, tempDbPath } from "./helpers";
 
 describe("WorldDefinition: default world", () => {
   it("should be a compact inline workbench", () => {
@@ -39,15 +37,6 @@ describe("WorldDefinition: default world", () => {
     expect(defaultWorld.startRoom).toBe(roomId("workbench/start"));
     expect(defaultWorld.guideNotes[0]?.content).toContain("memory set outcome");
     expect(defaultWorld.afterAgentsReady).toBeDefined();
-  });
-
-  it("ships the First Steps onboarding quest, opt-in (no autoQuest ceremony)", () => {
-    // The quest command's own empty-state points at "quest start First Steps",
-    // so the default world must actually define it (it was removed in v0.3
-    // while the pointer survived — a new user's first suggested action 404'd).
-    // Built purely on the generic trackQuestProgress flags: no bespoke wiring.
-    expect(defaultWorld.quests.map((q) => q.name)).toContain("First Steps");
-    expect(defaultWorld.autoQuest).toBeUndefined();
   });
 
   it("should have guide notes", () => {
@@ -106,16 +95,8 @@ describe("WorldDefinition: empty world", () => {
     expect(Object.keys(emptyWorld.rooms).length).toBe(1);
   });
 
-  it("should have 0 quests", () => {
-    expect(emptyWorld.quests.length).toBe(0);
-  });
-
   it("should have 0 guide notes", () => {
     expect(emptyWorld.guideNotes.length).toBe(0);
-  });
-
-  it("should not have autoQuest", () => {
-    expect(emptyWorld.autoQuest).toBeUndefined();
   });
 });
 
@@ -165,97 +146,6 @@ describe("WorldDefinition: empty world engine", () => {
       const entity = engine.entities.get(result.entityId);
       expect(entity?.room).toBe(roomId("void/center"));
     }
-  });
-
-  it("should not auto-start any quest", () => {
-    const result = engine.login("c1", "Wanderer");
-    expect("entityId" in result).toBe(true);
-    if ("entityId" in result) {
-      const entity = engine.entities.get(result.entityId);
-      expect(entity?.properties.active_quest).toBeUndefined();
-    }
-  });
-
-  it("should have no objectives available", () => {
-    engine.login("c1", "Wanderer");
-    conn.clear();
-    engine.processCommand(conn.entity!, "quest list");
-    const text = conn.lastText();
-    // Should show header but no objective entries
-    expect(text).toContain("Available Objectives");
-    expect(text).not.toContain("First Steps");
-  });
-});
-
-describe("WorldDefinition: onComplete callback", () => {
-  let db: MarinaDB;
-  let engine: Engine;
-  let conn: MockConnection;
-  const dbPath = `/tmp/marina-oncomplete-test-${Date.now()}.db`;
-
-  beforeEach(() => {
-    db = new MarinaDB(dbPath);
-    engine = new Engine({
-      startRoom: roomId("hub/crossroads"),
-      tickInterval: 60_000,
-      db,
-      // The default world ships the First Steps quest (showcase defines none).
-      world: defaultWorld,
-    });
-    engine.registerRoom(
-      roomId("hub/crossroads"),
-      makeTestRoom({
-        short: "Crossroads",
-        items: { terminal: "A terminal." },
-        exits: {
-          north: roomId("knowledge/hub"),
-          east: roomId("markets/floor"),
-          south: roomId("coord/center"),
-        },
-      }),
-    );
-    engine.registerRoom(
-      roomId("knowledge/hub"),
-      makeTestRoom({ short: "Knowledge Hub", exits: { south: roomId("hub/crossroads") } }),
-    );
-    engine.registerRoom(
-      roomId("markets/floor"),
-      makeTestRoom({ short: "Trade Floor", exits: { west: roomId("hub/crossroads") } }),
-    );
-    engine.registerRoom(
-      roomId("coord/center"),
-      makeTestRoom({ short: "Coordination", exits: { north: roomId("hub/crossroads") } }),
-    );
-
-    conn = new MockConnection("c1");
-    engine.addConnection(conn);
-  });
-
-  afterEach(() => {
-    db.close();
-    cleanupDb(dbPath);
-  });
-
-  it("fires onComplete on quest completion; no standing (retired kind) and rank stays a standing lookup", () => {
-    engine.login("c1", "Player");
-    const entity = engine.entities.get(conn.entity!)!;
-
-    engine.processCommand(conn.entity!, "quest start First Steps");
-    engine.processCommand(conn.entity!, "look");
-    engine.processCommand(conn.entity!, "note the crossroads has a terminal");
-    engine.processCommand(conn.entity!, "recall terminal");
-    engine.processCommand(conn.entity!, "memory set goal explore");
-    engine.processCommand(conn.entity!, "say hello");
-    engine.processCommand(conn.entity!, "quest complete");
-
-    expect(conn.allTextJoined()).toContain("Completed: First Steps");
-    expect(entity.properties.title).toBe("Oriented");
-    // Quests are deprecated: `quest_complete` is a retired standing kind.
-    expect(getStanding(db, entity.id)).toBe(0);
-    // Joining, claiming or completing a quest is not a rank side channel:
-    // rank derives from standing thresholds only.
-    expect(getRank(entity)).toBe(0);
-    expect(db.getUserByName("Player")!.rank).toBe(0);
   });
 });
 

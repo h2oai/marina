@@ -1061,7 +1061,7 @@ export function summarizeAdherence(results: StepResult[]): {
 export function renderTranscript(tr: Transcript, maxChars = 14000): string {
   const t0 = tr.start;
   const lines = tr.events
-    .filter((e) => e.kind !== "cmd" || !/^(look|brief|help|who|next|quest status)\b/.test(e.text))
+    .filter((e) => e.kind !== "cmd" || !/^(look|brief|help|who|next)\b/.test(e.text))
     .map((e) => {
       const s = ((e.t - t0) / 1000).toFixed(0).padStart(4);
       const who = e.kind === "tell" ? `${e.actor}→${e.target}` : e.actor;

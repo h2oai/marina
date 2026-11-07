@@ -48,7 +48,7 @@ describe("evolve command (self-improvement coach)", () => {
     expect(text).toContain("Baseline");
     expect(text).toContain("skill store");
     // Two-systems disambiguation
-    expect(text).toContain("quest start");
+    expect(text).toContain("bench/retrieval");
     expect(text).toContain("benchmark run");
   });
 

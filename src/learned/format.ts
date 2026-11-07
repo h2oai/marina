@@ -281,7 +281,8 @@ export interface WorldDocument {
   start_room: string;
   rooms: WorldRoom[];
   guide_notes?: Array<{ content: string; importance: number; type: string }>;
-  quests?: Array<{ id: string; name: string; description: string }>;
+  /** Ignored: quests were removed. Bundles exported earlier may still carry it. */
+  quests?: unknown;
 }
 
 export interface WorldItem extends ItemBase {

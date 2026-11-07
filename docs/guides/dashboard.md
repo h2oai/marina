@@ -234,10 +234,6 @@ Escape and keep keyboard focus inside until closed.
 
 ### Progress and operator feedback
 
-The getting-started guide shows available quests, actual step completion, the next hint,
-and start/complete actions. It refreshes progress while open; sending an orientation command
-is displayed separately from completing a quest.
-
 Hover or keyboard-focus an entity in the roster or on the map for rank and standing (Marina's
 contribution score). Inventory, current task, and crew appear for the entity itself and
 authorized operators. **My inventory** stays visible in Context for the connected resident,

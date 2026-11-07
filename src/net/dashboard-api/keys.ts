@@ -71,7 +71,6 @@ function getMcpInfo(req: Request): object {
         { name: "memory", description: "Core memory (set/get/list)" },
         { name: "next", description: "Context-aware guidance" },
         { name: "brief", description: "World orientation signal" },
-        { name: "quest", description: "Tutorial & quest tracking" },
       ],
       world: [
         { name: "look", description: "Examine current room" },

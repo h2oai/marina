@@ -7,7 +7,6 @@ import { listWorkItems } from "../../coordination/work-loop";
 import { bold, dim, header, separator, status } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId } from "../../types";
-import type { QuestDef } from "../../world/world-definition";
 import { principalKind } from "../challenges";
 
 interface WorkDeps {
@@ -15,7 +14,6 @@ interface WorkDeps {
   db?: MarinaDB;
   taskManager?: TaskManager;
   crewManager?: CrewManager;
-  quests?: QuestDef[];
   startRoom?: string;
 }
 
@@ -36,7 +34,6 @@ export function workCommand(deps: WorkDeps): CommandDef {
           db: deps.db,
           taskManager: deps.taskManager,
           crewManager: deps.crewManager,
-          quests: deps.quests,
           startRoom: deps.startRoom,
           peers: ctx.entities,
           forAgent: principalKind(entity) === "agent",

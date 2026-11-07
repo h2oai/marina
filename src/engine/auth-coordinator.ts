@@ -52,7 +52,7 @@ export interface AuthHost {
   readonly entities: Pick<EntityManager, "get" | "findAgentByName" | "remove">;
   readonly briefs: Pick<BriefManager, "subscribe" | "unsubscribe">;
   readonly logger: Logger;
-  readonly world?: Pick<WorldDefinition, "autoQuest" | "autoBootstrap">;
+  readonly world?: Pick<WorldDefinition, "autoBootstrap">;
   spawnEntity(connId: string, name: string): Entity | undefined;
   /** Ingress through admission + per-entity FIFO (Engine.dispatchCommand). */
   dispatchCommand(entityId: EntityId, raw: string): Promise<unknown>;
@@ -406,18 +406,6 @@ export class AuthCoordinator {
 
     this.applyAdminBootstrap(entity, connId, identity);
 
-    // Auto-start quest for new people (rank 0). Quests are deprecated
-    // (goals, tasks, crews, skills and guides cover them); an agent is never
-    // given one: its focus and what it is given direct it.
-    const rank = (entity.properties.rank as number) ?? 0;
-    if (
-      rank === 0 &&
-      this.host.world?.autoQuest &&
-      !this.isAgentLogin(entity, this.host.connections.get(connId))
-    ) {
-      entity.properties.active_quest = this.host.world.autoQuest;
-    }
-
     // Auto-bootstrap commands for new entities
     if (isNewUser && this.host.world?.autoBootstrap) {
       for (const cmd of this.host.world.autoBootstrap) {
@@ -455,7 +443,7 @@ export class AuthCoordinator {
    * refuses a session that does not hold the account's full stored rank, so the
    * run restores the account's CURRENT stored rank (a later demotion applies).
    * Ban and principal status are checked as for a login. No session token is
-   * minted, and no first-login side effects (quest, bootstrap, brief) run. An
+   * minted, and no first-login side effects (bootstrap, brief) run. An
    * account whose entity is connected is refused: the caller runs the command
    * on that live entity instead.
    */

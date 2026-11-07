@@ -1243,34 +1243,6 @@ Invoke a resolver against external state and persist the result as a Sample. Res
 }
 ```
 
-## quest
-
-[deprecated: use goals (`memory set goal`), tasks, crews, skills and guides] Guided objectives and onboarding checklists
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "action": {
-      "type": "string",
-      "enum": [
-        "status",
-        "list",
-        "start",
-        "complete",
-        "abandon"
-      ],
-      "description": "Quest action (default: status)"
-    },
-    "name": {
-      "type": "string",
-      "description": "Quest name (for 'start' action)"
-    }
-  },
-  "$schema": "http://json-schema.org/draft-07/schema#"
-}
-```
-
 ## quit
 
 Disconnect from Marina and end your session

@@ -129,19 +129,6 @@ export const NAMED_COMMAND_FORMS = {
       choices: ["compass", "full"],
     },
   }),
-  quest: namedCommandForm("quest", {
-    action: {
-      kind: "choice",
-      placeholder: "Quest action (default: status)",
-      required: false,
-      choices: ["status", "list", "start", "complete", "abandon"],
-    },
-    name: {
-      kind: "text",
-      placeholder: "Quest name (for 'start' action)",
-      required: false,
-    },
-  }),
   look: namedCommandForm("look", {
     target: {
       kind: "text",

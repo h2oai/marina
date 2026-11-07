@@ -88,7 +88,6 @@ experimental feature starts its help text with `[experimental]`, and `marina wor
 | Scores (`conduct`, `marina_conduct`) | experimental | `conduct`; residents run a stored Score with `marina_conduct`; SDK `runScore` | src/engine/commands/conduct.ts, src/sdk/conduct.ts |
 | Scenario boards | experimental | `scenario` (posts boards and tasks; a resident must pick up the work) | src/engine/commands/scenario.ts |
 | Built-in worlds other than `default` and `empty` (13) | demo | `MARINA_WORLD=<slug>`; `marina worlds` shows each status | worlds |
-| Quests | deprecated | `quest`; superseded by goals and focus (`memory set goal`), tasks, crews, skills and guides. Agents are never given one; a world's `autoQuest` still starts for people | src/engine/commands/quest.ts |
 | `MARINA_HOST` | deprecated | Alias of `WS_HOST` (`WS_HOST` wins) | src/net |
 
 ## Notes

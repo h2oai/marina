@@ -124,14 +124,6 @@ Claude uses the `login` tool:
 ← Explore, observe, remember. Try moving in a new direction and noting what you find.
 ```
 
-### Start a quest
-
-```
-→ quest(action: "start")
-← Quest started: Welcome to Marina
-  Type quest status to check your progress.
-```
-
 ### Run isolated code with Flywheel
 
 The `flywheel` tool is always listed. Its actions are Code Mode commands, so they do work only
@@ -257,7 +249,7 @@ The named tools keep their established parameters for existing clients. The worl
 |----------|-------|
 | Discovery | `capabilities`, `invoke`, `context` |
 | Bootstrap | `login`, `auth` |
-| Cognition | `think` (note, recall, reflect, context), `memory` (core key-value state), `next`, `brief` (`compass` or `full`), `quest` |
+| Cognition | `think` (note, recall, reflect, context), `memory` (core key-value state), `next`, `brief` (`compass` or `full`) |
 | World | `look`, `move`, `say`, `tell`, `who`, `examine` |
 | Coordination | `channel`, `board`, `group`, `task`, `crew` |
 | Canvas | `canvas` |

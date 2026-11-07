@@ -493,13 +493,6 @@ export const FEATURE_STATUS: readonly FeatureStatusEntry[] = [
   },
   // ── deprecated ──────────────────────────────────────────────────────────
   {
-    name: "Quests",
-    status: "deprecated",
-    enable:
-      "`quest`; superseded by goals and focus (`memory set goal`), tasks, crews, skills and guides. Agents are never given one; a world's `autoQuest` still starts for people",
-    owner: "src/engine/commands/quest.ts",
-  },
-  {
     name: "`MARINA_HOST`",
     status: "deprecated",
     enable: "Alias of `WS_HOST` (`WS_HOST` wins)",

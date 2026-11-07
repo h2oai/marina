@@ -186,7 +186,6 @@ const commonsWorld: WorldDefinition = {
   startRoom: "hub/crossroads" as RoomId,
   rooms: {},
   roomsDir: join(import.meta.dir, "default"),
-  quests: [],
   guideNotes: GUIDE_NOTES,
   canvas: {
     name: "global",
