@@ -1297,7 +1297,7 @@ Manage tasks with leased create/claim/submit workflow
 
 ## tell
 
-Send durable private messages with delivery receipts
+Send durable private messages with delivery receipts; to an offline account it waits until they connect
 
 ```json
 {

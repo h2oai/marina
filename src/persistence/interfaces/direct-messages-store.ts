@@ -20,6 +20,18 @@ export interface DirectMessagesStore {
     cause?: string;
     depth?: number;
   }): DirectMessageRow;
+  queueDirectMessage(message: {
+    correlationId: string;
+    dedupeKey: string;
+    senderId: string;
+    senderName: string;
+    accountId: string;
+    targetName: string;
+    content: string;
+    cause?: string;
+    depth?: number;
+  }): { row: DirectMessageRow; duplicate: boolean } | { full: true };
+  takeQueuedDirectMessages(accountId: string, entityId: string, now?: number): DirectMessageRow[];
   getDirectMessage(id: number): DirectMessageRow | undefined;
   listDirectMessageInbox(targetId: string, limit?: number): DirectMessageRow[];
   acknowledgeDirectMessage(id: number, targetId: string, replyMessageId?: number): boolean;
@@ -41,6 +53,8 @@ export interface DirectMessagesStore {
 /** Runtime mirror of `DirectMessagesStore`'s method names — the drift test compares it to the facade. */
 export const DIRECT_MESSAGES_STORE_METHODS = [
   "createDirectMessage",
+  "queueDirectMessage",
+  "takeQueuedDirectMessages",
   "getDirectMessage",
   "listDirectMessageInbox",
   "acknowledgeDirectMessage",

@@ -3,6 +3,7 @@
 
 import { tell } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
+import { QUEUED_TELLS_PER_SENDER } from "../../persistence/db-direct-messages";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { failCommandResponse, refuseCommand } from "../command-response";
 import { envelopeFields, type MessageCause, messageEnvelope } from "../message-envelope";
@@ -51,12 +52,12 @@ export function deliverTell(
 ): number | undefined {
   const target = deps.findEntityGlobal(targetName);
   if (!target) {
+    // A known account that is offline gets the tell when it next connects.
+    const account = deps.db?.getUserByName(targetName);
+    if (account && deps.db) return queueTell(deps, ctx, senderId, sender, account, message, cause);
     // A refusal fails the command's result, so a correlated client (the
     // resident command relay, MCP, the SDK) reports it rather than success.
-    // A known account that is offline gets the route that still reaches it.
-    const refusal = deps.db?.getUserByName(targetName)
-      ? `"${targetName}" is offline; a tell reaches online entities only. Leave it where they will read it (\`board post <board> <title> | <body>\`, \`channel send <channel> <message>\`); \`who\` lists who is online.`
-      : `No one named "${targetName}" is online.`;
+    const refusal = `No one named "${targetName}" is online.`;
     ctx.send(senderId, refusal);
     failCommandResponse(refusal);
     return undefined;
@@ -133,6 +134,107 @@ export function deliverTell(
   return receipt?.id;
 }
 
+/**
+ * A tell for an account that is not connected waits, durably, until it next
+ * connects (`takeQueuedDirectMessages`, delivered by `deliverQueuedTells`). The
+ * sender's reply names it queued; it counts as the delivery of what the sender
+ * owed, so an agent answering an offline person does not retry or re-route it.
+ */
+function queueTell(
+  deps: TellDeps,
+  ctx: RoomContext,
+  senderId: EntityId,
+  sender: Entity,
+  account: { id: string; name: string },
+  message: string,
+  cause?: MessageCause,
+): number | undefined {
+  const envelope = messageEnvelope(senderId, cause);
+  const queued = deps.db!.queueDirectMessage({
+    correlationId: crypto.randomUUID(),
+    dedupeKey: Bun.hash(message.trim().toLowerCase()).toString(),
+    senderId,
+    senderName: sender.name,
+    accountId: account.id,
+    targetName: account.name,
+    content: message,
+    ...envelopeFields(envelope),
+  });
+  if ("full" in queued) {
+    const refusal = `"${account.name}" is offline and already has ${QUEUED_TELLS_PER_SENDER} of your messages waiting; they read them when they connect.`;
+    ctx.send(senderId, refusal);
+    failCommandResponse(refusal);
+    return undefined;
+  }
+  const { row, duplicate } = queued;
+  const messageRef = `tell:${row.id}`;
+  ctx.send(
+    senderId,
+    duplicate
+      ? `Already waiting for ${account.name}: #${row.id} (same text).`
+      : `${tell(account.name, message, "to")} [queued #${row.id}: ${account.name} is offline and reads it on connecting]`,
+    "tell",
+    {
+      delivery: { kind: "tell", target: account.name, message, queued: true },
+      messageRef,
+      ...envelopeFields(envelope),
+    },
+  );
+  if (!duplicate)
+    ctx.logEvent?.({
+      type: "tell_sent",
+      entity: senderId,
+      from: sender.name,
+      to: account.name,
+      messageRef,
+      ...envelopeFields(envelope),
+      timestamp: Date.now(),
+    });
+  return row.id;
+}
+
+/**
+ * Show an account's queued tells to its live entity, oldest first, as the
+ * ordinary tells they now are (`tell inbox`, `tell ack`, `re` all apply).
+ * Returns how many were delivered.
+ */
+export function deliverQueuedTells(deps: TellDeps, entityId: EntityId, accountId: string): number {
+  const db = deps.db;
+  if (!db) return 0;
+  const rows = db.takeQueuedDirectMessages(accountId, entityId);
+  const target = deps.getEntity(entityId);
+  for (const row of rows) {
+    const live = deps.findEntityGlobal(row.sender_name);
+    const senderIsAgent = live
+      ? (deps.isAgent?.(live.id) ?? false)
+      : !!(db.getAgentConfig(row.sender_name) || db.getPrincipal("agent", row.sender_name));
+    const messageRef = `tell:${row.id}`;
+    const envelope = { ...(row.cause ? { cause: row.cause } : {}), depth: row.depth ?? 0 };
+    deps.sendGlobal(
+      entityId,
+      `${tell(row.sender_name, row.content, "from")} (sent while you were away)`,
+      (live?.id ?? row.sender_id) as EntityId,
+      "tell",
+      {
+        senderName: row.sender_name,
+        to: row.target_name,
+        message: row.content,
+        messageId: row.id,
+        correlationId: row.correlation_id,
+        messageRef,
+        queuedAt: row.created_at,
+        ...(deps.isAgent ? { senderKind: senderIsAgent ? "agent" : "person" } : {}),
+        ...envelope,
+      },
+    );
+    if (target) {
+      target.properties.last_tell_from = row.sender_name;
+      target.properties.last_tell_id = row.id;
+    }
+  }
+  return rows.length;
+}
+
 export function tellCommand(deps: TellDeps): CommandDef {
   return {
     category: "Communication",
@@ -145,7 +247,7 @@ export function tellCommand(deps: TellDeps): CommandDef {
     ],
     name: "tell",
     aliases: ["whisper", "msg"],
-    help: "Send durable private messages with delivery receipts. Usage: tell <entity> [ttl:30s] <message> | tell inbox | tell read <id> | tell status <id> | tell ack <id>\n(ttl also accepts --ttl 30s / --ttl=30s; units 30s, 5m, 2h, 1d)",
+    help: "Send durable private messages with delivery receipts; to an offline account it waits until they connect. Usage: tell <entity> [ttl:30s] <message> | tell inbox | tell read <id> | tell status <id> | tell ack <id>\n(ttl also accepts --ttl 30s / --ttl=30s; units 30s, 5m, 2h, 1d)",
     handler: (ctx: RoomContext, input) => {
       const sender = deps.getEntity(input.entity);
       if (!sender) return;
