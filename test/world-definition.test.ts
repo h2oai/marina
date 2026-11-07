@@ -236,7 +236,7 @@ describe("WorldDefinition: onComplete callback", () => {
     cleanupDb(dbPath);
   });
 
-  it("fires onComplete on quest completion and credits standing — rank stays a standing lookup", () => {
+  it("fires onComplete on quest completion; no standing (retired kind) and rank stays a standing lookup", () => {
     engine.login("c1", "Player");
     const entity = engine.entities.get(conn.entity!)!;
 
@@ -250,9 +250,10 @@ describe("WorldDefinition: onComplete callback", () => {
 
     expect(conn.allTextJoined()).toContain("Completed: First Steps");
     expect(entity.properties.title).toBe("Oriented");
-    expect(getStanding(db, entity.id)).toBeGreaterThan(0);
+    // Quests are deprecated: `quest_complete` is a retired standing kind.
+    expect(getStanding(db, entity.id)).toBe(0);
     // Joining, claiming or completing a quest is not a rank side channel:
-    // rank derives from standing thresholds only (quest credit 3 < rank-1's 5).
+    // rank derives from standing thresholds only.
     expect(getRank(entity)).toBe(0);
     expect(db.getUserByName("Player")!.rank).toBe(0);
   });

@@ -346,6 +346,9 @@ export const FEATURE_POSTURE: Readonly<Record<string, Posture>> = {
     JAN_15,
   ),
   "Scenario boards": measure(operator, RECORDS_ONLY, JAN_15),
+  Quests: byDesign(
+    "deprecated: goals and focus, tasks, crews, skills and guides do its work; removed after a release that announces it",
+  ),
   "Built-in worlds other than `default` and `empty` (13)": byDesign("demo worlds"),
   "`MARINA_HOST`": byDesign("deprecated alias of `WS_HOST`"),
 };

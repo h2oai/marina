@@ -23,7 +23,7 @@ import { cleanupDb, tempDbPath } from "./helpers";
 
 const TEST_DB = tempDbPath("test_standing.db");
 /** A live kind with a fixed default amount, for the ledger mechanics below. */
-const KIND = "quest_complete" as const;
+const KIND = "experiment_complete" as const;
 const AMOUNT = STANDING_AMOUNTS[KIND];
 
 describe("Standing — civic-contribution ledger", () => {
@@ -101,7 +101,6 @@ describe("Standing — civic-contribution ledger", () => {
         "forecast_resolved",
         "experiment_complete",
         "assistance_adopted",
-        "quest_complete",
       ]),
     );
     expect(computeFromLedger(db, "e_bob")).toBeCloseTo(Math.max(0, expected), 2);
