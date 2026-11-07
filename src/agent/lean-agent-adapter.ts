@@ -6156,11 +6156,16 @@ export class LeanAgentAdapter implements AgentHandle {
    * are no parts or the read fails — never throws, never blocks boot.
    */
   private async recoverPreservedExcerpt(sourceIds: string[] | undefined): Promise<string> {
-    const latest = sourceIds?.at(-1);
-    if (!latest) return "";
-    const text = await this.platformMemory.readSourceExcerpt(latest, BOOT_ARCHIVE_SUMMARY_BYTES);
-    if (!text) return "";
-    return truncateToBytes(text.replace(/\s+/g, " ").trim(), BOOT_ARCHIVE_SUMMARY_BYTES);
+    // The newest part with content: a stored transcript ends with its closing
+    // `]` part and separates messages with `,` parts, which say nothing.
+    for (const id of (sourceIds ?? []).slice(-4).reverse()) {
+      const text = (
+        await this.platformMemory.readSourceExcerpt(id, BOOT_ARCHIVE_SUMMARY_BYTES)
+      )?.trim();
+      if (text && !/^[[\],]$/.test(text))
+        return truncateToBytes(text.replace(/\s+/g, " "), BOOT_ARCHIVE_SUMMARY_BYTES);
+    }
+    return "";
   }
 
   private startCheckpointTimer(): void {
