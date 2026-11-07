@@ -24,7 +24,7 @@ identity, permissions, command execution, onboarding and memory retrieval. Start
    rank, safety gates, room precedence, audit events or rate limits.
 4. **Share onboarding.** Use `onboardParticipant` for a connected resident, passing
    resume state. Stateless opted-in interfaces render `participantOrientation`
-   without running arrival actions. Do not copy a static command roster or quest list.
+   without running arrival actions. Do not copy a static command roster.
 5. **Bind context to the caller.** Use `previewParticipantContext` for a resident's
    explicit query, or the same `buildUnifiedContext` policy used by agent prompts.
    Recheck the connection identity before delivery. Preserve provenance tiers,

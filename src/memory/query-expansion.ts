@@ -215,7 +215,7 @@ export async function expansionForEntity(
  * The first call for an entity returns `undefined` (no expansion yet) and
  * schedules the fetch; later calls within the TTL expand from the cached
  * vocabulary. This keeps `recall` replies in the same tick — the SDK's reply
- * window and the engine's quest tracker both depend on that.
+ * window depends on that.
  */
 const VOCABULARY_CACHE_TTL_MS = 60_000;
 interface VocabularyCacheEntry {

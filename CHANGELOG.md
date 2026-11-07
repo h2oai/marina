@@ -605,6 +605,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scripts/arena-wiki-backtest.ts` compares the entrant in `MARINA_ARENA_ENTRANT` (or
   `--entrant`) instead of a built-in id. Operators who filed before must now set their identity.
 
+### Removed
+
+- **Quests are removed.** They were deprecated in the previous change; goals and focus, tasks
+  (claim, submit, approval), crews, skills and guides do the work quests did.
+  - The `quest` command, the MCP `quest` named tool, the SDK's `quest()` method and its
+    `quest_*` / `active_quest` property types, and `GET /api/entities/:name/quests` are gone. The
+    MCP tool's frozen contract is removed with it: a client that still calls `quest` gets an
+    unknown-tool error.
+  - `WorldDefinition.quests`, `autoQuest`, `QuestDef` and `QuestStep` are removed, and so is every
+    world's quest list. A custom world that still sets `quests` fails to typecheck; drop the field.
+    A learned world bundle exported with quests still imports; the quests are ignored.
+  - The dashboard's quest progress card and the `quest_step` work item are removed.
+  - The `evolve` world's eight benchmarks are rooms now: entering one starts an attempt and
+    finishing it records the score on the scoreboard, as before.
+  - The `demos` world's guided start lives in its guide notes and the lobby's directions: the
+    Workshop path (`workshop`, `begin`, `status`, `creation`) and the Bridge path (`bridge`,
+    `launch`, `connect`, `link`, `ping`).
+  - `quest_complete` stays a retired standing kind. Its rows remain as history and count toward
+    nothing.
+
 ### Fixed
 
 - **A refused or failed command now says so to its caller.** Over 100 handler paths (agent spawn,

@@ -698,7 +698,7 @@ export class Engine {
       timestamp: Date.now(),
     });
 
-    // Fire onEnter for the start room (spawning room agents, quests, etc.)
+    // Fire onEnter for the start room (spawning room agents, etc.)
     const room = this.rooms.get(entity.room);
     if (room?.module.onEnter && ctx) {
       try {

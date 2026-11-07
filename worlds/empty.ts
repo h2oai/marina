@@ -15,7 +15,6 @@ const emptyWorld: WorldDefinition = {
       long: "An infinite expanse of nothing. You float in silence.",
     },
   },
-  quests: [],
   guideNotes: [],
   seed: (db: MarinaDB) => seedTraitsAndRoles(db),
 };

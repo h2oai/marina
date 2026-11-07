@@ -64,7 +64,6 @@
     "test/ops-api.test.ts": 1535,
     "test/memory-transfer-lifecycle.test.ts": 1526,
     "test/admin.test.ts": 1523,
-    "test/quest.test.ts": 1511,
     "test/adapters.test.ts": 1487,
     "test/response-cache.test.ts": 1466,
     "test/phase6-db-primitives.test.ts": 1457,

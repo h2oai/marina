@@ -46,10 +46,9 @@ browser/desktop/TUI presentation differences and native release validation requi
 
 The authenticated `discovery.ts` group precedes the entity catch-all. It serves
 `GET /api/command-catalog` from the live command registry, bounded `GET /api/search?q=…`,
-and `/api/entities/:name/preview|quests`. Search filters legacy note FTS hits with the same
+and `/api/entities/:name/preview`. Search filters legacy note FTS hits with the same
 memory observer and excludes process/service notes. Previews expose inventory and work only
-to the owner or operator; quests use the world's real step predicates with the same owner
-read check. Wire contracts live in `src/net/discovery-types.ts` and are imported type-only
+to the owner or operator. Wire contracts live in `src/net/discovery-types.ts` and are imported type-only
 by the dashboard. The palette drafts via `marina:draft-command` and sends only on explicit
 submission through the existing chat command route.
 

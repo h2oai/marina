@@ -144,7 +144,6 @@ const personalWorld: WorldDefinition = {
       },
     },
   },
-  quests: [],
   guideNotes: GUIDE_NOTES,
   seed,
 };

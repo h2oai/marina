@@ -119,10 +119,6 @@ describe("seeded knowledge references only real commands", () => {
         ...Object.values(world.rooms).map((room) =>
           typeof room.long === "string" ? room.long : "",
         ),
-        ...world.quests.flatMap((quest) => [
-          quest.description,
-          ...quest.steps.flatMap((step) => [step.description, step.hint]),
-        ]),
       ];
       const roomCommands = Object.values(world.rooms).flatMap((room) =>
         Object.keys(room.commands ?? {}),

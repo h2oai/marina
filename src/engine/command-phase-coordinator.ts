@@ -15,7 +15,6 @@ import { aliasNotice } from "./command-families";
 import { commandInputForLog, isUnloggedForm } from "./command-redaction";
 import { failCommandResponse, observeHandlerOutcome, withoutRefusal } from "./command-response";
 import type { CommandRouter } from "./command-router";
-import { trackQuestProgress } from "./commands/quest";
 import { closestName } from "./did-you-mean";
 import { getErrorMessage, tryLog } from "./errors";
 import { commandFenceFor, fenceDecision, fenceRefusal } from "./evidence-fence";
@@ -177,7 +176,7 @@ export class CommandPhaseCoordinator {
     const room = this.host.rooms.get(entity.room);
     // A family form (`memory recall x`, src/engine/command-families.ts) runs
     // as its member (`recall x`) from here on: same definition, gates, fence
-    // row, quest progress, usage and logged input. Not when this room shadows
+    // row, usage and logged input. Not when this room shadows
     // the head; a forwarded member always resolves to the builtin.
     const family =
       room?.module.commands && Object.hasOwn(room.module.commands, parsed.verb)
@@ -339,13 +338,13 @@ export class CommandPhaseCoordinator {
     const ctx = opts?.codingTarget ? { ...baseCtx, codingTarget: opts.codingTarget } : baseCtx;
 
     // A handler that refuses (`failCommandResponse`: not the creator, no such
-    // pool, …) records failed usage and activity; it ran, so quest progress
+    // pool, …) records failed usage and activity; it ran, so activity
     // and the `command` event are unchanged.
     let refused = false;
     try {
       // Await async handlers so callers that `await processCommand` get
       // proper sequencing. A rejected promise is the same failure as a
-      // synchronous throw: no quest progress, a failed activity row, failed
+      // synchronous throw: a failed activity row, failed
       // usage and no `command` event.
       const observed = observeHandlerOutcome(() => handler(ctx, input));
       refused = (observed instanceof Promise ? await observed : observed).failed !== undefined;
@@ -373,9 +372,6 @@ export class CommandPhaseCoordinator {
     // trailing line, once per session (entity id) per alias.
     if (!family.forwarded && resolved?.owner === "builtin" && def)
       this.announceAlias(entityId, def.name);
-
-    // Track quest progress based on command type
-    this.trackQuest(entityId, input.verb, routedRaw);
 
     // Track activity for novelty scoring (with success) and record usage in ONE
     // commit: as separate autocommits each row was its own fsync under full
@@ -509,94 +505,5 @@ export class CommandPhaseCoordinator {
     }
 
     return `code ${trimmed}`;
-  }
-
-  private trackQuest(entityId: EntityId, verb: string, raw?: string): void {
-    const entity = this.host.entities.get(entityId);
-    if (!entity?.properties.active_quest) return;
-
-    if (verb === "look" || verb === "l") {
-      trackQuestProgress(entity, "look");
-    } else if (verb === "say" || verb === "'") {
-      trackQuestProgress(entity, "say");
-    } else if (verb === "examine" || verb === "ex" || verb === "x") {
-      trackQuestProgress(entity, "examine");
-    } else if (
-      [
-        "move",
-        "go",
-        "north",
-        "south",
-        "east",
-        "west",
-        "up",
-        "down",
-        "n",
-        "s",
-        "e",
-        "w",
-        "u",
-        "d",
-        "northeast",
-        "northwest",
-        "southeast",
-        "southwest",
-        "ne",
-        "nw",
-        "se",
-        "sw",
-      ].includes(verb)
-    ) {
-      trackQuestProgress(entity, "move", entity.room);
-    } else if (verb === "memory") {
-      const lower = raw?.toLowerCase() ?? "";
-      if (lower.startsWith("memory set ") || lower.startsWith("memory set\t")) {
-        trackQuestProgress(entity, "memory_set");
-      }
-    } else if (verb === "note") {
-      const lower = raw?.toLowerCase().trim() ?? "";
-      const noteSubs = [
-        "list",
-        "search",
-        "space",
-        "delete",
-        "link",
-        "trace",
-        "graph",
-        "correct",
-        "types",
-        "evolve",
-      ];
-      const firstToken = lower.split(/\s+/)[1] ?? "";
-      if (lower !== "note" && !noteSubs.includes(firstToken)) {
-        trackQuestProgress(entity, "note_create");
-      }
-    } else if (verb === "recall") {
-      trackQuestProgress(entity, "recall");
-    } else if (verb === "reflect") {
-      trackQuestProgress(entity, "reflect");
-    } else if (verb === "project") {
-      const lower = raw?.toLowerCase().trim() ?? "";
-      if (lower.includes(" join")) {
-        trackQuestProgress(entity, "project_join");
-      }
-    } else if (verb === "task") {
-      const lower = raw?.toLowerCase().trim() ?? "";
-      if (lower.startsWith("task claim ")) {
-        trackQuestProgress(entity, "task_claim");
-      } else if (lower.startsWith("task submit ")) {
-        trackQuestProgress(entity, "task_submit");
-      }
-    } else if (verb === "pool") {
-      const lower = raw?.toLowerCase().trim() ?? "";
-      if (lower.includes(" add ")) {
-        trackQuestProgress(entity, "pool_add");
-      }
-    } else if (verb === "channel") {
-      const lower = raw?.toLowerCase().trim() ?? "";
-      if (lower.startsWith("channel send ")) {
-        trackQuestProgress(entity, "channel_send");
-      }
-    }
   }
 }

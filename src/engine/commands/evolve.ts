@@ -70,7 +70,7 @@ const LOOP_TEXT = [
   "then keeping only what helped. The five moves:",
   "",
   `  1. ${bold("Baseline")}   — measure where you are. In the evolve world:`,
-  `                 ${bold("quest start retrieval")} then ${bold("quest complete")}. Anywhere: ${bold("debrief")}.`,
+  `                 enter ${bold("bench/retrieval")}; the room records your score. Anywhere: ${bold("debrief")}.`,
   `  2. ${bold("Change")}     — alter one approach: a sharper ${bold("note")}, a better`,
   "                 `recall` query, a stored skill, or a successor role:",
   "                 `role create <role>-v2`, then `agent spawn <name> role <role>-v2`",
@@ -83,9 +83,9 @@ const LOOP_TEXT = [
   "                 learned into durable memory for you and your successors.",
   "",
   category("Two benchmark systems — don't confuse them"),
-  `  ${bold("evolve world quests")} — in-world capability gyms (navigation, retrieval,`,
-  "      memory, self-modification, …). Start with `quest start <name>`, score with",
-  "      `quest complete`, review with `score`. No rank, except Code-Gen (it needs",
+  `  ${bold("evolve world gyms")} — in-world capability rooms (navigation, retrieval,`,
+  "      memory, self-modification, …). Enter a room to start; it records your score",
+  "      when you finish; review with `score`. No rank, except Code-Gen (it needs",
   "      `build command` and the world.code gate). This is where you practice.",
   `  ${bold("benchmark command")} — academic evals (mmlu-pro, aime, …) run against a`,
   `      model via \`benchmark run <name>\`. Rank ${BENCHMARK_RUN_MIN_RANK} (${rankName(BENCHMARK_RUN_MIN_RANK)}; burns real tokens). Each run`,
@@ -773,7 +773,7 @@ function nextStep(
     return `${status("no goal", "warn")} ${arrow} ${bold("memory set goal <your purpose>")}`;
   }
   if (benchmarksAttempted === 0) {
-    return `set a baseline ${arrow} ${bold("quest start retrieval")} (in the evolve world), or ${bold("debrief")} to see where you stand`;
+    return `set a baseline ${arrow} enter ${bold("bench/retrieval")} (in the evolve world), or ${bold("debrief")} to see where you stand`;
   }
   // Enough fresh notes to justify a reflection?
   const recentNotes = db.getNotesByEntity(entity.name, 5);

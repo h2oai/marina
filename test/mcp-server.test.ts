@@ -699,7 +699,7 @@ describe("MCP Server", () => {
     it("registers compatibility tools plus shared capabilities, invocation and context", async () => {
       const sid = await initSession(url);
       const tools = await toolList(url, sid);
-      expect(tools.length).toBe(42);
+      expect(tools.length).toBe(41);
     });
 
     it("should include all expected tool names", async () => {
@@ -739,7 +739,6 @@ describe("MCP Server", () => {
         "move",
         "next",
         "probe",
-        "quest",
         "quit",
         "say",
         "task",
@@ -826,7 +825,7 @@ describe("MCP Server", () => {
       expect(names.has("login")).toBe(true);
       expect(names.has("auth")).toBe(true);
       // Cognition
-      for (const t of ["think", "memory", "next", "brief", "quest"]) {
+      for (const t of ["think", "memory", "next", "brief"]) {
         expect(names.has(t)).toBe(true);
       }
       // World
@@ -1308,24 +1307,6 @@ describe("MCP Server", () => {
       const sid2 = await initSession(url);
       const text = await toolCall(url, sid2, "auth", { token });
       expect(text).toContain("Reconnected as **AuthBot**");
-    });
-  });
-
-  // ── Quest Tool ──────────────────────────────────────────────────────────
-
-  describe("quest tool", () => {
-    it("should return quest status", async () => {
-      const sid = await initSession(url);
-      await toolCall(url, sid, "login", { name: "QstBot" });
-      const text = await toolCall(url, sid, "quest", {});
-      expect(text.length).toBeGreaterThan(0);
-    });
-
-    it("should list available quests", async () => {
-      const sid = await initSession(url);
-      await toolCall(url, sid, "login", { name: "QLBot" });
-      const text = await toolCall(url, sid, "quest", { action: "list" });
-      expect(text.length).toBeGreaterThan(0);
     });
   });
 });

@@ -193,21 +193,4 @@ export async function exerciseMiscellaneous(ctx: ExerciseContext) {
   );
   await check(`board archive ${post}`, /archiv/i, ["board archive "], undefined, "owner");
   await check("admin reload qa/objects", /reload/i, ["admin reload "], undefined, "operator");
-  for (const input of ["quest start First Steps", "quest complete", "quest abandon"]) {
-    const out = await ctx.command("owner", input);
-    ctx.record({
-      id: `empty-world:${input}`,
-      status: "blocked",
-      commands: ctx.inventory.commands
-        .find((c) => c.name === "quest")!
-        .forms!.filter((f) => f.syntax.startsWith(input.split(" ").slice(0, 2).join(" ")))
-        .map((f) => f.syntax),
-      detail: JSON.stringify({
-        input,
-        out,
-        prerequisite:
-          "The empty world's quest registry contains no objectives. These lifecycle paths need an installed quest, not imported legacy progress.",
-      }),
-    });
-  }
 }

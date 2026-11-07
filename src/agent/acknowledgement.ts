@@ -223,7 +223,6 @@ const ID_COMMANDS = new Set([
   "code",
   "note",
   "project",
-  "quest",
   "schedule",
   "task",
   "tasks",

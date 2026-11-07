@@ -1093,7 +1093,6 @@ const craftWorld: WorldDefinition = {
   name: "Craft",
   startRoom: "craft/workshop" as RoomId,
   rooms: craftRooms(),
-  quests: [],
   guideNotes: GUIDE_NOTES,
   seed,
 };

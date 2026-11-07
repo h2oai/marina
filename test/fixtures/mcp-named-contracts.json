@@ -82,22 +82,6 @@
     },
     "additionalProperties": false
   },
-  "quest": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "type": "object",
-    "properties": {
-      "action": {
-        "description": "Quest action (default: status)",
-        "type": "string",
-        "enum": ["status", "list", "start", "complete", "abandon"]
-      },
-      "name": {
-        "description": "Quest name (for 'start' action)",
-        "type": "string"
-      }
-    },
-    "additionalProperties": false
-  },
   "look": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",

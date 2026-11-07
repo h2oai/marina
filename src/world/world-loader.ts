@@ -49,7 +49,6 @@ export async function loadWorld(
     !world.rooms ||
     Array.isArray(world.rooms) ||
     typeof world.rooms !== "object" ||
-    !Array.isArray(world.quests) ||
     !Array.isArray(world.guideNotes)
   )
     throw new Error("Invalid WorldDefinition export");

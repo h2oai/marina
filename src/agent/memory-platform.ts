@@ -289,19 +289,6 @@ export class PlatformMemoryBackend {
     };
   }
 
-  /**
-   * Fetch the agent's active-quest progress via `quest status`. `active` is
-   * false when there is no active objective, so the continuation prompt can
-   * surface progress in-context (and skip it otherwise) instead of the agent
-   * re-running `quest status` to re-discover what it already knows.
-   */
-  async questStatus(): Promise<{ text: string; active: boolean }> {
-    const perceptions = await this.client.command("quest status");
-    const text = extractText(perceptions);
-    const active = text.trim().length > 0 && !/no active objective/i.test(text);
-    return { text, active };
-  }
-
   async archiveContext(
     messages: unknown[],
     summary: string,

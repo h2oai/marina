@@ -61,40 +61,6 @@ export interface KnownProperties extends Record<string, unknown> {
   last_tell_id?: number;
   bookmarks?: { room: RoomId; note?: string }[];
 
-  // ─── Quest state ────────────────────────────────────────────────────────────
-  active_quest?: string;
-  completed_quests?: string[];
-  quest_sectors?: string[];
-  quest_note_count?: number;
-  quest_look?: boolean;
-  quest_move?: boolean;
-  quest_say?: boolean;
-  quest_examine?: boolean;
-  quest_memory_set?: boolean;
-  quest_note?: boolean;
-  quest_recall?: boolean;
-  quest_reflect?: boolean;
-  quest_project_join?: boolean;
-  quest_task_claim?: boolean;
-  quest_task_submit?: boolean;
-  quest_pool_add?: boolean;
-  quest_channel_send?: boolean;
-  quest_channel_join?: boolean;
-  quest_predict?: boolean;
-  quest_consensus?: boolean;
-  quest_build?: boolean;
-  quest_note_link?: boolean;
-
-  // ─── Demo quest flags ───────────────────────────────────────────────────────
-  quest_entered_workshop?: boolean;
-  quest_agent_spawned?: boolean;
-  quest_room_built?: boolean;
-  quest_visited_creation?: boolean;
-  quest_entered_bridge?: boolean;
-  quest_gateway_added?: boolean;
-  quest_channel_bridged?: boolean;
-  quest_cross_message?: boolean;
-
   // ─── Markets ────────────────────────────────────────────────────────────────
   markets_traded?: number;
   markets_resolved?: number;

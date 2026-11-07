@@ -92,7 +92,7 @@ off-by-default setting has no entry.
 | `MARINA_ROUTE_EVIDENCE_WINDOW` | outcomes (any) | live-work evidence picks the same or better models as the benchmark ledger | 2026-12-01 |
 | `MARINA_VERIFY_ARBITER` | judge ledger surface arbiter | overrule precision clears the Arbiter's earned bar | 2026-12-01 |
 
-## By design (40)
+## By design (39)
 
 | Subject | Reason |
 |---|---|
@@ -110,7 +110,6 @@ off-by-default setting has no entry.
 | Federation (gateways, meshes) | needs a peer instance and a shared secret |
 | Media generation jobs | needs a media-capable provider |
 | Built-in worlds other than `default` and `empty` (13) | demo worlds |
-| Quests | deprecated: goals and focus, tasks, crews, skills and guides do its work; removed after a release that announces it |
 | `MARINA_HOST` | deprecated alias of `WS_HOST` |
 | `MARINA_AGENT_CACHE_KEEPALIVE` | spends tokens on idle pings; worth it only for known traffic |
 | `MARINA_ALLOW_INSECURE_PUBLIC` | acknowledges an unauthenticated non-loopback bind |

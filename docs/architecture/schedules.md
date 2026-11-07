@@ -31,7 +31,7 @@ A `before:` run never runs after its deadline; it is recorded as `missed`.
 
 ## How a run executes
 
-Every run is `submitCommand` + `processCommand` on the **owner's** entity, in that entity's FIFO slot, wrapped in `withCommandResponse` so the result (ok, or the first error) is captured. Rank, safety gates, challenges, spend caps, audit and quest/usage accounting are exactly those of a typed command. A schedule never grants authority.
+Every run is `submitCommand` + `processCommand` on the **owner's** entity, in that entity's FIFO slot, wrapped in `withCommandResponse` so the result (ok, or the first error) is captured. Rank, safety gates, challenges, spend caps, audit and usage accounting are exactly those of a typed command. A schedule never grants authority.
 
 - **Owner connected** (a person online, or a running agent): the command runs on that live entity. Its output, and a `[schedule <name>] <command>` line, reach the owner's own session.
 - **Person offline:** a quiet in-process connection (`Connection.quiet`, so the room sees no connect or disconnect line) attaches to the account with `Engine.attachScheduled`, runs, and detaches.

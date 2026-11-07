@@ -48,7 +48,7 @@ sha256 hash in `manifest.json`, and `signature.json` signs the manifest
 | `defaults.jsonl` | Promoted benchmark defaults, each with an evidence summary that holds numbers only. |
 | `evidence.jsonl` | Aggregate ledger statistics per descriptor, family and (internal packs only) benchmark. A cell is exported only when it has at least 20 items. |
 | `roles.jsonl` | Roles adopted through `world adopt`, as RoleBundle v1. |
-| `world.jsonl` | World bundles only: the data-only world document (rooms, exits, guide notes, quest descriptions). |
+| `world.jsonl` | World bundles only: the data-only world document (rooms, exits, guide notes). Older bundles that carry quests still import; the quests are ignored. |
 | `room-sources.jsonl` | World bundles only: room source code as inert text, flagged for review under `world.code`. |
 
 Every item has two identifiers:

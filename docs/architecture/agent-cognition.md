@@ -7,7 +7,7 @@
 - **Shared memory across agents**: write for whoever comes next — notes, reflections, and skills outlive individual agents and become starting points for successors
 - **Principles**: "HOW TO BE" (`DEFAULT_HOW_TO_BE` in `src/agent/prompts/lean-system.ts`, replaceable by a role) is five prose bullets — preserve autonomy; answer direct messages and served channels with information only (no acks, `key: value` one-liners, silence is a valid reply); ask before assuming when a missing fact changes the action, else make a bounded, reversible move; disagree when evidence warrants it rather than optimize for praise or the appearance of progress; validate and cite evidence before `task submit`
 - **Response format**: "EVERY TURN" — read, think, then act or rest deliberately (prose alone reaches no one; resting is a declared choice, not a silent failure)
-- **Discovery**: agents learn the world through quests and exploration, not prompt injection
+- **Discovery**: agents learn the world through exploration, guides and the work that reaches them, not prompt injection
 
 ## The continuation prompt
 - **Continuation prompt**: the core cognitive sections, fired on staggered cycle intervals in `lean-agent-adapter.ts` (the other named sections — endpoint request, budget, silent-turn nudge, … — are listed under per-section byte metrics below):

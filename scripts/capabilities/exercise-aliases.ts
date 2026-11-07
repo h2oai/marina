@@ -39,7 +39,6 @@ export async function exerciseAliases(ctx: ExerciseContext) {
     position: "list",
     productivity: "",
     project: "list",
-    quest: "list",
     readiness: "",
     scenario: "status",
     schedule: "list",

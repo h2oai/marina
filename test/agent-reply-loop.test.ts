@@ -79,7 +79,6 @@ function resident(name: string, config: Record<string, unknown> = {}) {
   pm.workInbox = async () => ({ success: true, text: "" });
   pm.getNoveltySuggestions = async () => [];
   pm.orient = async () => ({ success: true, text: "" });
-  pm.questStatus = async () => ({ active: false, text: "" });
   pm.unifiedContext = async () => ({ success: true, text: "", context: null });
   pm.lessonsFor = async () => ({ lines: [], ids: [] });
   pm.getCoreValue = async () => undefined;

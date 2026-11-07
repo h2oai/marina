@@ -65,7 +65,7 @@ export function observeHandlerOutcome(
 ): { failed?: string } | Promise<{ failed?: string }> {
   const outcome: HandlerOutcome = {};
   // A synchronous handler stays synchronous: callers that do not await the
-  // command (tests, housekeeping) still see its quest and activity effects.
+  // command (tests, housekeeping) still see its activity effects.
   const result = handlerOutcomes.run(outcome, execute);
   return result instanceof Promise ? result.then(() => outcome) : outcome;
 }

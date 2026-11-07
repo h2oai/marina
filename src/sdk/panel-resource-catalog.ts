@@ -18,7 +18,6 @@ const routes: ReadonlyArray<readonly [string, string, string?]> = [
   ["entity", "/api/entities/:name"],
   ["entity.brief", "/api/entities/:name/brief"],
   ["entity.work", "/api/entities/:name/work"],
-  ["entity.quests", "/api/entities/:name/quests"],
   ["room", "/api/rooms/:id"],
   ["feed", "/api/feed", "limit,kind,entity,since,until"],
   ["events", "/api/events", "limit"],

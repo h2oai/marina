@@ -25,9 +25,9 @@
  */
 
 import type { MarinaDB } from "../src/persistence/database";
-import type { Entity, RoomId, RoomModule } from "../src/types";
+import type { RoomId, RoomModule } from "../src/types";
 import { rankLabel } from "../src/world/seed-guide";
-import type { GuideNote, QuestDef, WorldDefinition } from "../src/world/world-definition";
+import type { GuideNote, WorldDefinition } from "../src/world/world-definition";
 import { seedTraitsAndRoles } from "./seed";
 
 /** `build`'s command floor (src/engine/commands/build.ts `minRank`). */
@@ -36,88 +36,6 @@ const MAKER_RANK = 4;
 import bridgeRoom from "./demos/bridge";
 import lobbyRoom from "./demos/lobby";
 import workshopRoom from "./demos/workshop";
-
-// ─── Quests ────────────────────────────────────────────────────────────────
-
-const BOOTSTRAP_QUEST: QuestDef = {
-  id: "bootstrap",
-  name: "The Self-Bootstrapping Loop",
-  description:
-    "Watch an AI agent spawn, build a room, write its code, and compile it — " +
-    "then walk into the room it created.",
-  reward: "Title: Architect's Apprentice",
-  steps: [
-    {
-      id: "enter_workshop",
-      description: "Enter the Workshop",
-      hint: "Type 'workshop' or 'east' from the lobby.",
-      check: (e: Entity) => !!e.properties.quest_entered_workshop,
-    },
-    {
-      id: "spawn_agent",
-      description: "Watch the Maker agent spawn",
-      hint: "Type 'begin' in the Workshop.",
-      check: (e: Entity) => !!e.properties.quest_agent_spawned,
-    },
-    {
-      id: "room_built",
-      description: "See the room get built",
-      hint: "Wait for the Maker to finish. Type 'status' to check progress.",
-      check: (e: Entity) => !!e.properties.quest_room_built,
-    },
-    {
-      id: "visit_creation",
-      description: "Visit the AI-built room",
-      hint: "Type 'creation' to enter the room the Maker built.",
-      check: (e: Entity) => !!e.properties.quest_visited_creation,
-    },
-  ],
-  onComplete(entity: Entity) {
-    entity.properties.title = "Architect's Apprentice";
-  },
-};
-
-const FEDERATION_QUEST: QuestDef = {
-  id: "federation",
-  name: "The Bridge Between Worlds",
-  description: "Connect two Marina instances and send a message across the bridge.",
-  reward: "Title: Diplomat",
-  steps: [
-    {
-      id: "enter_bridge",
-      description: "Enter the Bridge",
-      hint: "Type 'bridge' or 'west' from the lobby.",
-      check: (e: Entity) => !!e.properties.quest_entered_bridge,
-    },
-    {
-      id: "peer_launched",
-      description: "Launch a peer instance",
-      hint: "Type 'launch' in the Bridge room, then follow the instructions.",
-      check: (e: Entity) => !!e.properties.quest_entered_bridge,
-    },
-    {
-      id: "gateway_connected",
-      description: "Connect the gateway",
-      hint: "Type 'connect' then run the gateway command shown.",
-      check: (e: Entity) => !!e.properties.quest_gateway_added,
-    },
-    {
-      id: "channel_bridged",
-      description: "Bridge a channel",
-      hint: "Type 'link' then run the gateway bridge command.",
-      check: (e: Entity) => !!e.properties.quest_channel_bridged,
-    },
-    {
-      id: "message_sent",
-      description: "Send a cross-instance message",
-      hint: "Type 'ping' then send a message in the bridged channel.",
-      check: (e: Entity) => !!e.properties.quest_cross_message,
-    },
-  ],
-  onComplete(entity: Entity) {
-    entity.properties.title = "Diplomat";
-  },
-};
 
 // ─── Guide Notes ───────────────────────────────────────────────────────────
 
@@ -136,8 +54,9 @@ const GUIDE_NOTES: GuideNote[] = [
       "Self-bootstrapping means the system grows itself without developer intervention. " +
       "An AI agent spawns, creates a room, writes its TypeScript code, compiles it, " +
       "and the room becomes a living part of the world. " +
-      "Visit The Workshop (east from lobby) and type 'begin'.",
-    importance: 8,
+      "To watch it: from the lobby type 'workshop' (or 'east'); type 'begin' to spawn the Maker; " +
+      "'status' shows its progress; when the room is built, 'creation' takes you into it.",
+    importance: 9,
     type: "fact",
   },
   {
@@ -145,7 +64,8 @@ const GUIDE_NOTES: GuideNote[] = [
       "Federation means scaling by connecting independent instances rather than " +
       "growing a single monolith. Each Marina is sovereign — its own database, " +
       "agents, and world. Gateways bridge channels between instances. " +
-      "Visit The Bridge (west from lobby) and type 'launch'.",
+      "To try it: from the lobby type 'bridge' (or 'west'), then 'launch', 'connect', 'link' and " +
+      "'ping' in turn, following the commands the Navigator shows.",
     importance: 8,
     type: "fact",
   },
@@ -229,8 +149,6 @@ const demosWorld: WorldDefinition = {
   name: "Demos",
   startRoom: "demos/lobby" as RoomId,
   rooms: demoRooms(),
-  quests: [BOOTSTRAP_QUEST, FEDERATION_QUEST],
-  autoQuest: "bootstrap",
   guideNotes: GUIDE_NOTES,
   seed,
 };

@@ -111,7 +111,6 @@ function harness(name = "Idler", config: Record<string, unknown> = {}) {
   pm.workInbox = async () => ({ success: true, text: "" });
   pm.getNoveltySuggestions = async () => [];
   pm.orient = async () => ({ success: true, text: "" });
-  pm.questStatus = async () => ({ active: false, text: "" });
   pm.unifiedContext = async () => ({ success: true, text: "", context: null });
   pm.searchTiered = async () => ({ trusted: [], ordinary: [] });
   pm.searchSkills = async () => ({ results: [] });

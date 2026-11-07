@@ -127,7 +127,7 @@ export function getRoomCommandsLine(entries?: readonly CommandCatalogEntry[]): s
 
 /**
  * The one always-on memory contract. Memory used to be taught in six
- * disconnected registers (roster, help, quest, guide pool, tool prose,
+ * disconnected registers (roster, help, guide pool, tool prose,
  * continuation prompt) and nothing told an agent what comes back
  * automatically each cycle. This block is the single teaching surface:
  * privacy boundary, what arrives unasked and how it is labeled, the six

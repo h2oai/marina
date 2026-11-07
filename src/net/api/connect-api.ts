@@ -29,7 +29,7 @@ interface ConnectEndpoints {
 export const MCP_TOOL_CATEGORIES = {
   discovery: ["capabilities", "invoke", "context"],
   bootstrap: ["login", "auth"],
-  cognition: ["think", "memory", "next", "brief", "quest"],
+  cognition: ["think", "memory", "next", "brief"],
   world: ["look", "move", "say", "tell", "who", "examine"],
   coordination: ["channel", "board", "group", "task", "crew"],
   canvas: ["canvas"],

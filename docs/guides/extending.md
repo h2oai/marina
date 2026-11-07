@@ -97,7 +97,7 @@ instance directory; startup never downloads a package. A directory can specify
 `marinaWorld` or `main` in `package.json`, otherwise it loads `index.ts`.
 
 The module exports a default `WorldDefinition` with `name`, `startRoom`, `rooms`,
-`quests`, and `guideNotes`. Relative `roomsDir` resolves beside its entry module.
+and `guideNotes`. Relative `roomsDir` resolves beside its entry module.
 Start with the small `worlds/empty.ts` definition, then add rooms. `seed` must be
 idempotent; `afterAgentsReady` remains an optional trusted lifecycle hook.
 `test/extensions.test.ts` contains runnable directory and installed-package fixtures.

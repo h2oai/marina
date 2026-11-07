@@ -116,7 +116,7 @@ which.
 | [Backup and recovery](recovery.md) | Snapshots, restores and recovering a damaged database. |
 | [Upgrading a server](upgrading.md) | Back up, migrate on first boot, verify, roll back. |
 | [Compatibility and upgrades](compatibility.md) | What each surface promises, and how it's checked. |
-| [Building worlds](building-worlds.md) | Make rooms, worlds, room agents, quests and custom commands. |
+| [Building worlds](building-worlds.md) | Make rooms, worlds, room agents and custom commands. |
 | [Extending Marina](extending.md) | Command extensions, external worlds or the SDK, and when to use which. |
 | [Embedding Marina](embedding.md) | Run Marina inside another app: start on demand, one data folder, idle shutdown. |
 | [Adding a protocol](adding-a-protocol.md) | A checklist for new transports: identity, discovery, execution, context, lifecycle. |
