@@ -12,6 +12,7 @@ import type { MemoryOperationResult } from "../sdk/memory-operations";
 import type { MemorySourceRange } from "../sdk/memory-types";
 import type { Perception } from "../types";
 import { DurableResidentMemory } from "./durable-memory";
+import { FOCUS_MAX_CHARS } from "./loop-preferences";
 import type { OutstandingRequest } from "./outstanding-requests";
 
 /** Module logger. */
@@ -362,7 +363,10 @@ export class PlatformMemoryBackend {
   async saveFocus(
     focus: { description: string; startedAt: number } | null,
   ): Promise<PlatformMemoryResult> {
-    const cmd = focus ? `memory set focus ${JSON.stringify(focus)}` : "memory delete focus";
+    // The server refuses a focus over FOCUS_MAX_CHARS; an operator's longer goal is kept whole in
+    // the live loop and saved as its first FOCUS_MAX_CHARS characters.
+    const saved = focus && { ...focus, description: focus.description.slice(0, FOCUS_MAX_CHARS) };
+    const cmd = saved ? `memory set focus ${JSON.stringify(saved)}` : "memory delete focus";
     const perceptions = await this.client.command(cmd);
     const text = extractText(perceptions);
     return {

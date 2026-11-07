@@ -32,14 +32,13 @@ type AdapterInternals = {
   notesSinceReflection: number;
   idleCycles: number;
   platformMemory: unknown;
-  actionHistory: { createSummary: () => unknown };
 };
 
 /**
  * Adapter whose next buildContinuationPrompt runs at cycle 60 — divisible by
- * 5 (novelty), 20 (memory health), and 15 (learning signal) — with reflection
+ * 5, 15 and 20 (the old cadenced sections) — with reflection
  * counters forced due and platform-memory calls stubbed to succeed. Without
- * task mode all four cognitive sections fire; with it, none may.
+ * task mode Reflection Due fires; with it, none of the cognitive sections may.
  */
 function makeAdapterAtBusyCycle(name: string): {
   adapter: LeanAgentAdapter;
@@ -57,8 +56,6 @@ function makeAdapterAtBusyCycle(name: string): {
     success: true,
     text: "orient snapshot: 12 notes, 2 stale",
   });
-  internals.actionHistory.createSummary = () =>
-    ({ totalActions: 10, failedActions: 4, challenges: ["recall kept failing"] }) as never;
   return { adapter, internals };
 }
 
@@ -70,7 +67,7 @@ describe("coding-task mode — continuation prompt assembly", () => {
     // \`work\` direct an agent, and dreaming does memory curation.
     expect(prompt).not.toContain("[Novelty Suggestions]");
     expect(prompt).not.toContain("[Memory Health]");
-    expect(prompt).toContain("[Learning Signal]");
+    expect(prompt).not.toContain("[Learning Signal]");
     expect(prompt).toContain("[Reflection Due]");
     expect(prompt).not.toContain("[Active Coding Task]");
   });
@@ -139,7 +136,7 @@ describe("coding-task mode — continuation prompt assembly", () => {
     adapter.setActiveCodingTask(null);
     const prompt = await internals.buildContinuationPrompt(); // cycle 60
     expect(prompt).not.toContain("[Active Coding Task]");
-    expect(prompt).toContain("[Learning Signal]");
+    expect(prompt).toContain("[Reflection Due]");
   });
 
   it("does NOT set crewResponder semantics — an empty/whitespace task is treated as cleared", () => {

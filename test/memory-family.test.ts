@@ -186,4 +186,21 @@ describe("memory family (engine)", () => {
     const note = (await run(erin, "help note")).join("\n");
     expect(note).toContain("(alias: use `memory note …`)");
   });
+
+  it("a focus or goal is one objective: an over-long one is refused and points at a note", async () => {
+    const gil = world.login("Gil");
+    const long = await run(gil, `memory set focus ${"status ".repeat(80)}`);
+    expect(long.join("\n")).toContain(
+      "Not set: a focus is one objective of at most 500 characters",
+    );
+    expect(long.join("\n")).toContain("memory note <text>");
+    expect(world.engine.db!.getCoreMemory("Gil", "focus")).toBeFalsy();
+    const json = await run(
+      gil,
+      `memory kv set goal ${JSON.stringify({ description: "x".repeat(501), startedAt: 1 })}`,
+    );
+    expect(json.join("\n")).toContain("Not set: a goal");
+    const ok = await run(gil, "memory set focus ship the parser");
+    expect(ok.join("\n")).toContain('Memory "focus" set.');
+  });
 });

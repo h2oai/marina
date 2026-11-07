@@ -18,6 +18,7 @@ import {
   defaultLoopPreferences,
   type LoopPreferences,
   parseLoopPreferenceCommand,
+  turnOnlyRests,
 } from "../src/agent/loop-preferences";
 import { MAX_TURNS_PER_PROMPT } from "../src/engine/constants";
 
@@ -250,6 +251,52 @@ describe("deliberate rest", () => {
     expect(i.silentTurns).toBe(1);
     i.applyLoopPreferenceCommand("memory delete rest");
     expect(i.loopPrefs.rest).toBeNull();
+  });
+});
+
+describe("a turn that only rests ends the run", () => {
+  const rest = { name: "memory", arguments: { action: "rest", content: "nothing owed" } };
+  const restCommand = {
+    name: "marina_command",
+    arguments: { command: "memory set rest waiting for review" },
+  };
+
+  it("recognises rest through the memory tool and the command", () => {
+    expect(turnOnlyRests([rest], [{}])).toBe(true);
+    expect(turnOnlyRests([restCommand], [{ isError: false }])).toBe(true);
+    expect(turnOnlyRests([rest, restCommand], [{}, {}])).toBe(true);
+  });
+
+  it("keeps the run going for any other call, a failure, a wake or no call", () => {
+    const tell = { name: "marina_command", arguments: { command: "tell Ada done" } };
+    expect(turnOnlyRests([rest, tell], [{}, {}])).toBe(false);
+    expect(turnOnlyRests([rest], [{ isError: true }])).toBe(false);
+    expect(turnOnlyRests([{ name: "memory", arguments: { action: "wake" } }], [{}])).toBe(false);
+    expect(
+      turnOnlyRests([{ name: "marina_command", arguments: { command: "memory set rest" } }], [{}]),
+    ).toBe(false);
+    expect(turnOnlyRests([], [])).toBe(false);
+  });
+
+  it("the adapter reads the completed turn's tool calls", () => {
+    const { i } = makeAdapter("rest-ends-run");
+    const restedThisTurn = (
+      i as unknown as { restedThisTurn(turn: unknown): boolean }
+    ).restedThisTurn.bind(i);
+    const turn = (calls: unknown[]) => ({
+      message: {
+        content: [
+          { type: "text", text: "resting" },
+          ...calls.map((c) => ({ type: "toolCall", id: "t", ...(c as object) })),
+        ],
+      },
+      toolResults: calls.map(() => ({ isError: false })),
+    });
+    expect(restedThisTurn(turn([rest]))).toBe(true);
+    expect(restedThisTurn(turn([{ name: "marina_command", arguments: { command: "look" } }]))).toBe(
+      false,
+    );
+    expect(restedThisTurn(turn([]))).toBe(false);
   });
 });
 
