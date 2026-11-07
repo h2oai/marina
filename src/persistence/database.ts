@@ -1660,6 +1660,20 @@ export class MarinaDB implements MarinaStores {
     return directMessagesDb.createDirectMessage(this.db, message);
   }
 
+  queueDirectMessage(
+    message: Parameters<typeof directMessagesDb.queueDirectMessage>[1],
+  ): ReturnType<typeof directMessagesDb.queueDirectMessage> {
+    return directMessagesDb.queueDirectMessage(this.db, message);
+  }
+
+  takeQueuedDirectMessages(
+    accountId: string,
+    entityId: string,
+    now = Date.now(),
+  ): DirectMessageRow[] {
+    return directMessagesDb.takeQueuedDirectMessages(this.db, accountId, entityId, now);
+  }
+
   getDirectMessage(id: number): DirectMessageRow | undefined {
     return directMessagesDb.getDirectMessage(this.db, id);
   }
