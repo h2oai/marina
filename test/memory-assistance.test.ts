@@ -136,6 +136,29 @@ it("projects deadline and parent completion without rewriting the recorded work 
   expect((await requester.jobs({ open: true })).jobs).toEqual([]);
 });
 
+it("notifies the party a change concerns, never the principal whose call made it", async () => {
+  const notices: Array<{ recipient_id: string; state: string }> = [];
+  service.assistanceNotify = (notice) => notices.push(notice);
+  const ownerId = ownerActor.principalId;
+  const saved = await owner.remember(space, { content: "Deployment uses port 7419." });
+  const job = await create();
+  // A new job wakes its worker.
+  expect(notices).toEqual([expect.objectContaining({ recipient_id: workerId, state: "pending" })]);
+  const claim = await helper.claim(job.id);
+  await helper.read(job.id, claim.lease_token, { operation: "get", id: saved.id });
+  await helper.read(job.id, claim.lease_token, { operation: "get", id: saved.id });
+  // The worker's own claim and reads are not echoed back to it.
+  expect(notices).toHaveLength(1);
+  await helper.finish(
+    job.id,
+    claim.lease_token,
+    completion({ kind: "record", space_id: space, id: saved.id, version: 1, quote: "port 7419" }),
+  );
+  // The outcome reaches the requester.
+  expect(notices.at(-1)).toMatchObject({ recipient_id: ownerId, state: "answered" });
+  expect(notices).toHaveLength(2);
+});
+
 it("keeps committed requests discoverable when live notification delivery fails", async () => {
   service.assistanceNotify = () => {
     throw new Error("Resident transport disconnected");

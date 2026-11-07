@@ -665,6 +665,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A memory-assistance worker is no longer told about its own work.** Each claim and each read
+  a worker made on a job sent that worker a "Memory assistance …: running; N operations remain"
+  message, so a worker agent was steered once per operation, mid-run, about its own action.
+  Notices now go only to the party a change concerns (a new job to its worker, an outcome to its
+  requester) and never to the principal whose call made the change.
+
 - **A refused or failed command now says so to its caller.** Over 100 handler paths (agent spawn,
   stop and reconfigure, `connect`, `schedule`, `gate`, `witness`, `world`, `supervisor`, `arena`,
   canvas intents, `evolve`, `inquiry`, `crew`, `forecast`, `benchmark`, `reflect` and others)

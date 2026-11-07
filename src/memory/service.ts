@@ -32,11 +32,14 @@ export type { MemorySearchInput, MemorySearchResult } from "../sdk/memory-types"
 
 export class MemoryService {
   /** World adapters may wake participants. Notifications contain IDs only;
-   * durable jobs remain discoverable if delivery is missed. */
+   * durable jobs remain discoverable if delivery is missed. `recipient_id` is
+   * the party the change concerns: the worker while the job is pending or
+   * running, the requester once it has an outcome. */
   assistanceNotify?: (notice: {
     id: string;
     worker_id: string;
     requester_id: string;
+    recipient_id: string;
     state: string;
     remaining_operations: number;
   }) => void;
@@ -69,10 +72,17 @@ export class MemoryService {
       "Assistance notification failed; job remains discoverable",
       () => {
         const job = this.repository.assistance.summary(actor, id);
+        const recipient = ["pending", "running"].includes(job.state)
+          ? job.worker_id
+          : job.requester_id;
+        // Never tell a principal about its own call: a worker's claim and each
+        // of its reads used to come back to it as a steer per operation.
+        if (recipient === actor.principalId) return;
         this.assistanceNotify?.({
           id,
           worker_id: job.worker_id,
           requester_id: job.requester_id,
+          recipient_id: recipient,
           state: job.state,
           remaining_operations: job.remaining_operations,
         });
