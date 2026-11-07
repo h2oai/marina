@@ -5,8 +5,7 @@
  * The "first ten minutes" contract.
  *
  * A 2026-09 usability evaluation found the default world's onboarding rotted
- * around a fast-moving engine: `quest` suggested an objective that didn't
- * exist, `brief` hinted at a command that returned zero results, and the
+ * around a fast-moving engine: `brief` hinted at a command that returned zero results, and the
  * `agent spawn` refusal gave a number that could never be satisfied. None of
  * it was caught because nothing tested the world a NEW USER actually lands in.
  *
@@ -21,10 +20,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import type { EntityId } from "../src/types";
-import { roomId } from "../src/types";
 import { seedGuidePool } from "../src/world/seed-guide";
 import defaultWorld from "../worlds/default";
-import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { cleanupDb, MockConnection, stripAnsi } from "./helpers";
 
 const plain = (s: string): string => stripAnsi(s);
 
@@ -68,15 +66,6 @@ describe("Onboarding journey (default world)", () => {
 
   // ── The self-referential contract: suggested commands must work ──────────
 
-  it("the quest empty-state suggests an objective that actually starts", () => {
-    const status = run("quest");
-    const suggested = /quest start ([A-Za-z][A-Za-z ]*?)" to begin/.exec(status);
-    expect(suggested).not.toBeNull();
-    const started = run(`quest start ${suggested![1]}`);
-    expect(started).toContain("Started:");
-    expect(started).not.toContain("Objective not found");
-  });
-
   it("every command in the brief hint line executes meaningfully", () => {
     run("brief"); // first brief is the welcome text
     const brief = run("brief"); // second is the compass, with the hint line
@@ -100,31 +89,6 @@ describe("Onboarding journey (default world)", () => {
     }
   });
 
-  it("quest list is not empty in the default world", () => {
-    const list = run("quest list");
-    expect(list).toContain("First Steps");
-    expect(list).not.toContain("(none in this world");
-  });
-
-  // ── The First Steps loop end to end ───────────────────────────────────────
-
-  it("a newcomer can complete First Steps with the five taught commands", () => {
-    expect(run("quest start First Steps")).toContain("Started:");
-    run("look");
-    run("note the workbench turns intent into verified outcomes");
-    run("recall workbench");
-    run("memory set goal learn the ropes");
-    run("say hello");
-
-    const status = run("quest status");
-    expect(status).toContain("All steps complete!");
-
-    const done = run("quest complete");
-    expect(done.toLowerCase()).toContain("complete");
-    const entity = engine.entities.get(eid);
-    expect(entity?.properties.title).toBe("Oriented");
-  });
-
   // ── Empty states guide instead of dead-ending ─────────────────────────────
 
   it("guide overview works and pool recall zero-hits point somewhere useful", () => {
@@ -132,31 +96,6 @@ describe("Onboarding journey (default world)", () => {
     expect(guide).toContain("guide");
     const miss = run("pool guide recall zebra unicorn");
     expect(miss).toContain("pool guide list");
-  });
-
-  it("worlds without quests say so instead of advertising First Steps", () => {
-    const bareDbPath = `/tmp/marina-onboarding-bare-${Date.now()}.db`;
-    const bareDb = new MarinaDB(bareDbPath);
-    try {
-      const bare = new Engine({
-        startRoom: roomId("test/start"),
-        tickInterval: 60_000,
-        db: bareDb,
-      });
-      bare.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
-      const bareConn = new MockConnection("bare_conn");
-      bare.addConnection(bareConn);
-      const res = bare.login("bare_conn", "BareUser");
-      if (!("entityId" in res)) throw new Error("bare login failed");
-      bareConn.clear();
-      bare.processCommand(res.entityId, "quest");
-      const text = plain(bareConn.allText().join("\n"));
-      expect(text).not.toContain("First Steps");
-      expect(text).toContain("No objectives are defined in this world");
-    } finally {
-      bareDb.close();
-      cleanupDb(bareDbPath);
-    }
   });
 
   // ── Refusals carry a path forward ─────────────────────────────────────────

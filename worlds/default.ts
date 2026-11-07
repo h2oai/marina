@@ -9,7 +9,6 @@ import { searchToolCommands } from "../src/world/rooms/search-room";
 import type { WorldDefinition } from "../src/world/world-definition";
 import {
   assignSeededTaskReviewer,
-  FIRST_STEPS_QUEST,
   seedBoard,
   seedChannel,
   seedChroniclerRole,
@@ -349,7 +348,6 @@ const defaultWorld: WorldDefinition = {
     "workbench/commons": { row: 2, col: 1 },
     "workbench/review": { row: 1, col: 2 },
   },
-  quests: [FIRST_STEPS_QUEST],
   guideNotes: GUIDE_NOTES,
   canvas: {
     name: "workbench",

@@ -6,7 +6,7 @@
  * a rank floor or a safety gate — records failed usage and a failed activity,
  * on every shared refusal path. A read that finds nothing, a bare command that
  * shows its usage, and a no-op on a state that already holds stay successes.
- * As with every handler refusal, quest progress and the `command` event are
+ * As with every handler refusal, the `command` event and activity are
  * unchanged: the command ran.
  */
 

@@ -113,7 +113,7 @@ test("world loader handles directories and installed packages without a registry
   );
   writeFileSync(
     join(pkg, "index.mjs"),
-    `export default { name:"Fixture", startRoom:"start", rooms:{start:{short:"Start",long:"A room",exits:{}}}, quests:[], guideNotes:[] };`,
+    `export default { name:"Fixture", startRoom:"start", rooms:{start:{short:"Start",long:"A room",exits:{}}}, guideNotes:[] };`,
   );
   expect((await loadWorld(pkg)).name).toBe("Fixture");
   expect((await loadWorld("npm:fixture-world", dir)).startRoom).toBe(roomId("start"));

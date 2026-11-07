@@ -402,7 +402,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   {
     content:
       "'next' examines your state and tells you the single best thing to do. " +
-      "No goal? It says set one. Quest incomplete? It shows the next step. " +
+      "No goal? It says set one. A claimed task? It shows the next step. " +
       "Tasks available? It points you there. Use it whenever you stall.",
     importance: 9,
     type: "skill",
@@ -1159,7 +1159,6 @@ const showcaseWorld: WorldDefinition = {
     "memory/vault": { row: 4, col: 3 },
     "audit/room": { row: 4, col: 4 },
   },
-  quests: [],
   guideNotes: GUIDE_NOTES,
   canvas: {
     name: "global",

@@ -523,16 +523,9 @@ Fields read here: `error`, `query`.
 - Guard: `url.pathname === "/api/command-catalog"`
 - Guard: `method !== "GET"`
 
-### `url.pathname.match(/^\/api\/entities\/([^/]+)\/quests$/)`
-
-[Source](../../src/net/dashboard-api/discovery.ts#L25)
-
-- Guard: `questMatch`
-- Guard: `method !== "GET"`
-
 ### `url.pathname.match(/^\/api\/entities\/([^/]+)\/preview$/)`
 
-[Source](../../src/net/dashboard-api/discovery.ts#L26)
+[Source](../../src/net/dashboard-api/discovery.ts#L25)
 
 - Guard: `previewMatch`
 - Guard: `method !== "GET"`
@@ -549,42 +542,42 @@ Fields read here: `error`, `query`.
 
 ### `url.pathname === "/api/keys"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L553)
+[Source](../../src/net/dashboard-api/keys.ts#L552)
 
 - Guard: `url.pathname === "/api/keys" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/keys"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L563)
+[Source](../../src/net/dashboard-api/keys.ts#L562)
 
 - Guard: `url.pathname === "/api/keys" && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/keys\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/keys.ts#L566)
+[Source](../../src/net/dashboard-api/keys.ts#L565)
 
 - Guard: `keyDeleteMatch && method === "DELETE" && db`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname.match(/^\/api\/keys\/([^/]+)\/test$/)`
 
-[Source](../../src/net/dashboard-api/keys.ts#L576)
+[Source](../../src/net/dashboard-api/keys.ts#L575)
 
 - Guard: `keyTestMatch && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname === "/api/default-model"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L590)
+[Source](../../src/net/dashboard-api/keys.ts#L589)
 
 - Guard: `url.pathname === "/api/default-model" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/default-model"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L596)
+[Source](../../src/net/dashboard-api/keys.ts#L595)
 
 - Guard: `url.pathname === "/api/default-model" && method === "PUT" && db`
 - Guard: `method === "PUT"`
@@ -593,21 +586,21 @@ Fields read here: `error`, `model`.
 
 ### `url.pathname === "/api/default-model"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L612)
+[Source](../../src/net/dashboard-api/keys.ts#L611)
 
 - Guard: `url.pathname === "/api/default-model" && method === "DELETE" && db`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/model-endpoint"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L621)
+[Source](../../src/net/dashboard-api/keys.ts#L620)
 
 - Guard: `url.pathname === "/api/model-endpoint" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/model-endpoint"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L624)
+[Source](../../src/net/dashboard-api/keys.ts#L623)
 
 - Guard: `url.pathname === "/api/model-endpoint" && method === "PUT" && db`
 - Guard: `method === "PUT"`
@@ -616,7 +609,7 @@ Fields read here: `error`.
 
 ### `url.pathname === "/api/models"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L635)
+[Source](../../src/net/dashboard-api/keys.ts#L634)
 
 - Guard: `url.pathname === "/api/models" && method === "GET"`
 - Guard: `method === "GET"`
@@ -625,56 +618,56 @@ Fields read here: `url.searchParams.get("refresh")`.
 
 ### `url.pathname === "/api/adapters"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L642)
+[Source](../../src/net/dashboard-api/keys.ts#L641)
 
 - Guard: `url.pathname === "/api/adapters" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/adapters"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L645)
+[Source](../../src/net/dashboard-api/keys.ts#L644)
 
 - Guard: `url.pathname === "/api/adapters" && method === "POST" && db`
 - Guard: `method === "POST"`
 
 ### `url.pathname.match(/^\/api\/adapters\/([^/]+)$/)`
 
-[Source](../../src/net/dashboard-api/keys.ts#L651)
+[Source](../../src/net/dashboard-api/keys.ts#L650)
 
 - Guard: `adapterMatch && method === "PATCH" && db`
 - Guard: `method === "PATCH"`
 
 ### `url.pathname === "/api/roles"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L666)
+[Source](../../src/net/dashboard-api/keys.ts#L665)
 
 - Guard: `url.pathname === "/api/roles" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/traits"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L669)
+[Source](../../src/net/dashboard-api/keys.ts#L668)
 
 - Guard: `url.pathname === "/api/traits" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/mcp"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L674)
+[Source](../../src/net/dashboard-api/keys.ts#L673)
 
 - Guard: `url.pathname === "/api/mcp" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/env"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L683)
+[Source](../../src/net/dashboard-api/keys.ts#L682)
 
 - Guard: `url.pathname === "/api/env" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/env"`
 
-[Source](../../src/net/dashboard-api/keys.ts#L686)
+[Source](../../src/net/dashboard-api/keys.ts#L685)
 
 - Guard: `url.pathname === "/api/env" && method === "PUT"`
 - Guard: `method === "PUT"`
@@ -1261,20 +1254,20 @@ Fields read here: `Number.parseInt(url.searchParams.get("limit") ?? "", 10)`, `u
 
 ### `url.pathname.match(/^\/api\/entities\/(.+)$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L866)
+[Source](../../src/net/dashboard-api/world.ts#L865)
 
 - Guard: `entityMatch`
 - Guard: `method === "DELETE"`
 
 ### `url.pathname === "/api/coordination/boards"`
 
-[Source](../../src/net/dashboard-api/world.ts#L889)
+[Source](../../src/net/dashboard-api/world.ts#L888)
 
 - Guard: `url.pathname === "/api/coordination/boards" && db`
 
 ### `url.pathname === "/api/coordination/tasks"`
 
-[Source](../../src/net/dashboard-api/world.ts#L892)
+[Source](../../src/net/dashboard-api/world.ts#L891)
 
 - Guard: `url.pathname === "/api/coordination/tasks" && db`
 
@@ -1282,86 +1275,86 @@ Fields read here: `clampLimit(url.searchParams.get("limit"), 50)`, `url.searchPa
 
 ### `url.pathname === "/api/coordination/channels"`
 
-[Source](../../src/net/dashboard-api/world.ts#L912)
+[Source](../../src/net/dashboard-api/world.ts#L911)
 
 - Guard: `url.pathname === "/api/coordination/channels" && db`
 
 ### `url.pathname === "/api/coordination/groups"`
 
-[Source](../../src/net/dashboard-api/world.ts#L915)
+[Source](../../src/net/dashboard-api/world.ts#L914)
 
 - Guard: `url.pathname === "/api/coordination/groups" && db`
 
 ### `url.pathname === "/api/coordination/projects"`
 
-[Source](../../src/net/dashboard-api/world.ts#L918)
+[Source](../../src/net/dashboard-api/world.ts#L917)
 
 - Guard: `url.pathname === "/api/coordination/projects" && db`
 
 ### `url.pathname === "/api/connectors"`
 
-[Source](../../src/net/dashboard-api/world.ts#L921)
+[Source](../../src/net/dashboard-api/world.ts#L920)
 
 - Guard: `url.pathname === "/api/connectors" && db`
 
 ### `url.pathname === "/api/commands"`
 
-[Source](../../src/net/dashboard-api/world.ts#L924)
+[Source](../../src/net/dashboard-api/world.ts#L923)
 
 - Guard: `url.pathname === "/api/commands" && db`
 
 ### `url.pathname === "/api/room-templates"`
 
-[Source](../../src/net/dashboard-api/world.ts#L937)
+[Source](../../src/net/dashboard-api/world.ts#L936)
 
 - Guard: `url.pathname === "/api/room-templates" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/macros"`
 
-[Source](../../src/net/dashboard-api/world.ts#L940)
+[Source](../../src/net/dashboard-api/world.ts#L939)
 
 - Guard: `url.pathname === "/api/macros" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/experiments"`
 
-[Source](../../src/net/dashboard-api/world.ts#L947)
+[Source](../../src/net/dashboard-api/world.ts#L946)
 
 - Guard: `url.pathname === "/api/experiments" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/evolution-sessions"`
 
-[Source](../../src/net/dashboard-api/world.ts#L950)
+[Source](../../src/net/dashboard-api/world.ts#L949)
 
 - Guard: `url.pathname === "/api/evolution-sessions" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/markets"`
 
-[Source](../../src/net/dashboard-api/world.ts#L956)
+[Source](../../src/net/dashboard-api/world.ts#L955)
 
 - Guard: `url.pathname === "/api/markets" && method === "GET" && db`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/benchmarks"`
 
-[Source](../../src/net/dashboard-api/world.ts#L959)
+[Source](../../src/net/dashboard-api/world.ts#L958)
 
 - Guard: `url.pathname === "/api/benchmarks" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname === "/api/recipes"`
 
-[Source](../../src/net/dashboard-api/world.ts#L976)
+[Source](../../src/net/dashboard-api/world.ts#L975)
 
 - Guard: `url.pathname === "/api/recipes" && method === "GET"`
 - Guard: `method === "GET"`
 
 ### `url.pathname.match(/^\/api\/coordination\/projects\/([^/]+)\/orchestration$/)`
 
-[Source](../../src/net/dashboard-api/world.ts#L997)
+[Source](../../src/net/dashboard-api/world.ts#L996)
 
 - Guard: `orchMatch && method === "POST" && db`
 - Guard: `method === "POST"`

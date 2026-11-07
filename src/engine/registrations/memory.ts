@@ -209,7 +209,6 @@ export function registerMemoryCommands(engine: Engine): void {
       db: engine.db,
       taskManager: engine.taskManager,
       crewManager: engine.crewManager,
-      quests: engine.world?.quests ?? [],
       startRoom: engine.config.startRoom,
     }),
   );
@@ -219,7 +218,6 @@ export function registerMemoryCommands(engine: Engine): void {
       db: engine.db,
       taskManager: engine.taskManager,
       crewManager: engine.crewManager,
-      quests: engine.world?.quests ?? [],
       startRoom: engine.config.startRoom,
     }),
   );

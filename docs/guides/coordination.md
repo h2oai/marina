@@ -403,7 +403,7 @@ Launched recipe "research" for "history of the eastern sector"
 | `predict` | debate | 4 | Check markets → FOR evidence → AGAINST evidence → Synthesize |
 | `search` | swarm | 3 | Internal search → Web search → Compile findings |
 | `build` | pipeline | 3 | Spec → Implement → Verify |
-| `benchmark` | pipeline | 3 | Attempt quests → Analyze → Report |
+| `benchmark` | pipeline | 3 | Attempt benchmark rooms → Analyze → Report |
 
 These are the most common; `usecase list` shows every recipe (including `debate`, `solve`,
 `explore`, `plan`, `code`, `monitor`, `teach`, `experiment` and `compare`).

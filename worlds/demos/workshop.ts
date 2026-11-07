@@ -269,8 +269,6 @@ const room: RoomModule = {
     const ent = ctx.getEntity(entity);
     if (ent?.kind !== "agent") return;
 
-    ent.properties.quest_entered_workshop = true;
-
     const state = ctx.store.get<DemoState>("demo");
     if (state?.phase === "complete") {
       ctx.send(
@@ -325,12 +323,6 @@ const room: RoomModule = {
           `Type '${C}creation${R}' to visit it. You are about to walk into a room ` +
           `that was imagined, coded, and compiled by an AI agent.\n`,
       );
-
-      for (const e of ctx.entities) {
-        if (e.kind === "agent") {
-          e.properties.quest_room_built = true;
-        }
-      }
 
       ctx.logEvent?.({
         type: "feed_event",

@@ -524,7 +524,6 @@ function TaskProgressBar({ progress }: { progress: number }) {
 }
 
 const WORK_KIND_LABEL: Record<WorkItemKind, string> = {
-  quest_step: "Quest",
   claimed_task: "Claim",
   review_task: "Review",
   crew_active: "Crew",
@@ -542,7 +541,6 @@ const WORK_KIND_LABEL: Record<WorkItemKind, string> = {
 };
 
 const WORK_KIND_TONE: Partial<Record<WorkItemKind, string>> = {
-  quest_step: "text-primary bg-primary/10",
   claimed_task: "text-success bg-success/10",
   review_task: "text-warning bg-warning/10",
   crew_active: "text-secondary bg-secondary/10",

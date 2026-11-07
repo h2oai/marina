@@ -5,12 +5,10 @@ import { type CanvasReader, canvasReaderFor, mayReadCanvas } from "../engine/can
 import type { MarinaDB } from "../persistence/database";
 import { CANVAS_INTENT_CLAIM_TIMEOUT_MS } from "../persistence/db-canvas";
 import type { Entity, EntityId } from "../types";
-import type { QuestDef } from "../world/world-definition";
 import type { CrewManager } from "./crew-manager";
 import type { Task, TaskManager } from "./task-manager";
 
 export type WorkItemKind =
-  | "quest_step"
   | "claimed_task"
   | "review_task"
   | "crew_active"
@@ -43,7 +41,6 @@ export interface WorkLoopDeps {
   db?: MarinaDB;
   taskManager?: TaskManager;
   crewManager?: CrewManager;
-  quests?: QuestDef[];
   startRoom?: string;
   peers?: Entity[];
   /** HTTP supplies the actual viewer, never the selected agent's authority. */
@@ -59,22 +56,6 @@ export interface WorkLoopDeps {
 export function listWorkItems(entity: Entity, deps: WorkLoopDeps, limit = 12): WorkItem[] {
   const items: WorkItem[] = [];
   const db = deps.db;
-
-  const activeQuestId = entity.properties.active_quest as string | undefined;
-  if (activeQuestId && deps.quests) {
-    const quest = deps.quests.find((q) => q.id === activeQuestId);
-    const incomplete = quest?.steps.find((step) => !step.check(entity));
-    if (quest && incomplete) {
-      items.push({
-        kind: "quest_step",
-        title: `Quest "${quest.name}"`,
-        detail: incomplete.description,
-        action: incomplete.hint,
-        priority: 100,
-        ref: quest.id,
-      });
-    }
-  }
 
   if (db) {
     for (const claim of db.getActiveClaimsByName(entity.name).slice(0, 5)) {
@@ -216,12 +197,7 @@ export function listWorkItems(entity: Entity, deps: WorkLoopDeps, limit = 12): W
     }
   }
 
-  if (
-    !deps.forAgent &&
-    deps.startRoom &&
-    entity.room === deps.startRoom &&
-    !entity.properties.quest_move
-  ) {
+  if (!deps.forAgent && deps.startRoom && entity.room === deps.startRoom) {
     items.push({
       kind: "explore",
       title: "You have not explored yet",

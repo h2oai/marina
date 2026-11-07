@@ -22,7 +22,6 @@
   | `forecast_resolved` | an external resolution or judge, or a market resolver who may credit the worker (another account; not an agent inside its lineage) (`resolveForecast` in `src/outcomes/forecast.ts`) | up to 0.5 by skill: Brier skill over a coin flip, a number inside its 80% band, or a correct typed answer's quality. Paid to the filer AND to every resident or agent the filing names as a producer (`producers`) — one party once per answer (a producer in the lineage of a worker already considered earns nothing, paid or refused). Once per answer per account; at most `FORECAST_DAILY_CAP` (1) per account per UTC day. A board or benchmark filing (`eval_mode` set) never earns. Residents' in-world calls (a market room's `predict`, `conduct track`) are filed on this path and earn it. |
   | `experiment_complete` | a recorder from another account who sampled the experiment (a person, or an agent outside the completer's lineage), with samples on at least 2 arms | 3 |
   | `assistance_adopted` / `assistance_abstained_confirmed` | the requester adopting another principal's proposal, or confirming its abstention (a person may adopt its own agent's; any other requester only from outside its party) | 1 / 0.25, split across a delegated tree |
-  | `quest_complete` | the engine's own quest check, once per quest | 3 |
 
   Penalties stay: `assistance_superseded` (−0.5) and `crew_member_stalled` (−3 after 3 stalls).
 - **What no longer earns** (`RETIRED_STANDING_KINDS`; `record()` refuses them):

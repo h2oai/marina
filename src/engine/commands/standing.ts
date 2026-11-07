@@ -62,9 +62,8 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       `an approved Code Mode attempt whose checks passed (${STANDING_AMOUNTS.code_verified}), ` +
       `a forecast resolved by an external or other source (up to ${STANDING_AMOUNTS.forecast_resolved} by skill, once a day), ` +
       `an experiment another party replicated (${STANDING_AMOUNTS.experiment_complete}), ` +
-      `a proposal its requester adopts (${STANDING_AMOUNTS.assistance_adopted}), ` +
-      `and an onboarding quest (${STANDING_AMOUNTS.quest_complete}). ` +
-      "Being chronicled, pool notes, recalls, crew completions and helping acts no longer earn; " +
+      `and a proposal its requester adopts (${STANDING_AMOUNTS.assistance_adopted}). ` +
+      "Being chronicled, pool notes, recalls, crew completions, helping acts and onboarding quests no longer earn; " +
       "their past rows stay as history but count toward no standing " +
       "(MARINA_STANDING_RETIRED=decay lets them fade out instead). " +
       "Decay floors at 0; rank 0–4 is derived from thresholds (5/15/40/100). " +

@@ -838,7 +838,7 @@ export class MarinaClient {
    * This is a TRANSIENT close: the server keeps the entity alive for its
    * reconnect grace window so a token-bearing reconnect (e.g. back-to-back
    * CLI one-shots) rebinds the SAME entity — same id, same properties, same
-   * quest state. Sending `quit` here (the pre-fix behavior) told the server
+   * room. Sending `quit` here (the pre-fix behavior) told the server
    * "I'm done, remove me", which hard-deleted the entity and reset all
    * property state between invocations. Use `quit()` for explicit teardown. */
   disconnect(): void {
@@ -1259,13 +1259,6 @@ export class MarinaAgent extends MarinaClient {
   /** World orientation signal. */
   async brief(mode?: "compass" | "full"): Promise<Perception[]> {
     return this.command(mode === "full" ? "brief full" : "brief");
-  }
-
-  /** Quest operations. */
-  async quest(action?: string, name?: string): Promise<Perception[]> {
-    const sub = action ?? "status";
-    const cmd = sub === "start" && name ? `quest start ${name}` : `quest ${sub}`;
-    return this.command(cmd);
   }
 
   /** Examine a target. */

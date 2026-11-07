@@ -141,7 +141,6 @@ const researchWorld: WorldDefinition = {
   startRoom: "research/lab" as RoomId,
   rooms: {},
   roomsDir: join(import.meta.dir, "default"),
-  quests: [],
   guideNotes: GUIDE_NOTES,
   canvas: {
     name: "research",

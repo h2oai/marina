@@ -23,22 +23,6 @@ describe("dashboard discovery", () => {
     const world = {
       name: "Discovery",
       startRoom: start,
-      quests: [
-        {
-          id: "intro",
-          name: "First steps",
-          description: "Explore",
-          reward: "Ready",
-          steps: [
-            {
-              id: "look",
-              description: "Look around",
-              hint: "look",
-              check: (entity) => entity.properties.looked === true,
-            },
-          ],
-        },
-      ],
     } satisfies Partial<WorldDefinition>;
     engine = new Engine({ startRoom: start, db, world: world as WorldDefinition });
     engine.registerRoom(start, makeTestRoom({ short: "Discovery room" }));
@@ -71,10 +55,7 @@ describe("dashboard discovery", () => {
     expect((await get("/api/command-catalog", null)).status).toBe(401);
     const catalog = await (await get("/api/command-catalog")).json();
     expect(catalog).toHaveLength(engine.commands.allBuiltins().length);
-    expect(catalog.find((cmd: { name: string }) => cmd.name === "quest")).toMatchObject({
-      aliases: ["checklist", "onboarding"],
-      category: "Identity & Access",
-    });
+    expect(catalog.find((cmd: { name: string }) => cmd.name === "quest")).toBeUndefined();
     expect(JSON.stringify(catalog)).not.toContain('"handler"');
   });
   it("searches rooms and FTS notes without leaking another resident's memory or process tier", async () => {
@@ -105,23 +86,5 @@ describe("dashboard discovery", () => {
       privateVisible: true,
       inventory: [],
     });
-  });
-  it("projects actual quest checks and protects another resident's progress", async () => {
-    const entity = engine.findEntityGlobal("Alice")!;
-    entity.properties.active_quest = "intro";
-    let quests = await (await get("/api/entities/Alice/quests")).json();
-    expect(quests[0]).toMatchObject({
-      active: true,
-      completed: false,
-      steps: [{ id: "look", done: false }],
-    });
-    entity.properties.looked = true;
-    quests = await (await get("/api/entities/Alice/quests")).json();
-    expect(quests[0].steps[0].done).toBe(true);
-    entity.properties.completed_quests = ["intro"];
-    entity.properties.looked = false;
-    quests = await (await get("/api/entities/Alice/quests")).json();
-    expect(quests[0]).toMatchObject({ completed: true, steps: [{ done: true }] });
-    expect((await get("/api/entities/Bob/quests")).status).toBe(403);
   });
 });

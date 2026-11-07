@@ -303,7 +303,6 @@ export const EVIDENCE_FENCE_POLICY: Readonly<Record<string, FenceRule>> = {
   drop: "allow",
   give: "allow",
   rank: "allow",
-  quest: "allow",
   desire: "allow",
   standing: "allow",
   gate: "allow",

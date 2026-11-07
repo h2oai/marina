@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Shared seed helpers, constants, and reusable quest definitions.
+ * Shared seed helpers and constants.
  *
  * Extracted from the original full world (now worlds/showcase.ts) to eliminate
  * duplication across world files.
@@ -17,9 +17,7 @@ import { isRouteModel } from "../src/decisions/route";
 import type { Engine } from "../src/engine/engine";
 import { sanitizeEntityName } from "../src/engine/entity-name";
 import type { MarinaDB } from "../src/persistence/database";
-import type { Entity } from "../src/types";
 import { reconcileSeedNotes } from "../src/world/seed-guide";
-import type { QuestDef } from "../src/world/world-definition";
 
 const SYSTEM_OWNER = "system";
 
@@ -63,62 +61,6 @@ function seedRole(db: MarinaDB, opts: Parameters<MarinaDB["saveRole"]>[0]): void
     return;
   db.saveRole(opts);
 }
-
-/**
- * The universal onboarding objective. Built entirely on the generic
- * `trackQuestProgress` flags the engine sets for core commands, so any world
- * can include it without custom room wiring. `quest start` with no arguments
- * defaults to this quest by name, and the quest command's empty-state message
- * points at it — so worlds that expose `quest` should ship it.
- */
-export const FIRST_STEPS_QUEST: QuestDef = {
-  id: "first-steps",
-  name: "First Steps",
-  description:
-    "Learn the five moves everything else builds on: observe the world, " +
-    "write memory, retrieve it, set a goal, and speak.",
-  reward: "Title: Oriented",
-  steps: [
-    {
-      id: "look",
-      description: "Look at the space around you",
-      hint: 'Type "look".',
-      check: (e: Entity) => !!e.properties.quest_look,
-    },
-    {
-      id: "note",
-      description: "Write your first note — memory that survives this session",
-      hint: 'Type "note <something worth remembering>".',
-      check: (e: Entity) => !!e.properties.quest_note,
-    },
-    {
-      id: "recall",
-      description: "Retrieve it back out of memory",
-      // Teach paraphrase early: recall is lexical, so the retrieval lesson is
-      // "match by meaning takes a synonym or the wider `all` sweep", not
-      // "repeat your own words".
-      hint:
-        'Type "recall <a different word than you wrote>" — recall matches words; ' +
-        'try a synonym or use "recall <query> all".',
-      check: (e: Entity) => !!e.properties.quest_recall,
-    },
-    {
-      id: "goal",
-      description: "Set a goal so `next` and `work` can orient you",
-      hint: 'Type "memory set goal <what you want to accomplish>".',
-      check: (e: Entity) => !!e.properties.quest_memory_set,
-    },
-    {
-      id: "say",
-      description: "Say something out loud — humans and agents share this space",
-      hint: 'Type "say hello".',
-      check: (e: Entity) => !!e.properties.quest_say,
-    },
-  ],
-  onComplete(entity: Entity) {
-    entity.properties.title = "Oriented";
-  },
-};
 
 /**
  * Upsert a system-seeded persistent agent config — the single policy for every

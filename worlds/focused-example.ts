@@ -125,7 +125,6 @@ export function focusedExampleWorld(spec: FocusedExampleSpec): WorldDefinition {
       [room(spec.stages[3].id, spec)]: { row: 1, col: 1 },
       [room(spec.stages[4].id, spec)]: { row: 2, col: 0 },
     },
-    quests: [],
     guideNotes,
     canvas: {
       name: spec.slug,

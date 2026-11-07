@@ -165,7 +165,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       {
         title: "Measure and compare",
         description:
-          "Run the smallest meaningful measure available: 'score', 'novelty stats', a benchmark quest, or a task-specific acceptance check, and compare against the Gen 0 note. To compare roles, 'evolve trial' runs incumbent and candidate in a child world and 'evolve decide' records the verdict. Keep changes that improved the measure; otherwise journal why the attempt failed.",
+          "Run the smallest meaningful measure available: 'score', 'novelty stats', a benchmark room, or a task-specific acceptance check, and compare against the Gen 0 note. To compare roles, 'evolve trial' runs incumbent and candidate in a child world and 'evolve decide' records the verdict. Keep changes that improved the measure; otherwise journal why the attempt failed.",
       },
       {
         title: "Publish lineage",
@@ -649,8 +649,8 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
     orchestration: "pipeline",
     tasks: [
       {
-        title: "Attempt benchmark quests",
-        description: `Navigate to benchmark rooms and attempt quests related to: ${topic}. Available benchmarks: navigation, retrieval, code-gen, coordination, adaptation, memory, self-modification, collaboration. Use 'quest list' to see available quests. Complete each quest and record your scores.`,
+        title: "Attempt benchmark rooms",
+        description: `Navigate to benchmark rooms and attempt the ones related to: ${topic}. Available benchmarks: navigation, retrieval, code-gen, coordination, adaptation, memory, self-modification, collaboration. Entering a benchmark room starts an attempt; finishing it records your score.`,
       },
       {
         title: "Analyze performance",
@@ -671,7 +671,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
       },
       {
         content:
-          "Benchmark workflow: (1) 'quest list' to see available quests. (2) Navigate to benchmark rooms. (3) Attempt each quest following its instructions. (4) Record scores. (5) Analyze patterns. (6) Report to board.",
+          "Benchmark workflow: (1) 'examine arena-rules' in bench/hub lists the benchmark rooms. (2) Navigate to a benchmark room. (3) Attempt it following its instructions. (4) Record scores. (5) Analyze patterns. (6) Report to board.",
         importance: 9,
         type: "skill",
       },

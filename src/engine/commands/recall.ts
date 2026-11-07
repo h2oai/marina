@@ -101,7 +101,7 @@ export function recallCommand(deps: {
     aliases: [],
     help: "Scored, provenance-aware retrieval. Usage: recall <query> [recent|important|trusted|explain|evidence|all|episodes] [type <type>] [budget <bytes>]\n  all — unified tiers: skills, [trusted], [evidence] (durable records + sources), [proposal] (assistance answers), [unverified]\n  evidence — durable tiers only\n  episodes — your own journal (what you said, were told and saw), newest first; evidence for you alone, never served to anyone",
     // Synchronous for plain recall (callers that don't await processCommand —
-    // quest tracking, cognitive-provenance capture, the SDK reply window — rely
+    // cognitive-provenance capture, the SDK reply window — rely
     // on the reply landing in the same tick). Only the unified `all|evidence`
     // branch returns a Promise; the engine awaits either shape.
     handler: (ctx: RoomContext, input): void | Promise<void> => {
@@ -303,7 +303,7 @@ export function recallCommand(deps: {
         // phrasings and fuses the lists (RRF). No vocabulary → the single query.
         // Synchronous by design: the vocabulary comes from a per-entity cache that
         // refreshes in the background, so plain `recall` never awaits a durable
-        // round-trip (the SDK's reply window and the quest tracker both depend on
+        // round-trip (the SDK's reply window depends on
         // the reply landing in the same tick).
         const expansion = expansionForEntityCached(db, entity.name, query);
         const recallOne = (q: string) =>

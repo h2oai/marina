@@ -95,8 +95,6 @@ export async function exerciseUtilities(ctx: ExerciseContext) {
     ["ops assistance", /assistance|jobs|No /i, "ops assistance"],
     ["ops assistance expire", /expired|jobs|No /i, "ops assistance expire"],
     ["ops recover", /recover|pending|No /i, "ops recover"],
-    ["quest list", /objective|quest|No /i, "quest list"],
-    ["quest status", /objective|quest|No /i, "quest status"],
     ["challenge", /challenge|No /i, "challenge"],
     ["challenge stats", /approval|challenge|No /i, "challenge stats"],
     ["challenge summary", /approval|challenge|No /i, "challenge summary "],

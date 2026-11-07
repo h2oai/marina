@@ -166,9 +166,6 @@ const room: RoomModule = {
         peerPort: PEER_PORT,
       });
 
-      const ent = ctx.getEntity(input.entity);
-      if (ent) ent.properties.quest_entered_bridge = true;
-
       ctx.broadcast(
         `${B}${M}The Navigator gestures toward the dark pylon.${R}\n\n` +
           `To start a peer Marina instance, open a ${B}second terminal${R} and run:\n\n` +
@@ -198,9 +195,6 @@ const room: RoomModule = {
 
       state.step = "connected";
       ctx.store.set("bridge", state);
-
-      const ent = ctx.getEntity(input.entity);
-      if (ent) ent.properties.quest_gateway_added = true;
     },
 
     link: async (ctx: RoomContext, input: { entity: EntityId }) => {
@@ -225,9 +219,6 @@ const room: RoomModule = {
 
       state.step = "bridged";
       ctx.store.set("bridge", state);
-
-      const ent = ctx.getEntity(input.entity);
-      if (ent) ent.properties.quest_channel_bridged = true;
     },
 
     ping: (ctx: RoomContext, input: { entity: EntityId }) => {
@@ -258,9 +249,6 @@ const room: RoomModule = {
 
       state.step = "messaged";
       ctx.store.set("bridge", state);
-
-      const ent = ctx.getEntity(input.entity);
-      if (ent) ent.properties.quest_cross_message = true;
 
       ctx.broadcast(
         `\n${G}${B}The pylons blaze with synchronized light!${R}\n\n` +
@@ -318,8 +306,6 @@ const room: RoomModule = {
 
     const ent = ctx.getEntity(entity);
     if (ent?.kind !== "agent") return;
-
-    ent.properties.quest_entered_bridge = true;
 
     const state = ctx.store.get<BridgeState>("bridge");
     if (state?.step === "messaged") {

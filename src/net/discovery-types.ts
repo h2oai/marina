@@ -11,14 +11,6 @@ export interface DiscoveryResult {
   command?: string;
 }
 
-export interface QuestProgress {
-  id: string;
-  name: string;
-  active: boolean;
-  completed: boolean;
-  steps: { id: string; description: string; hint: string; done: boolean }[];
-}
-
 export interface EntityPreview {
   name: string;
   rank: number;

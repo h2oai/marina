@@ -334,7 +334,7 @@ export declare class MarinaClient {
      * This is a TRANSIENT close: the server keeps the entity alive for its
      * reconnect grace window so a token-bearing reconnect (e.g. back-to-back
      * CLI one-shots) rebinds the SAME entity — same id, same properties, same
-     * quest state. Sending `quit` here (the pre-fix behavior) told the server
+     * room. Sending `quit` here (the pre-fix behavior) told the server
      * "I'm done, remove me", which hard-deleted the entity and reset all
      * property state between invocations. Use `quit()` for explicit teardown. */
     disconnect(): void;
@@ -413,8 +413,6 @@ export declare class MarinaAgent extends MarinaClient {
     next(): Promise<Perception[]>;
     /** World orientation signal. */
     brief(mode?: "compass" | "full"): Promise<Perception[]>;
-    /** Quest operations. */
-    quest(action?: string, name?: string): Promise<Perception[]>;
     /** Examine a target. */
     examine(target: string): Promise<Perception[]>;
     /** Board operations. */
@@ -3359,36 +3357,6 @@ export interface KnownProperties extends Record<string, unknown> {
         room: RoomId;
         note?: string;
     }[];
-    active_quest?: string;
-    completed_quests?: string[];
-    quest_sectors?: string[];
-    quest_note_count?: number;
-    quest_look?: boolean;
-    quest_move?: boolean;
-    quest_say?: boolean;
-    quest_examine?: boolean;
-    quest_memory_set?: boolean;
-    quest_note?: boolean;
-    quest_recall?: boolean;
-    quest_reflect?: boolean;
-    quest_project_join?: boolean;
-    quest_task_claim?: boolean;
-    quest_task_submit?: boolean;
-    quest_pool_add?: boolean;
-    quest_channel_send?: boolean;
-    quest_channel_join?: boolean;
-    quest_predict?: boolean;
-    quest_consensus?: boolean;
-    quest_build?: boolean;
-    quest_note_link?: boolean;
-    quest_entered_workshop?: boolean;
-    quest_agent_spawned?: boolean;
-    quest_room_built?: boolean;
-    quest_visited_creation?: boolean;
-    quest_entered_bridge?: boolean;
-    quest_gateway_added?: boolean;
-    quest_channel_bridged?: boolean;
-    quest_cross_message?: boolean;
     markets_traded?: number;
     markets_resolved?: number;
     avg_brier?: number;

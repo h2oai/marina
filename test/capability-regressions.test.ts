@@ -159,7 +159,7 @@ describe("capability regressions on an isolated world", () => {
       w.engine.registerRoom(id, evolveRooms()[id]!);
       w.engine.entities.move(w.entityId, id);
       const p = w.engine.entities.get(w.entityId)!.properties as Record<string, unknown>;
-      p.active_quest = `bench_${name}`;
+      p.bench_gym = `bench_${name}`;
       p[active] = name === "memory" ? "test" : true;
       p[index] = 0;
       p[score] = 0;
@@ -186,7 +186,7 @@ describe("capability regressions on an isolated world", () => {
       w.engine.registerRoom(id, evolveRooms()[id]!);
       w.engine.entities.move(w.entityId, id);
       const p = w.engine.entities.get(w.entityId)!.properties as Record<string, unknown>;
-      p.active_quest = `bench_${name}`;
+      p.bench_gym = `bench_${name}`;
       p.bench_mem_phase = "study";
       p[counter!] = 0;
       const text = await w.command(`examine ${item}`);

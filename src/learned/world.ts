@@ -67,9 +67,6 @@ export function validateWorldDocument(doc: WorldDocument): string[] {
   for (const note of doc.guide_notes ?? [])
     if (!text(note?.content) || typeof note.importance !== "number" || !text(note.type, 32))
       problems.push("world: guide note invalid");
-  for (const quest of doc.quests ?? [])
-    if (!text(quest?.id, 64) || !text(quest.name, 200) || !text(quest.description))
-      problems.push("world: quest description invalid");
   return problems;
 }
 
