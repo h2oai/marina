@@ -68,10 +68,7 @@ export function registerGeneralCommands(engine: Engine): void {
   if (engine.db) {
     seedMemoryHelperRoles(engine.db);
     worldMemoryService(engine.db).assistanceNotify = (notice) => {
-      const principal = ["pending", "running"].includes(notice.state)
-        ? notice.worker_id
-        : notice.requester_id;
-      const user = engine.db?.getUser(principal);
+      const user = engine.db?.getUser(notice.recipient_id);
       const entity = user && engine.entities.findAgentByName(user.name);
       if (entity && entity.name === user.name) {
         const message = `Memory assistance ${notice.id}: ${notice.state}; ${notice.remaining_operations} operations remain. Inspect with memory api ${JSON.stringify({ operation: "assist_get", id: notice.id })}`;
