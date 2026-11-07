@@ -128,7 +128,7 @@ describe("Trait/role edit history (audit trail)", () => {
     });
 
     it("`trait history` on an unknown trait reports no history", () => {
-      engine.processCommand(conn.entity!, "trait history nope");
+      engine.processCommand(conn.entity!, "role trait history nope");
       expect(stripAnsi(conn.lastText())).toContain("No edit history");
     });
 
@@ -207,7 +207,7 @@ describe("Trait/role edit history (audit trail)", () => {
         },
         createdBy: "ada",
       });
-      engine.processCommand(conn.entity!, "trait lint forceful");
+      engine.processCommand(conn.entity!, "role trait lint forceful");
       const out = stripAnsi(conn.lastText());
       expect(out).toContain("Trait lint: forceful");
       expect(out).toContain("always/every-turn");

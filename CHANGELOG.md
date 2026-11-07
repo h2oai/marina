@@ -133,6 +133,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Fewer top-level commands: 30 more join a family under the command they belong to.**
+  - Marina had 135 top-level commands. Command families (`memory note …` running `note`) now
+    group 30 more, so `help` lists 105:
+    - `project research|debate|solve|explore|plan|monitor|usecase|pattern`;
+    - `outcome competence|lessons|judge|arbiter|productivity`;
+    - `readiness posture|methods|uptime`;
+    - `world genome|marina-descend|mesh|association|reproduce|intellect|mutation|economy|lab`;
+    - `position bankroll`, `watch probe`, `shell run`, `role trait|system-prompt`,
+      `crew recruit`.
+  - Every bare name still runs exactly as before (same handler, rank, gates and output) and says
+    once per session where it now lives. `help <head>` lists its members.
+  - `project create` refuses a name whose first word starts a project (`plan`, `research`, …),
+    since `project plan …` would reach the launcher, not the project.
+  - Command usage records whether a person or an agent ran the command. Every entity carried
+    the kind `agent`, so people's commands were counted as agents'.
+
 - **A `tell` to someone offline waits for them instead of being refused.**
   - `tell` reached connected entities only. An agent answering a person who had logged off was
     refused and fell back to posting its answer in a channel, often several times over. A tell to

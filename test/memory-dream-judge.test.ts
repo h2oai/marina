@@ -219,7 +219,7 @@ describe("the dream judge, guard and measure", () => {
       expect(standings().reduce((n, s) => n + s.opinions, 0)).toBe(5);
     }
     conn.clear();
-    await engine.processCommand(ada, "judge stats dream");
+    await engine.processCommand(ada, "outcome judge stats dream");
     expect(conn.lastText()).toContain("dream/supersede");
   });
 

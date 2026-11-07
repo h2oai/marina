@@ -58,6 +58,8 @@ export interface CommandPhaseHost {
   readonly macroManager?: Pick<MacroManager, "getByName">;
   readonly logger: Logger;
   promptVersion(name: string): string | undefined;
+  /** Whether an agent drives the entity (`Engine.isAgentEntity`); usage rows are labelled by it. */
+  isAgentEntity?(id: EntityId): boolean;
   sendToEntity(id: EntityId, message: string): void;
   /**
    * Runs a macro's expanded command INSIDE the current execution slot (never
@@ -204,7 +206,12 @@ export class CommandPhaseCoordinator {
         this.host.db!.recordPrimitiveUsage({
           actorId: String(entityId),
           actorName: entity.name,
-          actorKind: entity.kind,
+          // Every entity's `kind` is "agent", so the row is labelled by who
+          // drives it: a person's commands are counted apart from agents'.
+          actorKind:
+            this.host.isAgentEntity === undefined || this.host.isAgentEntity(entityId)
+              ? "agent"
+              : "person",
           source: "command",
           ...classification,
           success,

@@ -462,7 +462,9 @@ export class PlatformMemoryBackend {
     if (words.length === 0) return { lines: [], ids: [] };
     // `for:<work>` narrows the recall to that kind of work, budgeted (`lessons … for:`).
     const scope = work ? ` for:${work}` : "";
-    const text = extractText(await this.client.command(`lessons ${words.join(" ")}${scope}`));
+    const text = extractText(
+      await this.client.command(`outcome lessons ${words.join(" ")}${scope}`),
+    );
     const lines: string[] = [];
     const ids: string[] = [];
     for (const line of text.split("\n")) {

@@ -192,19 +192,19 @@ export function triageToolCommand(a: Args): string {
 export function arbiterToolCommand(a: Args): string {
   const t = "marina_arbiter";
   const action = str(a.action);
-  if (action === "policy") return "arbiter policy";
+  if (action === "policy") return "outcome arbiter policy";
   const type = mod(t, "type", str(a.type));
   if (action === "contested") {
     const answers = list(a.answers).map((x) => x.replace(/\|/g, "/").replace(/[\r\n]+/g, " "));
     if (answers.length < 2) throw new Error(`${t} action=contested needs answers (2 or more).`);
-    return `arbiter contested ${[...type, "--", answers.join(" | ")].join(" ")}`;
+    return `outcome arbiter contested ${[...type, "--", answers.join(" | ")].join(" ")}`;
   }
   if (action === "check") {
     const verdict = need(t, "verdict (the Arbiter's JSON reply)", str(a.verdict)).replace(
       /[\r\n]+/g,
       " ",
     );
-    return `arbiter check ${[
+    return `outcome arbiter check ${[
       ...type,
       ...mod(t, "majority", str(a.majority)),
       ...mod(t, "agreement", num(a.agreement)),
@@ -217,10 +217,10 @@ export function arbiterToolCommand(a: Args): string {
 
 export function patternToolCommand(a: Args): string {
   const t = "marina_pattern";
-  if (str(a.action) === "list") return "pattern list";
+  if (str(a.action) === "list") return "project pattern list";
   const pattern = need(t, "pattern", str(a.pattern));
   const task = need(t, "task", str(a.task)).replace(/[\r\n]+/g, " ");
-  return `pattern run ${[pattern, ...mod(t, "budget", num(a.budgetUsd)), "--", task].join(" ")}`;
+  return `project pattern run ${[pattern, ...mod(t, "budget", num(a.budgetUsd)), "--", task].join(" ")}`;
 }
 
 /** Tool name → command builder, for every typed analysis tool. */

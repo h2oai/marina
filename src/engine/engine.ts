@@ -563,6 +563,7 @@ export class Engine {
       macroManager: this.macroManager,
       logger: this.logger,
       promptVersion: (name) => this.agentRuntime.get(name)?.getStatus().promptVersion,
+      isAgentEntity: (id) => this.isAgentEntity(id),
       sendToEntity: (id, message) => this.sendToEntity(id, message),
       processCommand: (id, raw) => this.processCommand(id, raw),
       checkRateLimit: (id) => this.checkRateLimit(id),

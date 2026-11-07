@@ -138,20 +138,20 @@ const CASES: Array<[string, Record<string, unknown>, string]> = [
   [
     "marina_arbiter",
     { action: "contested", type: "choice", answers: ["A", "B|C"] },
-    "arbiter contested type:choice -- A | B/C",
+    "outcome arbiter contested type:choice -- A | B/C",
   ],
   [
     "marina_arbiter",
     { action: "check", majority: "A", agreement: 0.6, verdict: '{"verdict":"keep"}' },
-    'arbiter check majority:A agreement:0.6 -- {"verdict":"keep"}',
+    'outcome arbiter check majority:A agreement:0.6 -- {"verdict":"keep"}',
   ],
-  ["marina_arbiter", { action: "policy" }, "arbiter policy"],
+  ["marina_arbiter", { action: "policy" }, "outcome arbiter policy"],
   [
     "marina_pattern",
     { pattern: "debate", task: "Pick a name", budgetUsd: 1 },
-    "pattern run debate budget:1 -- Pick a name",
+    "project pattern run debate budget:1 -- Pick a name",
   ],
-  ["marina_pattern", { action: "list" }, "pattern list"],
+  ["marina_pattern", { action: "list" }, "project pattern list"],
 ];
 
 describe("analysis tool schemas", () => {
@@ -227,7 +227,7 @@ describe("analysis tools send exactly their command", () => {
   it("a rank, gate or spend refusal from the command fails the tool call", async () => {
     const replies: Record<string, string> = {
       forecast: "Not forecasting: daily spend cap reached.",
-      pattern: "Usage: pattern run <pattern> [budget:<usd>] -- <task>",
+      project: "Usage: pattern run <pattern> [budget:<usd>] -- <task>",
       research: "Could not research: no model is available to run the research agent",
     };
     for (const [name, args] of [

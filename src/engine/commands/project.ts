@@ -16,6 +16,7 @@ import { recordProjectOutcome } from "../../outcomes/orchestration";
 import type { MarinaDB } from "../../persistence/database";
 import type { ProjectRow } from "../../persistence/db-tasks";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { familyMember } from "../command-families";
 import { failCommandResponse, refuseCommand } from "../command-response";
 import { tryLog } from "../errors";
 import { principalOf } from "../gate-context";
@@ -312,6 +313,17 @@ export function projectCommand(deps: {
 
         if (!name || name.length < 2) {
           refuseCommand(ctx, input.entity, "Project name must be at least 2 characters.");
+          return;
+        }
+        // `project research …` starts a research project (a family member), so
+        // a project whose name begins with a member word could not be reached.
+        const firstWord = name.split(/\s+/)[0]!.toLowerCase();
+        if (familyMember("project", firstWord)) {
+          refuseCommand(
+            ctx,
+            input.entity,
+            `A project name cannot start with "${firstWord}": \`project ${firstWord} …\` starts a new ${firstWord} project. Pick another first word.`,
+          );
           return;
         }
 

@@ -171,6 +171,8 @@ describe("primitive usage evidence", () => {
     const engine = new Engine({ db, startRoom: roomId("test/start"), tickInterval: 60_000 });
     engine.registerRoom(roomId("test/start"), makeTestRoom());
     const connection = new MockConnection("agent-connection");
+    // A client that declared itself an agent (`principal: "agent"`).
+    (connection as unknown as { agent: boolean }).agent = true;
     engine.addConnection(connection);
     const entity = engine.spawnEntity(connection.id, "Ada")!;
     entity.kind = "agent";
@@ -197,5 +199,15 @@ describe("primitive usage evidence", () => {
       toolCalls: 1,
       marinaToolCalls: 1,
     });
+  });
+
+  test("a person's commands are recorded as a person's, not counted as an agent's", async () => {
+    const engine = new Engine({ db, startRoom: roomId("test/start"), tickInterval: 60_000 });
+    engine.registerRoom(roomId("test/start"), makeTestRoom());
+    const connection = new MockConnection("person-connection");
+    engine.addConnection(connection);
+    const entity = engine.spawnEntity(connection.id, "Pat")!;
+    await engine.processCommand(entity.id, "note a person's note");
+    expect(db.getPrimitiveUsageSummary("Pat")).toMatchObject({ commands: 1, activeAgents: 0 });
   });
 });
