@@ -58,6 +58,8 @@ export interface AuthHost {
   dispatchCommand(entityId: EntityId, raw: string): Promise<unknown>;
   buildContext(room: RoomId): RoomContext | undefined;
   logEvent(event: EngineEvent): void;
+  /** An account's entity is live (login or reconnect): hand it what waited while it was away. */
+  accountConnected?(entityId: EntityId, accountId: string): void;
 }
 
 export interface AuthTimers {
@@ -394,6 +396,7 @@ export class AuthCoordinator {
       if (existingUser) {
         isNewUser = false;
         this.host.db.updateUserLastLogin(existingUser.id);
+        this.host.accountConnected?.(entity.id, existingUser.id);
         // Apply stored rank to entity — but SECURITY: a passwordless name-login
         // never inherits an elevated rank (a name is not proof of identity).
         entity.properties.rank = this.restorableRank(existingUser.rank, connId, internal, identity);
@@ -585,6 +588,7 @@ export class AuthCoordinator {
         restoredRank = Math.min(user.rank, ceiling);
         entity.properties.rank = restoredRank as EntityRank;
         this.host.db.updateUserLastLogin(user.id);
+        this.host.accountConnected?.(entity.id, user.id);
       }
     }
 

@@ -149,6 +149,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Command usage records whether a person or an agent ran the command. Every entity carried
     the kind `agent`, so people's commands were counted as agents'.
 
+- **A `tell` to someone offline waits for them instead of being refused.**
+  - `tell` reached connected entities only. An agent answering a person who had logged off was
+    refused and fell back to posting its answer in a channel, often several times over. A tell to
+    a known account that is not connected is now queued (`[queued #N: … reads it on connecting]`),
+    counts as the delivery of the reply the sender owed, and is shown to the account on the tick
+    after it next logs in or reconnects, marked "(sent while you were away)". It is then an
+    ordinary tell: `tell inbox`, `tell ack` and `re` work on it.
+  - The same text from the same sender while one is waiting is not queued twice, a sender may
+    leave at most 20 tells waiting for one account, and a queued tell nobody collects expires
+    after 30 days.
+
 - **Agent journals stop storing the same message twice.**
   - When an agent's history was compacted, the archive stored again every message the
     completed-message journal had already stored: inside an archive each message carried its
@@ -680,6 +691,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     nothing.
 
 ### Fixed
+
+- **A memory-assistance worker is no longer told about its own work.** Each claim and each read
+  a worker made on a job sent that worker a "Memory assistance …: running; N operations remain"
+  message, so a worker agent was steered once per operation, mid-run, about its own action.
+  Notices now go only to the party a change concerns (a new job to its worker, an outcome to its
+  requester) and never to the principal whose call made the change.
 
 - **A refused or failed command now says so to its caller.** Over 100 handler paths (agent spawn,
   stop and reconfigure, `connect`, `schedule`, `gate`, `witness`, `world`, `supervisor`, `arena`,

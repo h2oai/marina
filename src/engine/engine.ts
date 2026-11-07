@@ -94,6 +94,7 @@ import { registerBuiltinCommands } from "./command-registry";
 import { CommandRouter } from "./command-router";
 import { stopCodeStreamsFor } from "./commands/code/stream";
 import { isIgnoring } from "./commands/ignore";
+import { deliverQueuedTells } from "./commands/tell";
 import { ConnectionManager } from "./connection-manager";
 import { ConnectorRuntime } from "./connector-runtime";
 import { positiveNumberFromEnv, ROOM_FETCH_RATE_MS, ROOM_FETCH_TIMEOUT_MS } from "./constants";
@@ -113,6 +114,7 @@ import { notifyOperator } from "./ops-notify";
 import { getRank, rankName } from "./permissions";
 import { PresenceTracker } from "./presence";
 import { computeReadiness } from "./readiness";
+import { engineTellDeps } from "./registrations/tell-deps";
 import { RoomSandbox } from "./room-sandbox";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
@@ -197,6 +199,8 @@ export class Engine {
   readonly crewManager?: CrewManager;
   /** Each room formation's round in progress (src/coordination/room-formations.ts). */
   private readonly roomRounds = new Map<RoomId, RoomRound>();
+  /** Entities that just logged in, with the account whose queued tells they get next tick. */
+  private readonly queuedTellsDue = new Map<EntityId, string>();
   /**
    * The verification verdict (`aspectCheck`, a label) of the say being
    * broadcast, read once by `onRoomSay` for the same message ref; the words
@@ -547,6 +551,7 @@ export class Engine {
       dispatchCommand: (id, raw) => this.dispatchCommand(id, raw),
       buildContext: (room) => this.buildContext(room),
       logEvent: (event) => this.logEvent(event),
+      accountConnected: (entityId, accountId) => this.queuedTellsDue.set(entityId, accountId),
     });
     this.commandPhaseCoordinator = new CommandPhaseCoordinator({
       entities: this.entities,
@@ -1084,6 +1089,17 @@ export class Engine {
     tryLog(this.logger, "tick", "Direct-message expiry failed", () => {
       this.db?.expireDirectMessages();
     });
+    // Tells queued for an account while it was offline, handed to the entity
+    // that logged in — on the tick after the login, so the login reply is first.
+    if (this.queuedTellsDue.size > 0) {
+      const due = [...this.queuedTellsDue];
+      this.queuedTellsDue.clear();
+      const deps = engineTellDeps(this);
+      for (const [entityId, accountId] of due)
+        tryLog(this.logger, "tick", "Queued tell delivery failed", () => {
+          if (this.entities.get(entityId)) deliverQueuedTells(deps, entityId, accountId);
+        });
+    }
 
     // Admission/FIFO/budget semantics live behind an independently testable boundary.
     this.commandCoordinator.runPhase(this.commandPhaseBudgetMs);

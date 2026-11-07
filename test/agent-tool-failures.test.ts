@@ -150,13 +150,43 @@ describe("fresh-world command surface", () => {
     expect(usage("Cara").at(-1)).toMatchObject({ success: 1 });
   });
 
-  it("a tell to a known account that is offline names the routes that reach it", async () => {
+  it("a tell to a known account that is offline waits and is delivered when it connects", async () => {
     const a = join("u_a", "Ann");
     db.createUser({ id: "u_gone", name: "Overseer" });
-    const out = await run(a, "tell Overseer done");
-    expect(out).toContain('"Overseer" is offline');
-    expect(out).toContain("board post");
+    const out = await run(a, "tell Overseer task 4 is done");
+    expect(out).toMatch(/\[queued #\d+: Overseer is offline and reads it on connecting\]/);
+    expect(usage("Ann").at(-1)).toMatchObject({ success: 1 });
+    // The same text again is the waiting message, not a second one.
+    expect(await run(a, "tell Overseer task 4 is done")).toContain("Already waiting for Overseer");
     expect(await run(a, "tell Nobody hi")).toContain('No one named "Nobody" is online');
+
+    const overseer = new MockConnection("c-Overseer");
+    engine.addConnection(overseer);
+    const login = engine.login(overseer.id, "Overseer");
+    expect("entityId" in login).toBe(true);
+    // Delivered on the tick after the login, so the login reply comes first.
+    expect(stripAnsi(overseer.allTextJoined())).not.toContain("task 4 is done");
+    (engine as unknown as { tickInner(): void }).tickInner();
+    const received = stripAnsi(overseer.allTextJoined());
+    expect(received).toContain("task 4 is done");
+    expect(received).toContain("(sent while you were away)");
+    expect(received.match(/task 4 is done/g)).toHaveLength(1);
+    // It is an ordinary tell now: in the inbox, and `re` answers its sender.
+    expect(await run(overseer, "tell inbox")).toContain("task 4 is done");
+    expect(await run(overseer, "re thanks")).toContain("Ann");
+    // Nothing is delivered twice.
+    overseer.clear();
+    (engine as unknown as { tickInner(): void }).tickInner();
+    expect(stripAnsi(overseer.allTextJoined())).not.toContain("task 4 is done");
+  });
+
+  it("a sender may leave a bounded number of tells for one offline account", async () => {
+    const a = join("u_a", "Ann");
+    db.createUser({ id: "u_gone", name: "Overseer" });
+    for (let i = 0; i < 20; i++) await run(a, `tell Overseer update ${i}`);
+    const full = await run(a, "tell Overseer update 20");
+    expect(full).toContain("already has 20 of your messages waiting");
+    expect(usage("Ann").at(-1)).toMatchObject({ success: 0 });
   });
 
   it("verbs from other shells name the command that does it here", async () => {
