@@ -133,6 +133,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`help` leads with what people use.**
+  - Bare `help` opens with "Start here": thirteen commands that cover nearly all use (`look`,
+    `work`, `tell`, `say`, `channel send`, `board post`, `task list`, `memory note`,
+    `pool <name> recall`, `project list`, `chronicle`, `who`, `readiness`), then the category
+    names on one line instead of every command name.
+  - `help <command>` for a command with many forms (`code`, `memory`, `task`, `build`, `board`,
+    `channel`, `chronicle`, `pool`, `project`, `agent`, `skill`) shows its common forms first.
+    Before, it showed the first eight alphabetically, which left `channel send` out of
+    `help channel`, and `help code` printed over a hundred lines.
+  - Any other command's Usage block is capped at twelve lines. `help <command> full` still
+    shows everything.
+  - `src/engine/commands/help-common.ts` holds both lists, and `test/help-common.test.ts` checks
+    every entry against the declared syntax.
+
 - **Fewer top-level commands: 30 more join a family under the command they belong to.**
   - Marina had 135 top-level commands. Command families (`memory note …` running `note`) now
     group 30 more, so `help` lists 105:

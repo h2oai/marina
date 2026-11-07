@@ -177,7 +177,7 @@ describe("Phase 2 Integration", () => {
 
   it("help command includes new Phase 2 commands", () => {
     conn1.clear();
-    engine.processCommand(conn1.entity!, "help");
+    engine.processCommand(conn1.entity!, "help all");
     const text = conn1.lastText();
     expect(text).toContain("rank");
     expect(text).toContain("channel");

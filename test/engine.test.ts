@@ -160,7 +160,7 @@ describe("Engine", () => {
     it("should list all commands", () => {
       const entity = engine.spawnEntity("c1", "TestAgent")!;
       conn.clear();
-      engine.processCommand(entity.id, "help");
+      engine.processCommand(entity.id, "help all");
       const text = conn.lastText();
       expect(text).toContain("look");
       expect(text).toContain("say");
