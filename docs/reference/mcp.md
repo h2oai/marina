@@ -1245,7 +1245,7 @@ Invoke a resolver against external state and persist the result as a Sample. Res
 
 ## quest
 
-Guided objectives and onboarding checklists
+[deprecated: use goals (`memory set goal`), tasks, crews, skills and guides] Guided objectives and onboarding checklists
 
 ```json
 {

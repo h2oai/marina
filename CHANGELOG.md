@@ -133,6 +133,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Quests are deprecated.**
+  - Goals and focus, tasks (claim, submit, approval), crews, skills and guides cover everything quests
+    did. In the live world no agent or person had a quest, and no quest credit was ever paid.
+  - Agents are never given a world's `autoQuest`; people still are, so a world's guided start keeps
+    working.
+  - `quest_complete` joins the retired standing kinds. A quest paid standing with no other account
+    verifying anything; the kind now pays 0 and `record()` refuses it.
+  - `quest` is listed as deprecated in the feature-status table and its help.
+  - The command and the worlds' quest definitions are removed in a later release.
 - **An agent's per-turn memory leaves out the evidence and proposal tiers.**
   - In a live world, `[evidence]` and `[proposal]` items served into agents' prompts were never
     cited, while skills and the agent's own notes were.
