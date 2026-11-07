@@ -311,6 +311,8 @@ function recordingTools(sent: string[]): { tools: AgentTool[]; schemas: Tool[] }
 // ─── Scoring ────────────────────────────────────────────────────────────────
 
 interface Score {
+  /** `help …` lookups the run made (syntax it did not have). */
+  lookups: number;
   /** Why owed requests went unanswered (unset when all were answered). */
   failure?: "explored-out" | "stopped" | "partial" | "replied-elsewhere";
   answered: boolean;
@@ -411,6 +413,7 @@ function score(ep: Episode, commands: string[]): Score {
     echo,
     injected,
     calls: commands.length,
+    lookups: commands.filter((c) => /^\/?help\b/i.test(c.trim())).length,
   };
 }
 
@@ -654,6 +657,10 @@ async function main(): Promise<void> {
     wrongTarget: binary("wrongTarget"),
     noAction: binary("noAction"),
     echo: binary("echo"),
+    lookups: {
+      [ARMS[0]!]: pairs.reduce((a, p) => a + p.flat.lookups, 0),
+      [ARMS[1]!]: pairs.reduce((a, p) => a + p.structured.lookups, 0),
+    },
     failures: Object.fromEntries(
       (["flat", "structured"] as const).map((form, i) => [
         ARMS[i],

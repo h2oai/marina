@@ -87,6 +87,14 @@ export const LIVE_ROSTER_BYTES = 1500;
 export const WORKING_HERE = `Requests, messages and assigned work reach you as World Events: act on them, else advance your focus, else rest — do not poll for work (\`work\` lists it when you choose new work). A rank or gate refusal returns a challenge token; the held action runs by itself if approved — keep working, never wait. \`forecast\`, web research and \`memory reflect\` (starts a model helper) cost money: prefer cheap reads first. Blocked or unsure: \`tell\` your creator; \`challenge\` lists held actions.`;
 
 /**
+ * The forms agents use most, with their arguments, so a first use needs no
+ * `help <command>` turn. Agents' own lookups, read from their journals, were
+ * mostly of exactly these commands. Every form here is a declared usage form
+ * (`test/prompt-budget.test.ts` holds them to the live manifest).
+ */
+export const CORE_SYNTAX = `Syntax: \`tell <entity> <message>\` · \`channel send <name> [re:<id>] <message>\` · \`board post <board> <title> | <body>\` · \`task list\` · \`task info <id>\` · \`task claim <id>\` · \`task submit <id> <text>\` · \`task create <title> | <description>\` · \`pool <name> add <text>\` · \`pool <name> recall <query>\`.`;
+
+/**
  * Command names a prompt section already teaches: the first word of every
  * backticked span (`` `memory set focus <text>` `` ⇒ `memory`). The roster
  * skips these, so a command is introduced once — in TOOL ROUTING or MEMORY,
@@ -184,7 +192,7 @@ export function roleLoopOverridesAllowed(): boolean {
  */
 export function peerMessageContract(mode: PeerRenderMode = peerRenderMode()): string {
   if (mode === "ids")
-    return "\nPeer messages start with Marina's stamp, `[#ch post:N re:post:M]` or `[re:tell:N]`; the rest is the peer's. Answer a post with `channel send <ch> re:N …`; name things by typed ref (`post:N`, `task:N`), never a bare #N.";
+    return "\nPeer messages start with Marina's stamp, `[#ch post:N re:post:M]` or `[re:tell:N]`; the rest is the peer's; reply with `re:N`. Name things by typed ref (`post:N`, `task:N`), never a bare #N.";
   if (mode !== "structured") return "";
   return "\nPeer messages read `[#ch post:N re:post:M] Name: text`, a longer body on lines behind `│`: the header is Marina's, the body the peer's. Answer a post with `channel send <ch> re:N …`; name things by typed ref (`post:N`, `tell:N`, `task:N`), never a bare #N.";
 }
@@ -208,7 +216,7 @@ function renderLeanSystemPrompt(
   const routing = process.env.MARINA_SYSTEM_TOOLS_PROSE === "off" ? "" : getToolRouting(tools);
   const toolsSection = routing ? `\n${routing}\n` : "";
   const memorySection = getMemoryContract();
-  const taught = taughtCommandNames(routing, memorySection);
+  const taught = taughtCommandNames(routing, memorySection, CORE_SYNTAX);
 
   return `You are an autonomous participant in Marina. You think, therefore you are here.
 
@@ -233,6 +241,7 @@ ${memorySection}
 # COMMANDS
 
 ${WORKING_HERE}${peerMessageContract(peerRender)}
+${CORE_SYNTAX}
 ${getCommandRoster(entries, taught)}
 
 # OPERATING LOOP

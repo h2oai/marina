@@ -40,6 +40,7 @@ import {
 import { piModels } from "../src/agent/pi-models";
 import {
   COMMAND_ROSTER,
+  CORE_SYNTAX,
   FULL_SYSTEM_PROMPT_BYTE_CAP,
   getLeanSystemPrompt,
   getRoomCommandsLine,
@@ -70,6 +71,28 @@ import { createTestEngine } from "./engine-fixture";
 import { scopeProcessState } from "./process-state";
 
 const bytes = (s: string) => Buffer.byteLength(s, "utf8");
+
+describe("the core syntax line", () => {
+  it("lists only forms the live manifest declares", async () => {
+    const { createTestEngine } = await import("./engine-fixture");
+    const t = createTestEngine();
+    try {
+      const declared = new Set(
+        commandManifest(t.engine.commands, { rank: 9 }).flatMap((e) =>
+          (e.forms ?? []).map((f) => (f as { syntax: string }).syntax),
+        ),
+      );
+      const listed = [...CORE_SYNTAX.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
+      expect(listed.length).toBeGreaterThan(8);
+      // A listed form is a declared one with its optional `[…]` segments dropped.
+      const bare = (form: string) => form.replace(/\s*\[[^\]]*\]/g, "").trim();
+      const known = (form: string) => [...declared].some((d) => bare(d) === bare(form));
+      expect(listed.filter((f) => !known(f))).toEqual([]);
+    } finally {
+      await t.dispose();
+    }
+  });
+});
 
 describe("output reservation", () => {
   it("gives the marina/default proxy a cloud output budget so the effective window stays large", () => {

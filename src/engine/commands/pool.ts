@@ -182,7 +182,7 @@ export function poolCommand(deps: {
       { syntax: "pool <name> audit", effect: "read" },
       { syntax: "pool <name> list", effect: "read" },
       { syntax: "pool <name> ratify <noteId> [importance:N] [rationale]", effect: "write" },
-      { syntax: "pool <name> recall", effect: "read" },
+      { syntax: "pool <name> recall <query>", effect: "read" },
       { syntax: "pool <name> show <id>", effect: "read" },
       { syntax: "pool <name> dream", effect: "read" },
       { syntax: "pool <name> dream now", effect: "write" },

@@ -133,6 +133,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agents get the syntax of the commands they use most, so a first use needs no `help` turn.**
+  - Agents' own journals showed most `help <command>` lookups were for the same few core commands
+    (`pool`, `tell`, `board`, `task`). The prompt named those commands but never gave their
+    arguments.
+  - The COMMANDS section now has one line of their declared forms: `tell <entity> <message>`,
+    `channel send <name> [re:<id>] <message>`, `board post <board> <title> | <body>`, `task
+    list|info|claim|submit|create`, `pool <name> add|recall`. A test holds every form to the live
+    command manifest.
+  - The live roster no longer repeats a description for a command that line already teaches, and the
+    ids prompt line is shorter.
+  - Fixed: `pool <name> recall` was declared without its query, so `help`, `help catalog`, MCP
+    discovery and typed tools offered a form the handler refuses. It is now
+    `pool <name> recall <query>`.
+  - The paired replay (`scripts/peer-render-replay.ts`) now reports `help` lookups per arm.
 - **Three periodic prompt sections are gone from the agent loop**, each superseded by something
   newer:
   - **`[Memory Health]`** (every 20 cycles, an `orient` pull): memory curation is a checked pass's job
