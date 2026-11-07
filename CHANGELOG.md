@@ -133,6 +133,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Three periodic prompt sections are gone from the agent loop**, each superseded by something
+  newer:
+  - **`[Memory Health]`** (every 20 cycles, an `orient` pull): memory curation is a checked pass's job
+    (dreaming), never an idle turn's, and the section invited exactly that work. `orient` remains a
+    command.
+  - **`[Standing]`** (every 20 cycles): every new credit already tells the online earner
+    `standing +N <kind> <ref> → total`, and `standing summary` reads it on demand.
+  - **`[Novelty Suggestions]`** (every 5 cycles, a `novelty suggest` pull): goals, focus, `[No Focus]`
+    and `work` direct an agent. The suggestions included `look` at unexplored rooms. `novelty` remains
+    a command.
+  - The harness no longer makes the three pulls behind them, and the memory platform's unused
+    `standingSummary` / `getNoveltySuggestions` are removed.
 - **Quests are deprecated.**
   - Goals and focus, tasks (claim, submit, approval), crews, skills and guides cover everything quests
     did. In the live world no agent or person had a quest, and no quest credit was ever paid.

@@ -202,17 +202,13 @@ function residentWithStanding(focus: string | null) {
 }
 
 describe("the resident's continuation prompt", () => {
-  it("shows one [Standing] line at cycle 15, with the earn line only when unfocused", async () => {
+  it("carries no periodic [Standing] line: each credit is announced when it lands", async () => {
     for (const focus of [null, "Map the grid"]) {
       const r = residentWithStanding(focus);
       const prompts: string[] = [];
-      for (let c = 1; c <= 15; c++) prompts.push(await r.i.buildContinuationPrompt());
-      expect(r.sent.filter((c) => c === "standing summary")).toHaveLength(1);
-      for (const p of prompts.slice(0, 14)) expect(p).not.toContain("[Standing]");
-      const line = prompts[14]!.split("\n").find((l) => l.startsWith("[Standing]"));
-      expect(line).toContain("standing 1.00 live (rank 0 by standing; rank 1 at 5)");
-      if (focus) expect(line).not.toContain("earn standing:");
-      else expect(line).toContain("· earn standing: a · b");
+      for (let c = 1; c <= 40; c++) prompts.push(await r.i.buildContinuationPrompt());
+      expect(r.sent.filter((c) => c === "standing summary")).toHaveLength(0);
+      for (const p of prompts) expect(p).not.toContain("[Standing]");
     }
   });
 });

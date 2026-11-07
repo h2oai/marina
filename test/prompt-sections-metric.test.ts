@@ -98,16 +98,12 @@ function makeAdapter(name: string, cycleBefore: number) {
   i.lastReflectionCycle = -1000;
   i.notesSinceReflection = 5;
   // Oversized cadenced sections so the budget has to defer some of them.
-  i.platformMemory.getNoveltySuggestions = async () => [
-    `explore the market board ${"x".repeat(1500)}`,
-    `try a watch ${"y".repeat(1500)}`,
-  ];
-  i.platformMemory.orient = async () => ({
-    success: true,
-    text: `orient: 12 notes, 2 stale ${"o".repeat(3000)}`,
-  });
   i.actionHistory.createSummary = () =>
-    ({ totalActions: 10, failedActions: 4, challenges: ["recall kept failing"] }) as never;
+    ({
+      totalActions: 10,
+      failedActions: 4,
+      challenges: [`recall kept failing ${"x".repeat(2500)}`, `watch failed ${"y".repeat(2500)}`],
+    }) as never;
   i.setupActionTracking();
   return { adapter, i };
 }
@@ -120,7 +116,7 @@ function fireTurnStart(i: Internals): void {
 describe("agent_turn_start prompt metrics (adapter → runtime relay)", () => {
   it("at a coincidence cycle with a tight budget reports deferred sections and exact bytes", async () => {
     using _state = scopeProcessState({ env: { MARINA_CONTINUATION_BUDGET_BYTES: "6000" } });
-    // Cycle 300 fires Nearby/Novelty (%5), Memory Health (%20) and Learning Signal (%15).
+    // Cycle 300 fires Nearby (%5) and Learning Signal (%15), with Reflection Due.
     const { adapter, i } = makeAdapter("metrics-cycle-300", 299);
     for (let n = 0; n < 12; n++) {
       i.pendingPerceptions.push({
