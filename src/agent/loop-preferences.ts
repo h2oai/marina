@@ -135,6 +135,28 @@ function stripGoalModifiers(text: string): string {
 }
 
 /**
+ * The longest focus or goal the loop carries. A focus is one objective, shown
+ * on every turn; `memory set focus|goal` refuses a longer value and points at
+ * `memory note`, where details belong (agents were writing 2–11 KB status
+ * reports into it, of which the loop kept the first 500 characters).
+ */
+export const FOCUS_MAX_CHARS = 500;
+
+/** The objective text of a focus/goal value: a JSON `{description}` or the raw text. */
+export function focusValueText(value: string): string {
+  const raw = value.trim();
+  if (raw.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw) as { description?: unknown };
+      if (typeof parsed.description === "string") return parsed.description.trim();
+    } catch {
+      // allow-empty-catch: a value that is not JSON is the description itself
+    }
+  }
+  return raw;
+}
+
+/**
  * The focus an agent declared through its own command — `memory [kv] set
  * focus|goal <text>`, `memory [kv] delete focus`, or `task goal <title> |
  * <description>` — so the loop's live focus follows the agent's choice.
@@ -146,16 +168,8 @@ export function parseFocusWrite(command: string, reply: string): FocusWrite | nu
   if (set) {
     const key = set[1]!.toLowerCase();
     if (!reply.includes(`Memory "${key}" set.`)) return null;
-    let value = set[2]!.trim();
-    if (value.startsWith("{")) {
-      try {
-        const parsed = JSON.parse(value) as { description?: unknown };
-        if (typeof parsed.description === "string") value = parsed.description;
-      } catch {
-        // allow-empty-catch: a value that is not JSON is the description itself
-      }
-    }
-    return value ? { set: value.slice(0, 500) } : null;
+    const value = focusValueText(set[2]!);
+    return value ? { set: value.slice(0, FOCUS_MAX_CHARS) } : null;
   }
   if (/^memory\s+(?:kv\s+)?(?:delete|del|rm|remove)\s+focus\s*$/i.test(cmd)) {
     return { clear: true };
@@ -169,7 +183,7 @@ export function parseFocusWrite(command: string, reply: string): FocusWrite | nu
     const description = bar >= 0 ? rest.slice(bar + 1).trim() : "";
     if (!title) return null;
     const text = description && description !== title ? `${title} — ${description}` : title;
-    return { set: text.slice(0, 500) };
+    return { set: text.slice(0, FOCUS_MAX_CHARS) };
   }
   return null;
 }
@@ -203,6 +217,26 @@ export function selfWriteCommand(
     default:
       return undefined;
   }
+}
+
+/**
+ * True when every tool call of a completed turn chose rest (`memory set rest`,
+ * the `memory` tool's `rest`) and none failed. The run ends there: the
+ * agent has said it is done, and one more model call only produced a prose
+ * recap nobody reads (measured 2026-11-07: 76 of 217 prose-only turns came
+ * straight after a rest). Pure.
+ */
+export function turnOnlyRests(
+  calls: ReadonlyArray<{ name: string; arguments: Record<string, unknown> }>,
+  results: ReadonlyArray<{ isError?: boolean }>,
+): boolean {
+  if (calls.length === 0 || results.some((r) => r.isError)) return false;
+  return calls.every((call) => {
+    const command = selfWriteCommand(call.name, call.arguments);
+    if (!command) return false;
+    const pref = parseLoopPreferenceCommand(command);
+    return pref?.key === "rest" && pref.value !== undefined && pref.value.trim() !== "";
+  });
 }
 
 /**

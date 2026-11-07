@@ -188,8 +188,8 @@ export interface AgentConfig {
    * Crew-responder mode — when true, the agent runs as a thin specialist
    * that only wakes on perceptions, not on its own cognitive cycle:
    *   - autonomous loop skips ticks when no perceptions are pending
-   *   - continuation prompt suppresses Memory Health, Learning Signal,
-   *     and ACE Reflection sections (those exist for self-driven agents)
+   *   - continuation prompt gets Reflection Due only at the 300-cycle
+   *     cadence (it exists for self-driven agents)
    *   - idle consolidation is skipped entirely
    *
    * Use for crew specialists (Mathematician, Skeptic, Verifier, Historian,

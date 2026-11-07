@@ -83,7 +83,6 @@ type Internals = {
   notesSinceReflection: number;
   pendingPerceptions: Array<{ text: string; priority: number; shouldRespond: boolean }>;
   platformMemory: Record<string, unknown>;
-  actionHistory: { createSummary: () => unknown };
   agent: { listeners: Set<(event: { type: string }, signal: AbortSignal) => unknown> };
   buildContinuationPrompt(): Promise<string>;
   setupActionTracking(): void;
@@ -97,13 +96,8 @@ function makeAdapter(name: string, cycleBefore: number) {
   i.loopIterationCount = cycleBefore;
   i.lastReflectionCycle = -1000;
   i.notesSinceReflection = 5;
-  // Oversized cadenced sections so the budget has to defer some of them.
-  i.actionHistory.createSummary = () =>
-    ({
-      totalActions: 10,
-      failedActions: 4,
-      challenges: [`recall kept failing ${"x".repeat(2500)}`, `watch failed ${"y".repeat(2500)}`],
-    }) as never;
+  // An oversized focus so the budget has to defer some optional sections.
+  adapter.setFocus(`ship the parser ${"z".repeat(2500)}`);
   i.setupActionTracking();
   return { adapter, i };
 }
@@ -116,7 +110,7 @@ function fireTurnStart(i: Internals): void {
 describe("agent_turn_start prompt metrics (adapter → runtime relay)", () => {
   it("at a coincidence cycle with a tight budget reports deferred sections and exact bytes", async () => {
     using _state = scopeProcessState({ env: { MARINA_CONTINUATION_BUDGET_BYTES: "6000" } });
-    // Cycle 300 fires Nearby (%5) and Learning Signal (%15), with Reflection Due.
+    // Cycle 300 fires Reflection Due; the perceptions overflow the budget.
     const { adapter, i } = makeAdapter("metrics-cycle-300", 299);
     for (let n = 0; n < 12; n++) {
       i.pendingPerceptions.push({

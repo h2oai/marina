@@ -215,6 +215,7 @@ import {
   parseFocusWrite,
   parseLoopPreferenceCommand,
   selfWriteCommand,
+  turnOnlyRests,
 } from "./loop-preferences";
 import { PlatformMemoryBackend, type PlatformNoteResult } from "./memory-platform";
 import { assertMarinaRemoteTargetAllowed, normalizeMarinaBaseUrl } from "./model-probe";
@@ -2194,8 +2195,12 @@ export class LeanAgentAdapter implements AgentHandle {
       // counter is bumped on `turn_start`, so the cap check is unchanged.
       // The spend caps are re-checked here too: one prompt can run many turns,
       // so a once-per-cycle check alone lets a run spend well past the cap.
+      // A turn whose only calls chose rest ends the run: the agent is done,
+      // and another model call would only write a recap (`turnOnlyRests`).
       finishTurn: (turn) =>
-        this.shouldStopAfterTurn(turn?.message) ? { action: "end" as const } : undefined,
+        this.shouldStopAfterTurn(turn?.message) || this.restedThisTurn(turn)
+          ? { action: "end" as const }
+          : undefined,
       transformContext: contextTransform,
       // Mid-run compaction: `transformContext` shapes each request but never
       // shrinks the loop's working context, so a long tool-calling run keeps
@@ -3077,6 +3082,22 @@ export class LeanAgentAdapter implements AgentHandle {
     if (owed.length === 0) return "";
     const ids = owed.map((r) => r.modelRequestId).join(", ");
     return ` A model_response is still owed (${ids}): send your best current answer now, before the cap — an answer from what you have beats none.`;
+  }
+
+  /** The completed turn only chose rest (see `turnOnlyRests`). */
+  private restedThisTurn(turn?: {
+    message?: { content?: unknown };
+    toolResults?: ReadonlyArray<{ isError?: boolean }>;
+  }): boolean {
+    const content = Array.isArray(turn?.message?.content) ? turn.message.content : [];
+    const calls = content.filter(
+      (part): part is { type: "toolCall"; name: string; arguments: Record<string, unknown> } =>
+        (part as { type?: unknown })?.type === "toolCall",
+    );
+    return turnOnlyRests(
+      calls.map((c) => ({ name: c.name, arguments: c.arguments ?? {} })),
+      turn?.toolResults ?? [],
+    );
   }
 
   private shouldStopAfterTurn(turnMessage?: unknown): boolean {
@@ -4926,34 +4947,9 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     }
 
-    // ── 6. Learning signal (every 15th cycle) ──
-    // Crew-responder mode: suppressed — the learning signal exists for
-    // self-driven agents calibrating their own action policy. A thin
-    // specialist's actions are dictated by the coordinator's request — and a
-    // bound coder's by the assigned task.
-    if (cycle % 15 === 0 && !this.crewResponderMode && !this.activeCodingTask) {
-      try {
-        const summary = this.actionHistory.createSummary();
-        if (summary && summary.totalActions > 0) {
-          const lines: string[] = [];
-          if (summary.failedActions > 0) {
-            const failRate = Math.round((summary.failedActions / summary.totalActions) * 100);
-            lines.push(`Recent: ${summary.totalActions} actions, ${failRate}% failed`);
-          }
-          if (summary.challenges.length > 0) {
-            lines.push(`Struggles: ${summary.challenges.slice(0, 2).join("; ")}`);
-          }
-          if (lines.length > 0) {
-            lines.push(
-              "Consider: note <what you learned> type inference, or `skill store <name> | <desc> | <actions>` for a reliable approach",
-            );
-            parts.push(`[Learning Signal]\n${lines.join("\n")}`);
-          }
-        }
-      } catch {
-        // Non-critical
-      }
-    }
+    // (The every-15th-cycle `[Learning Signal]` section was removed: agents
+    // almost never acted on it; lessons-from-work and the dream pass turn
+    // failures into lessons without a prompt line.)
 
     // ── 7. Scheduled reflection — ACE generate→reflect→curate ──
     // Replaces the "just call reflect" cue with the three-phase loop

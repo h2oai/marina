@@ -145,6 +145,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A resumed agent's "most recent preserved excerpt" is the newest message, not the transcript's
     closing `]` part.
 
+- **An agent's run ends when it chooses rest, and a focus holds one objective.**
+  - After an agent rested (`memory set rest …` or the `memory` tool's `rest`), the loop made one
+    more model call, and the agent used it to write a status recap nobody reads. A turn whose only
+    calls chose rest now ends the run (`turnOnlyRests` in `src/agent/loop-preferences.ts`). A
+    failed rest, or rest alongside any other call, keeps the run going as before.
+  - `memory set focus|goal` refuses a value over 500 characters and points at `memory note`, where
+    details belong. The loop already kept only the first 500 characters, so an agent writing a
+    long status report into its focus lost most of it without being told.
+  - The every-15th-cycle `[Learning Signal]` prompt section is removed. Its "Struggles" line
+    printed `[object Object]`, and agents almost never acted on it; lessons-from-work and the
+    dream pass turn repeated failures into lessons without a prompt line.
+
 - **Agents get the syntax of the commands they use most, so a first use needs no `help` turn.**
   - Agents' own journals showed most `help <command>` lookups were for the same few core commands
     (`pool`, `tell`, `board`, `task`). The prompt named those commands but never gave their
