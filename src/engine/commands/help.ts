@@ -203,7 +203,7 @@ export function helpCommand(
 
       // "help <command> [full]" — a command wins over a same-named category.
       if (cmd) {
-        renderCommandDetail(ctx, input, cmd, second === "full", cat);
+        renderCommandDetail(ctx, input, cmd, second === "full", cat, all);
         return;
       }
 
@@ -316,6 +316,7 @@ function renderCommandDetail(
   cmd: CommandDef,
   full: boolean,
   sameNamedCategory: string | undefined,
+  all: CommandDef[] = [],
 ): void {
   const aliases = cmd.aliases?.length ? ` ${dim(`(aliases: ${cmd.aliases.join(", ")})`)}` : "";
   const notice = aliasNotice(cmd.name);
@@ -339,6 +340,18 @@ function renderCommandDetail(
     );
     if (!full && forms.length > 8)
       lines.push(dim(`Type "help ${cmd.name} full" for all ${forms.length} forms.`));
+  }
+  // A family head lists its members (unless its own help already names them).
+  const members = familyMembers(all, cmd.name);
+  if (members.length && !cmd.help.includes("Family:")) {
+    lines.push(
+      "Members:",
+      ...members.map((name) => {
+        const member = all.find((c) => c.name === name)!;
+        const summary = member.help.split("\n")[0]!.replace(/\s+/g, " ").trim();
+        return `  ${cmd.name} ${name} — ${summary.length > 70 ? `${summary.slice(0, 69)}…` : summary}`;
+      }),
+    );
   }
   // The token also named a category (e.g. `memory`): the command wins, but say so.
   if (sameNamedCategory) {

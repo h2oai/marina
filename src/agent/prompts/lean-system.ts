@@ -340,7 +340,7 @@ export function getToolRouting(tools: readonly string[] = BASELINE_TOOLS): strin
   const think = has("think") ? " `think` is not progress." : "";
   return `# TOOL ROUTING
 
-Communicate: \`tell\` for targeted handoffs, \`channel\`/\`board\` for group or durable threads, \`say\` for the room; channel sends are budgeted per run (default one; \`memory set channel_sends <n>\`). Coordinate: \`task\`, \`project\`, \`canvas\`, \`crew\`. Direct yourself: \`memory set focus <text>\`, \`task goal <title>\`; \`competence best <kind of work>\` shows which ways of working have succeeded here.${think}${via.length ? `\n${via.join(" ")}` : ""}`;
+Communicate: \`tell\` for targeted handoffs, \`channel\`/\`board\` for group or durable threads, \`say\` for the room; channel sends are budgeted per run (default one; \`memory set channel_sends <n>\`). Coordinate: \`task\`, \`project\`, \`canvas\`, \`crew\`. Direct yourself: \`memory set focus <text>\`, \`task goal <title>\`; \`outcome competence best <kind of work>\` shows which ways of working have succeeded here.${think}${via.length ? `\n${via.join(" ")}` : ""}`;
 }
 
 export function getLeanDiscoveryPrompt(): string {

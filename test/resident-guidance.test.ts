@@ -70,7 +70,7 @@ function residentWith(focus: string, opts: { skill?: string; lessons?: string[] 
     if (raw.startsWith("skill top ")) {
       return [{ kind: "message", data: { text: opts.skill ?? "No skill fits." } }];
     }
-    if (raw.startsWith("lessons ")) {
+    if (raw.startsWith("outcome lessons ")) {
       const lines = (opts.lessons ?? []).map((l, n) => `- ${l} [forecast l${n}abcdef]`);
       return [{ kind: "message", data: { text: ["Lessons", ...lines].join("\n") } }];
     }
@@ -111,8 +111,8 @@ describe("continuation prompt injection", () => {
       `skill top Forecast the October CPI print bytes:${RESIDENT_SKILL_BYTES}`,
     ]);
     // Lessons: filtered to forecasting, budgeted.
-    expect(r.sent.filter((c) => c.startsWith("lessons "))).toEqual([
-      "lessons Forecast the October CPI print for:forecast",
+    expect(r.sent.filter((c) => c.startsWith("outcome lessons "))).toEqual([
+      "outcome lessons Forecast the October CPI print for:forecast",
     ]);
     const lessons = /\[Lessons\]\n([\s\S]*?)(?:\n\n|$)/.exec(prompts[6]!)?.[1] ?? "";
     expect(lessons).toContain("Anchor CPI on the Cleveland Fed nowcast");
@@ -131,13 +131,13 @@ describe("continuation prompt injection", () => {
       timestamp: Date.now(),
     });
     await viaTool.cycles(7);
-    expect(viaTool.sent.filter((c) => c.startsWith("lessons "))).toEqual([
-      "lessons Tidy the shared notes for:research",
+    expect(viaTool.sent.filter((c) => c.startsWith("outcome lessons "))).toEqual([
+      "outcome lessons Tidy the shared notes for:research",
     ]);
     const plain = residentWith("Tidy the shared notes", { lessons: ["x"] });
     await plain.cycles(7);
-    expect(plain.sent.filter((c) => c.startsWith("lessons "))).toEqual([
-      "lessons Tidy the shared notes",
+    expect(plain.sent.filter((c) => c.startsWith("outcome lessons "))).toEqual([
+      "outcome lessons Tidy the shared notes",
     ]);
   });
 
@@ -164,8 +164,8 @@ describe("continuation prompt injection", () => {
     });
     const r = residentWith("Forecast the October CPI print", { lessons: ["x"] });
     await r.cycles(7);
-    expect(r.sent.filter((c) => c.startsWith("lessons "))).toEqual([
-      "lessons Forecast the October CPI print",
+    expect(r.sent.filter((c) => c.startsWith("outcome lessons "))).toEqual([
+      "outcome lessons Forecast the October CPI print",
     ]);
   });
 

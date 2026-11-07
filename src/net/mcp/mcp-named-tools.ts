@@ -331,7 +331,10 @@ export function registerNamedWorldTools(
               .join(" ")
           : "";
         const watchTok = watch !== undefined ? ` watch:${Math.trunc(watch)}` : "";
-        return runCmd(extra, `probe ${quoteArg(kind, "kind")} ${argTokens}${watchTok}`.trim());
+        return runCmd(
+          extra,
+          `watch probe ${quoteArg(kind, "kind")} ${argTokens}${watchTok}`.trim(),
+        );
       }),
   );
 

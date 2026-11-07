@@ -560,7 +560,7 @@ describe("Uptime Command", () => {
   });
 
   it("should show server uptime", () => {
-    engine.processCommand(conn.entity!, "uptime");
+    engine.processCommand(conn.entity!, "readiness uptime");
     const text = conn.lastText();
     expect(text).toContain("Server Uptime");
     expect(text).toContain("s");

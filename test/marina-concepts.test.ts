@@ -273,14 +273,14 @@ describe("concept 2: lessons from work, recalled for the next task and at a fail
       timestamp,
     }) as EngineEvent;
 
-  /** The lessons command as the adapter's platform memory runs it (`lessons <topic>`). */
+  /** The lessons command as the adapter's platform memory runs it (`outcome lessons <topic>`). */
   const runLessons = (db: MarinaDB) => async (raw: string) => {
     const out: string[] = [];
     const ctx = {
       send: (_e: EntityId, m: string) => out.push(m),
       getEntity: () => ({ name: "ConceptCoder" }),
     } as unknown as RoomContext;
-    const args = raw.replace(/^lessons\s+/, "");
+    const args = raw.replace(/^(?:outcome\s+)?lessons\s+/, "");
     await lessonsCommand({ db }).handler(ctx, {
       entity: "e_coder" as EntityId,
       verb: "lessons",
@@ -336,7 +336,7 @@ describe("concept 2: lessons from work, recalled for the next task and at a fail
     };
     i.obligationsComplete = async () => '{"add":[],"cancel":[]}';
     i.platformMemory.client.command = async (raw: string) =>
-      raw.startsWith("lessons ") ? await runLessons(db)(raw) : [];
+      raw.startsWith("outcome lessons ") ? await runLessons(db)(raw) : [];
     adapter.setActiveCodingTask("Edit the config loader; confirm the file exists before editing.");
     const prompt = await i.buildContinuationPrompt();
     expect(prompt).toContain("[Lessons]");
