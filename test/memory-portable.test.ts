@@ -266,7 +266,8 @@ it("uploads only new resident segments and stops local re-archival after forgett
   expect(captures).toBe(4); // Three text parts plus the immutable manifest.
   const firstArchive = (await durable.checkpoint())!.data.archive as { manifest_source_id: string };
   await durable.archive([...messages, { role: "user", content: "second original" }], "second");
-  expect(captures).toBe(6); // One new message and one new manifest.
+  // One new message, the comma separator (stored once, then shared) and one new manifest.
+  expect(captures).toBe(7);
   const archive = (await durable.checkpoint())!.data.archive as {
     source_ids: string[];
     manifest_source_id: string;
@@ -299,7 +300,7 @@ it("uploads only new resident segments and stops local re-archival after forgett
   await expect(durable.save({ lastIntent: "retry" })).rejects.toMatchObject({
     code: "checkpoint_invalidated",
   });
-  expect(captures).toBe(6);
+  expect(captures).toBe(7); // Nothing more was captured after the forget.
   await expect(
     residentMemoryOperation(db, "Resident", {
       operation: "source_range",

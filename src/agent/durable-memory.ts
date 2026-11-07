@@ -40,6 +40,29 @@ export function withoutImageBytes(_key: string, value: unknown): unknown {
   return value;
 }
 
+/** The most parts one archive or journal manifest may list (the capture's `order` limit). */
+const MAX_ARCHIVE_PARTS = 2000;
+
+/**
+ * Serialization for the journal and archives: `withoutImageBytes`, and a tool
+ * result's `details` left out. Details are the harness's own bookkeeping for the
+ * live call — the command already in the call's arguments, delivery ids, or a
+ * second copy of the result text — read only from the live message, never from
+ * what was stored; journaled, they repeated much of every tool result.
+ */
+export function forJournal(key: string, value: unknown): unknown {
+  if (
+    value &&
+    typeof value === "object" &&
+    (value as { role?: unknown }).role === "toolResult" &&
+    "details" in value
+  ) {
+    const { details: _details, ...rest } = value as Record<string, unknown>;
+    return rest;
+  }
+  return withoutImageBytes(key, value);
+}
+
 type Archive = { source_ids: string[]; manifest_source_id?: string; sha256: string };
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const references = (data: Record<string, unknown> | undefined) => {
@@ -273,7 +296,7 @@ export class DurableResidentMemory {
   }
   archive(messages: unknown[], summary: string, signal?: AbortSignal): Promise<void> {
     // Snapshot before entering the asynchronous queue: callers may keep appending.
-    const originals = JSON.stringify(messages, withoutImageBytes),
+    const originals = JSON.stringify(messages, forJournal),
       count = messages.length;
     return this.serialize(
       () => this.freshOnConflict(() => this.persist(originals, count, summary, "archive", signal)),
@@ -285,7 +308,7 @@ export class DurableResidentMemory {
     signal?: AbortSignal,
     completedRequests: readonly string[] = [],
   ): Promise<void> {
-    const original = JSON.stringify([message], withoutImageBytes);
+    const original = JSON.stringify([message], forJournal);
     const completed = [...completedRequests];
     return this.serialize(
       () => this.freshOnConflict(() => this.persist(original, 1, "", "journal", signal, completed)),
@@ -294,12 +317,18 @@ export class DurableResidentMemory {
   }
   /** Chunk a serialized transcript into content-addressed parts. */
   private chunk(original: string): { ordered: string[]; missing: Map<string, string> } {
-    const messages = JSON.parse(original) as unknown[];
-    const segments = [
-      "[",
-      ...messages.map((message, i) => `${i ? "," : ""}${JSON.stringify(message)}`),
-      "]",
-    ];
+    const messages = (JSON.parse(original) as unknown[]).map((message) => JSON.stringify(message));
+    // Each message is its own part, the commas between them parts of their own:
+    // a message then has the same bytes (and hash) in an archive as in the
+    // journal that already stored it, so an archive re-stores nothing it shares
+    // with the journal. A message with its comma attached never matched — every
+    // archive re-stored all but its first message. An archive too long for the
+    // separate commas keeps them attached (the old layout) to stay within the
+    // part limit; readers concatenate parts either way.
+    const separate = 2 * messages.length + 1 <= MAX_ARCHIVE_PARTS;
+    const segments = separate
+      ? ["[", ...messages.flatMap((message, i) => (i ? [",", message] : [message])), "]"]
+      : ["[", ...messages.map((message, i) => `${i ? "," : ""}${message}`), "]"];
     const ordered: string[] = [];
     const missing = new Map<string, string>();
     for (const segment of segments) {
@@ -314,11 +343,11 @@ export class DurableResidentMemory {
         start = end;
       }
     }
-    if (ordered.length > 2000)
+    if (ordered.length > MAX_ARCHIVE_PARTS)
       throw new MemoryClientError(
         413,
         "archive_capacity",
-        "Archive exceeds 2000 parts; original context retained",
+        `Archive exceeds ${MAX_ARCHIVE_PARTS} parts; original context retained`,
       );
     return { ordered, missing };
   }

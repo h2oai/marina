@@ -248,7 +248,10 @@ uses ordered, UTF-8-safe source parts (`json-utf8-parts-v1`) plus a SHA-256 inte
 `resident` checkpoint. Each archive also captures an immutable manifest with
 `source_ids`, `sha256` and `previous_manifest_source_id`; the checkpoint exposes its
 `manifest_source_id`. Follow the manifest chain to reconstruct earlier conversations after
-successive compactions. Message boundaries let growing histories reuse uploaded parts. The
+successive compactions. Each message is its own part and the commas between messages are parts of
+their own, so an archive reuses the parts the journal already stored for the same messages, and
+growing histories reuse uploaded parts. A tool result is stored without its `details` (the
+harness's live bookkeeping). The
 checkpoint validates that all referenced sources still exist. After restart, the resident sees
 its intent, archival summary and source IDs; it can read the originals through `source_range`.
 

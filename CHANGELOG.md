@@ -133,6 +133,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agent journals stop storing the same message twice.**
+  - When an agent's history was compacted, the archive stored again every message the
+    completed-message journal had already stored: inside an archive each message carried its
+    leading comma, so its parts never matched the journal's. The commas are now parts of their own
+    and an archive stores only what is new. Readers concatenate parts exactly as before; an
+    archive too long for separate commas keeps the old layout.
+  - A tool result is journaled without its `details`, the harness's live bookkeeping (the command
+    already in the call, delivery ids, or a second copy of the result text). Nothing read them
+    back from storage.
+  - A resumed agent's "most recent preserved excerpt" is the newest message, not the transcript's
+    closing `]` part.
+
 - **Agents get the syntax of the commands they use most, so a first use needs no `help` turn.**
   - Agents' own journals showed most `help <command>` lookups were for the same few core commands
     (`pool`, `tell`, `board`, `task`). The prompt named those commands but never gave their
