@@ -7524,11 +7524,12 @@ Effect: write.
 - Group `option-0`: `importance:N`.
 - Group `option-1`: `rationale`.
 
-### `pool <name> recall`
+### `pool <name> recall <query>`
 
 Effect: read.
 
 - `field-0` (`name`): text, required.
+- `field-1` (`query`): text, required.
 
 ### `pool <name> show <id>`
 
