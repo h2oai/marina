@@ -439,7 +439,7 @@ describe("evolve discoverability surfaces", () => {
   it("help lists evolve under a Growth grouping", () => {
     engine.login("c1", "Helper");
     conn.clear();
-    engine.processCommand(conn.entity!, "help");
+    engine.processCommand(conn.entity!, "help growth");
     const text = stripAnsi(conn.allTextJoined());
     expect(text).toContain("Growth");
     expect(text).toContain("evolve");

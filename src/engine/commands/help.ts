@@ -7,6 +7,7 @@ import type { CommandDef, EntityId, RoomContext } from "../../types";
 import { aliasNotice, COMMAND_FAMILIES, familyOf } from "../command-families";
 import { describeCommand } from "../command-manifest";
 import { refuseCommand } from "../command-response";
+import { COMMON_FORMS, START_HERE } from "./help-common";
 
 export const CATEGORY_ORDER = [
   "Navigation",
@@ -33,6 +34,8 @@ export const CATEGORY_ORDER = [
 
 /** `help <cmd>` shows at most this many lines when the text has no `Usage:` marker. */
 export const HELP_PREVIEW_LINES = 25;
+/** Lines of a Usage block `help <command>` shows before pointing at `full`. */
+export const HELP_USAGE_LINES = 12;
 
 /**
  * Resolve a command's display category. Prefers the command's own `category`
@@ -73,7 +76,8 @@ export function usageExcerpt(help: string): { text: string; truncated: boolean }
   }
   let end = usageAt + 1;
   while (end < lines.length && lines[end]!.trim() !== "") end++;
-  const block = lines.slice(usageAt, end);
+  // A long Usage block (Code Mode's runs past a hundred lines) is cut; `full` has it all.
+  const block = lines.slice(usageAt, Math.min(end, usageAt + 1 + HELP_USAGE_LINES));
   // Keep the one-line summary that conventionally precedes the Usage block.
   const summary = usageAt > 0 ? lines[0]!.trim() : "";
   const out = summary && summary !== block[0]?.trim() ? [summary, ...block] : block;
@@ -269,29 +273,25 @@ function commandLine(c: CommandDef, members: string[] = []): string {
 /** No-arg `help`: a short starter block, then one line per category with counts. */
 function renderStarter(ctx: RoomContext, input: { entity: EntityId }, visible: CommandDef[]): void {
   const grouped = groupByCategory(visible);
+  const width = Math.max(...START_HERE.map(([form]) => form.length));
   const lines: string[] = [
     header("Marina Commands"),
     separator(),
-    `${bold("look")}, ${bold("say <text>")}, ${bold("move <direction>")}, ${bold("who")} — look around and talk`,
-    `${bold("help <category>")} — the commands in one category below`,
-    `${bold("help <command>")} — usage for one command (${dim("help <command> full")} for everything)`,
-    `${bold("help all")} — every command you can run (${visible.length}), grouped`,
-    `${bold("readiness")} — what is configured and what is missing`,
-    `${bold("guide")} — what predecessors learned; ${bold("next")} — one concrete next action`,
+    category("Start here"),
+    ...START_HERE.map(([form, what]) => `  ${bold(form.padEnd(width))}  ${dim(what)}`),
+    "",
+    `${bold("help <command>")} — its common forms (${dim("help <command> full")} for everything)`,
+    `${bold("help <category>")} — one category's commands · ${bold("help all")} — all ${visible.length}`,
     "",
     category("Categories"),
   ];
+  const cats: string[] = [];
   for (const cat of categoryOrder(grouped)) {
     const catCmds = grouped.get(cat);
     if (!catCmds || catCmds.length === 0) continue;
-    const names = catCmds
-      .map((c) => {
-        const members = familyMembers(visible, c.name);
-        return members.length ? `${c.name} (${members.join(", ")})` : c.name;
-      })
-      .join(", ");
-    lines.push(`  ${bold(cat)} ${dim(`(${catCmds.length})`)} — ${names}`);
+    cats.push(`${cat} ${dim(`(${catCmds.length})`)}`);
   }
+  lines.push(`  ${cats.join(" · ")}`);
   ctx.send(input.entity, lines.join("\n"));
 }
 
@@ -325,15 +325,28 @@ function renderCommandDetail(
     dim(`Category: ${categorizeCommand(cmd)}`),
     ...(notice ? [dim(notice)] : []),
   ];
+  const forms = describeCommand(cmd).forms ?? [];
+  const common = full ? [] : (COMMON_FORMS[cmd.name] ?? []);
   if (full) {
     lines.push(cmd.help);
+  } else if (common.length) {
+    // A command with many forms leads with the ones participants use.
+    const family = cmd.help.split("\n").find((line) => line.startsWith("Family:"));
+    lines.push(
+      cmd.help.split("\n")[0]!.trim(),
+      ...(family ? [family] : []),
+      "Common forms:",
+      ...common.map((f) => `  ${f}`),
+    );
+    lines.push(
+      dim(`Type "help ${cmd.name} full" for all ${forms.length} forms and the complete text.`),
+    );
   } else {
     const { text, truncated } = usageExcerpt(cmd.help);
     lines.push(text);
     if (truncated) lines.push(dim(`Type "help ${cmd.name} full" for the complete text.`));
   }
-  const forms = describeCommand(cmd).forms ?? [];
-  if (forms.length) {
+  if (forms.length && !common.length) {
     lines.push(
       "Forms:",
       ...forms.slice(0, full ? forms.length : 8).map((form) => `  ${form.syntax}`),

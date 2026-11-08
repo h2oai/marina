@@ -101,15 +101,15 @@ describe("help command scaling", () => {
     return stripAnsi(conn.lastText());
   };
 
-  it("no-arg help is a starter block plus one line per category, not the full dump", () => {
+  it("no-arg help is a start-here block plus the category names, not the full dump", () => {
     const text = run("help");
     expect(text).toContain("help <category>");
     expect(text).toContain("help <command>");
     expect(text).toContain("help all");
     expect(text).toContain("readiness");
-    expect(text).toContain("guide");
+    expect(text).toContain("Start here");
     expect(text).toContain("Categories");
-    // One category per line with a count.
+    // Categories named with a count.
     expect(text).toMatch(/Navigation \(\d+\)/);
     expect(text).toMatch(/Memory \(\d+\)/);
     // Short: far fewer lines than the number of registered commands.
@@ -155,12 +155,20 @@ describe("help command scaling", () => {
     expect(text).toContain("help memory");
   });
 
-  it("help <cmd> shows the Usage block only, with a full hint; help <cmd> full shows everything", () => {
+  it("help <cmd> shows its common forms (or a capped Usage block), with a full hint; help <cmd> full shows everything", () => {
     const code = engine.commands.allBuiltins().find((c) => c.name === "code");
     expect(code).toBeDefined();
     const short = run("help code");
-    expect(short).toContain("Usage:");
+    expect(short).toContain("Common forms:");
     expect(short).toContain("help code full");
+    const board = run("help board");
+    expect(board).toContain("Common forms:");
+    // The form people need is never cut off by the alphabetical first eight.
+    expect(run("help channel")).toContain("channel send <name> [re:<id>] <message>");
+    // A command without common forms keeps its Usage excerpt and Forms list.
+    const tell = run("help tell");
+    expect(tell).not.toContain("Common forms:");
+    expect(tell).toContain("Forms:");
     expect(short.length).toBeLessThan(code!.help.length);
 
     const full = run("help code full");
