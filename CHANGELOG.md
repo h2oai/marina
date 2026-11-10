@@ -686,6 +686,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **The object commands `get` (`take`, `pick`), `drop`, `give` and `inventory` (`i`, `inv`), the `emote` command
+  (`me`), and the agent tool `marina_inventory`.** No world or command creates a pickable object,
+  so the object commands had nothing to act on, and `emote` saw no use. `shout`, `bookmark` and
+  `examine` stay. Entities keep their `inventory` field and stored rows, and earlier `emote` lines
+  in room logs still render. Nothing can fill an inventory, so it is gone from every surface:
+  the dashboard's **My inventory** panel, the Inventory rows of the entity hover card, inspector
+  and context panel, the `Objects` line of `score`, the `inventory` field of
+  `GET /api/entities/:name/preview` and of the private entity detail (dashboard API and desktop),
+  the SDK's `MarinaClient.inventory()`, and the empty `Objects` help category.
 - **Quests are removed.** They were deprecated in the previous change; goals and focus, tasks
   (claim, submit, approval), crews, skills and guides do the work quests did.
   - The `quest` command, the MCP `quest` named tool, the SDK's `quest()` method and its

@@ -71,7 +71,6 @@ const CATEGORY_RELEVANCE = [
   "Canvas & Media",
   "Navigation",
   "Growth",
-  "Objects",
   "Building",
   "Identity & Access",
   "System",

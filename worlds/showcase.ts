@@ -68,7 +68,6 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "Communication: 'say Hello' speaks to everyone in your room. " +
       "'tell Alice Check the archives' sends a private message. " +
       "'shout Everyone come to the Nexus!' broadcasts to every entity everywhere. " +
-      "'emote waves' expresses an action in third person. " +
       "'ask <question>' asks Marina itself. " +
       "Channels are persistent group conversations: 'channel join research', " +
       "'channel send research Found something interesting', 'channel history research'.",

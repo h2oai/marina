@@ -54,13 +54,6 @@
     const result = await fetch(path, { headers });
     if (!result.ok) throw new Error(`Native API ${path}: ${result.status} ${await result.text()}`);
   }
-  await until(
-    () =>
-      document
-        .querySelector('[aria-label="My inventory"]')
-        ?.textContent.includes("carrying nothing"),
-    "resident inventory",
-  );
   // Asset library through the native bridge: chunked upload with progress,
   // dedupe, library view, bytes into an element, edit and delete.
   const png = Uint8Array.from(

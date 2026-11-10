@@ -130,7 +130,14 @@ describe("world surfaces", () => {
     fixture = createTestEngine();
     const ash = fixture.login("Ash");
     fixture.engine.processCommand(ash.entityId, "say the build is green");
-    fixture.engine.processCommand(ash.entityId, "emote stretches");
+    // An `emote` row written before the command was retired still reads back.
+    fixture.db.appendRoomLog({
+      room: fixture.engine.entities.get(ash.entityId)!.room as string,
+      entity: "Ash",
+      kind: "emote",
+      content: "* Ash stretches",
+      at: Date.now(),
+    });
     const bea = fixture.login("Bea");
     bea.connection.messages = [];
     fixture.engine.processCommand(bea.entityId, "look log");

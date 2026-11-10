@@ -3,7 +3,7 @@
 
 /**
  * Entity inspector for the ContextPanel: API entity detail with a
- * WebSocket-snapshot fallback, agent status, memory and inventory.
+ * WebSocket-snapshot fallback, agent status and memory.
  * Split out of ContextPanel.tsx without behaviour change.
  */
 
@@ -121,7 +121,6 @@ export const EntityContext = memo(function EntityContext({
       room: wsEntity.room,
       rank: 0,
       properties: {},
-      inventory: [],
     };
   }, [entity, wsEntity]);
 
@@ -520,24 +519,6 @@ const EntityContextInner = memo(function EntityContextInner({
 
       {/* Knowledge Graph */}
       {!publicView && <KnowledgeGraphSection entityName={entity.name} />}
-
-      {/* Inventory */}
-      {(entity.inventory?.length ?? 0) > 0 && (
-        <CascadeSection title="Inventory" defaultOpen={false}>
-          {entity.inventory?.map((item) => (
-            <div
-              key={item}
-              style={{
-                padding: "clamp(6px, 0.3vw, 8px) 0",
-                fontSize: "clamp(15px, 1.05vw, 22px)",
-                color: "var(--color-text)",
-              }}
-            >
-              {item}
-            </div>
-          ))}
-        </CascadeSection>
-      )}
 
       {/* Activity — from API or fallback from global event feed */}
       <EntityActivitySection entityName={entity.name} apiActivity={entity.recentActivity} />

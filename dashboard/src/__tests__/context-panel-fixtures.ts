@@ -24,7 +24,6 @@ export const CONTEXT_PANEL_RESPONSES: Record<string, unknown> = {
     rank: 2,
     standing: 17.5,
     properties: { role: "builder" },
-    inventory: ["map"],
     coreMemory: [
       { entity_name: "Ada", key: "goal", value: "Build docks", version: 1, updated_at: 1 },
     ],

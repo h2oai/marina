@@ -1221,11 +1221,6 @@ export class MarinaAgent extends MarinaClient {
     return this.command(command ? `help ${command}` : "help");
   }
 
-  /** Check inventory. */
-  async inventory(): Promise<Perception[]> {
-    return this.command("inventory");
-  }
-
   // ─── Cognition ──────────────────────────────────────────────────────────
 
   /** Take a note anchored to the current room. */

@@ -3,8 +3,6 @@
 import { fireEvent, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { BoardDetailView, ChannelDetailView } from "../components/CoordinationCard";
-import { MyInventory } from "../components/MyInventory";
-import { useChatState } from "../hooks/use-chat-state";
 import { renderWithProviders } from "./test-utils";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -41,17 +39,4 @@ it("offers channel join alongside its messages", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Join channel" }));
   expect((draft.mock.calls[0]![0] as CustomEvent).detail.command).toBe("channel join general");
   window.removeEventListener("marina:draft-command", draft);
-});
-it("keeps the logged-in resident's inventory visible independently of selection", async () => {
-  useChatState.setState({ entityName: "InventoryUser" });
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ privateVisible: true, inventory: ["Compass", "Notebook"] }),
-    })),
-  );
-  renderWithProviders(<MyInventory />);
-  expect(await screen.findByText("Compass")).toBeVisible();
-  expect(screen.getByRole("region", { name: "My inventory" })).toHaveTextContent("Notebook");
 });

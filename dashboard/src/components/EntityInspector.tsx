@@ -48,8 +48,6 @@ export function EntityInspector({ name }: { name: string }) {
           {preview.data.privateVisible ? (
             <>
               <dl className="space-y-1">
-                <dt className="text-text-dim">Inventory</dt>
-                <dd>{preview.data.inventory?.join(", ") || "Empty"}</dd>
                 <dt className="text-text-dim">Current task</dt>
                 <dd>{preview.data.task ?? "None"}</dd>
                 <dt className="text-text-dim">Active crew</dt>

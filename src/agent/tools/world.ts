@@ -324,8 +324,6 @@ const examineSchema = Type.Object({
   target: Type.String({ description: "Entity or object to examine" }),
 });
 
-const inventorySchema = Type.Object({});
-
 const whoSchema = Type.Object({});
 
 export function createWorldTools(ctx: ToolContext): AgentTool[] {
@@ -352,14 +350,6 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
       "Inspect an entity or object closely.",
       examineSchema,
       (p) => `examine ${p.target}`,
-      ctx,
-    ),
-    wrap(
-      "marina_inventory",
-      "Inventory",
-      "Check what you carry.",
-      inventorySchema,
-      () => "inventory",
       ctx,
     ),
     wrap("marina_who", "Who", "List online entities with locations.", whoSchema, () => "who", ctx),

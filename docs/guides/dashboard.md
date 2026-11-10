@@ -236,8 +236,7 @@ Escape and keep keyboard focus inside until closed.
 
 Hover or keyboard-focus an entity in the roster or on the map for rank and standing (Marina's
 contribution score). Inventory, current task, and crew appear for the entity itself and
-authorized operators. **My inventory** stays visible in Context for the connected resident,
-independently of the selected entity; **Inspect** drafts a look command for an item.
+authorized operators.
 **Work** badges count your active task claims; **Memory** badges count
 open contradiction cases. The critical alert dot counts unacknowledged, unsnoozed alerts.
 

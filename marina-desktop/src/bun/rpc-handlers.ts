@@ -77,7 +77,7 @@ export function createRpcHandlers(
 
   /**
    * Forward a request to the embedded HTTP server. A signed-in resident must
-   * retain its own identity for private streams, context, inventory and its
+   * retain its own identity for private streams, context and its
    * own assets; the operator sentinel has no world account. Explicit
    * credentials (including expired tokens) go through normal auth — never
    * silently replaced with the native operator credential, which the webview
@@ -235,7 +235,6 @@ export function createRpcHandlers(
         room: entity.room as string,
         rank: (entity.properties.rank as number) ?? 0,
         properties: entity.properties,
-        inventory: entity.inventory,
       };
 
       if (db) {

@@ -42,9 +42,6 @@ export async function handleDiscoveryRoutes(
       name: entity.name,
       rank: entity.properties.rank ?? 0,
       standing: db ? Math.round(getStanding(db, entity.id) * 10) / 10 : null,
-      inventory: privateVisible
-        ? entity.inventory.map((id) => engine.entities.get(id)?.name ?? id)
-        : null,
       task: work.find((item) => item.kind === "claimed_task")?.title ?? null,
       crew:
         work.find((item) => item.kind === "crew_active" || item.kind === "crew_idle")?.title ??

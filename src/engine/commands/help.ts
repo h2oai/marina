@@ -14,7 +14,6 @@ export const CATEGORY_ORDER = [
   "Communication",
   "Information",
   "Canvas & Media",
-  "Objects",
   "System",
   "Identity & Access",
   "Memory",

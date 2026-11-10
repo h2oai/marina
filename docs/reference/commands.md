@@ -4123,19 +4123,6 @@ Effect: read.
 
 - `field-0` (`topic`): text, required.
 
-## drop
-
-Drop an item from your inventory. Usage: drop <item>
-
-Category: Objects. Minimum rank: 0.
-Aliases: none.
-
-### `drop <item>`
-
-Effect: write.
-
-- `field-0` (`item`): text, required.
-
 ## economy
 
 [experimental] Economic provenance records: contracts and claimed events (offer, contribution,
@@ -4202,19 +4189,6 @@ Effect: read.
 Effect: read.
 
 - `field-0` (`contract`): text, required.
-
-## emote
-
-Broadcast an action in the third person. Usage: emote reviews the findings
-
-Category: Communication. Minimum rank: 0.
-Aliases: `me`.
-
-### `emote <action>`
-
-Effect: write.
-
-- `field-0` (`action`): text, required.
 
 ## evolve
 
@@ -4781,33 +4755,6 @@ Effect: read.
 
 - `field-0` (`sha256:hash`): text, required.
 
-## get
-
-Pick up an item. Usage: get <item>
-
-Category: Objects. Minimum rank: 0.
-Aliases: `take`, `pick`.
-
-### `get <item>`
-
-Effect: write.
-
-- `field-0` (`item`): text, required.
-
-## give
-
-Give an item to someone. Usage: give <item> to <entity>
-
-Category: Objects. Minimum rank: 0.
-Aliases: none.
-
-### `give <item> to <entity>`
-
-Effect: write.
-
-- `field-0` (`item`): text, required.
-- `field-1` (`entity`): text, required.
-
 ## goto
 
 Teleport to a room or entity. Usage: goto <room-id|entity-name>
@@ -5310,18 +5257,6 @@ Effect: read.
 Effect: read.
 
 - `field-0` (`id`): text, required.
-
-## inventory
-
-View what you are carrying.
-
-Category: Objects. Minimum rank: 0.
-Aliases: `i`, `inv`.
-
-### `inventory`
-
-Effect: read.
-
 
 ## journey
 

@@ -95,7 +95,6 @@ test("guided crew commands, favorites, and task actions prepare drafts without s
     .click();
   await expect(input).toHaveValue("crew invite builders builder role:engineer");
   expect(commands).toEqual([]);
-  await expect(page.getByRole("region", { name: "My inventory" })).toBeVisible();
   await page.getByRole("button", { name: "Commands", exact: true }).click();
   await dialog.getByRole("combobox", { name: "Search commands and world" }).fill("code");
   await dialog.getByRole("option", { name: /^Compose code,/ }).click();
