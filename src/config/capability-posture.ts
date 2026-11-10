@@ -158,7 +158,13 @@ export const KNOB_POSTURE: Readonly<Record<string, Posture>> = {
     "live-work evidence picks the same or better models as the benchmark ledger",
     DEC_1,
   ),
-  MARINA_ANTHROPIC_AUTO_CACHE: measure(bench(), `${PAIRED} on cost per success`, NOV_15),
+  // A process setting, not a request instrument: `compare-run` arms cannot
+  // switch it, so its evidence is the live Anthropic traffic it applies to.
+  MARINA_ANTHROPIC_AUTO_CACHE: measure(
+    operator,
+    "live Anthropic traffic (`trace stats`: cache-read tokens per route) shows the placed breakpoints lower cost per call",
+    DEC_1,
+  ),
 
   // ── Harness decisions (advisory use cases) ──────────────────────────────
   MARINA_RESEARCH_ADVICE: measure(bench("frames"), PAIRED, DEC_1),

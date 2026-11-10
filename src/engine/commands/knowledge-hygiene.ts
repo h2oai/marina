@@ -279,6 +279,9 @@ function findStaleCommandRefs(
 ): string[] {
   const findings = new Set<string>();
   for (const ref of extractCommandRefs(content)) {
+    // A note that quotes this auditor's own finding (`unknown pool action`)
+    // names no command; flagging it made the pulse re-file its own output.
+    if (AUDITOR_FINDING.test(ref.trim())) continue;
     const tokens = ref.trim().split(/\s+/);
     const command = tokens[0]?.toLowerCase();
     if (!command || command.startsWith("<")) continue;
@@ -297,6 +300,9 @@ function findStaleCommandRefs(
   }
   return [...findings];
 }
+
+/** The text of a stale-command finding (`unknown command "x"`, `unknown pool action "y"`). */
+const AUDITOR_FINDING = /^unknown (command|[a-z][a-z0-9-]* action)\b/i;
 
 /** Operator shell invocations (`bun run arena submit due`, `git log`) that
  *  guide text legitimately cites; they are run outside the world. */
