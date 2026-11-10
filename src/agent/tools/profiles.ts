@@ -273,7 +273,6 @@ export function toolExecutionPolicy(env: NodeJS.ProcessEnv = process.env): ToolE
 export const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
   "marina_look",
   "marina_examine",
-  "marina_inventory",
   "marina_who",
   "marina_help",
   "marina_brief",

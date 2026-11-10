@@ -21,15 +21,12 @@ import { calcCommand } from "../commands/calc";
 import { chronicleCommand } from "../commands/chronicle";
 import { desireCommand } from "../commands/desire";
 import { economyCommand } from "../commands/economy";
-import { emoteCommand } from "../commands/emote";
 import { feedCommand } from "../commands/feed";
 import { genomeCommand } from "../commands/genome";
 import { gotoCommand } from "../commands/goto";
 import { helpCommand } from "../commands/help";
 import { ignoreCommand, isIgnoring } from "../commands/ignore";
 import { imageCommand } from "../commands/image";
-import { inventoryCommand } from "../commands/inventory";
-import { dropCommand, getCommand, giveCommand } from "../commands/items";
 import { judgeCommand } from "../commands/judge";
 import { labCommand } from "../commands/lab";
 import { linkCommand } from "../commands/link";
@@ -195,8 +192,6 @@ export function registerGeneralCommands(engine: Engine): void {
   engine.commands.registerBuiltin(imageCommand(engine));
   engine.commands.registerBuiltin(videoCommand(engine));
   engine.commands.registerBuiltin(audioCommand(engine));
-  engine.commands.registerBuiltin(inventoryCommand((id) => engine.entities.get(id)));
-  engine.commands.registerBuiltin(emoteCommand((id) => engine.entities.get(id)));
   engine.commands.registerBuiltin(
     calcCommand({ getEntity: (id) => engine.entities.get(id as EntityId) }),
   );
@@ -264,32 +259,6 @@ export function registerGeneralCommands(engine: Engine): void {
       getRoomShort: (id) => engine.rooms.get(id)?.module.short,
     }),
   );
-  engine.commands.registerBuiltin(
-    getCommand({
-      getEntity: (id) => engine.entities.get(id),
-      findObjectInRoom: (name, room) => {
-        const inRoom = engine.entities.inRoom(room);
-        const lower = name.toLowerCase();
-        return inRoom.find((e) => e.kind === "object" && e.name.toLowerCase().startsWith(lower));
-      },
-      moveEntity: (id, room) => engine.entities.move(id, room),
-    }),
-  );
-  engine.commands.registerBuiltin(
-    dropCommand({
-      getEntity: (id) => engine.entities.get(id),
-      getEntityById: (id) => engine.entities.get(id),
-      moveEntity: (id, room) => engine.entities.move(id, room),
-    }),
-  );
-  engine.commands.registerBuiltin(
-    giveCommand({
-      getEntity: (id) => engine.entities.get(id),
-      getEntityById: (id) => engine.entities.get(id),
-      findEntityInRoom: (name, room) => engine.entities.findByName(name, room),
-    }),
-  );
-
   // Rank command
   engine.commands.registerBuiltin(
     rankCommand({

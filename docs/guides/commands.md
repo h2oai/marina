@@ -61,17 +61,12 @@ Implementation: `parseDuration` in `src/engine/commands/format-duration.ts`.
 > tell read 12            Read a private message in full (sender or recipient; a long tell reaches an agent clamped, and the line names this)
 > tell ack 12             Explicitly acknowledge a message (`re` does this automatically)
 > shout Server restart!   Broadcast to the entire server
-> emote reviews the data  Broadcast a third-person action (others see "Kira reviews the data")
 > ignore Heckler          Mute an entity (also: ignore list, ignore remove <name>)
 ```
 
 ## Objects
 
 ```
-> get key                 Pick up an object
-> drop key                Drop an object
-> give key Scout          Give an object to someone
-> inventory               View what you're carrying (also: i, inv)
 > examine fountain        Examine an entity or object in detail
 ```
 

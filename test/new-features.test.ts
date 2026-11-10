@@ -124,16 +124,6 @@ describe("Ignore Command", () => {
     expect(stripAnsi(conn2.lastText())).toContain("You tell Alice:");
   });
 
-  it("blocks emote messages from ignored player", () => {
-    engine.processCommand(e1, "ignore Bob");
-    conn1.clear();
-    engine.processCommand(e2, "emote dances around");
-    // Alice should NOT see Bob's emote
-    expect(conn1.messages.length).toBe(0);
-    // Charlie should still see it
-    expect(conn3.lastText()).toContain("Bob dances around");
-  });
-
   it("works with block alias", () => {
     engine.processCommand(e1, "block Bob");
     expect(stripAnsi(conn1.lastText())).toContain("Now ignoring Bob");
@@ -203,43 +193,6 @@ describe("Shout Command", () => {
   });
 });
 
-// ─── Emote Command ───────────────────────────────────────────────────────────
-
-describe("Emote Command", () => {
-  let engine: Engine;
-  let conn1: MockConnection;
-  let conn2: MockConnection;
-
-  beforeEach(() => {
-    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000 });
-    engine.registerRoom(roomId("test/start"), makeTestRoom());
-    conn1 = new MockConnection("c1");
-    conn2 = new MockConnection("c2");
-    engine.addConnection(conn1);
-    engine.addConnection(conn2);
-    engine.login("c1", "Alice");
-    engine.login("c2", "Bob");
-    conn1.clear();
-    conn2.clear();
-  });
-
-  it("should broadcast emote to room", () => {
-    engine.processCommand(conn1.entity!, "emote waves cheerfully");
-    expect(conn1.lastText()).toContain("Alice waves cheerfully");
-    expect(conn2.lastText()).toContain("Alice waves cheerfully");
-  });
-
-  it("should require emote text", () => {
-    engine.processCommand(conn1.entity!, "emote");
-    expect(conn1.lastText()).toContain("Usage: emote <action>");
-  });
-
-  it("should work with me alias", () => {
-    engine.processCommand(conn1.entity!, "me dances");
-    expect(conn1.lastText()).toContain("Alice dances");
-  });
-});
-
 // ─── Score Command ───────────────────────────────────────────────────────────
 
 describe("Score Command", () => {
@@ -265,114 +218,6 @@ describe("Score Command", () => {
   it("should work with stats alias", () => {
     engine.processCommand(conn.entity!, "stats");
     expect(conn.lastText()).toContain("Tester");
-  });
-});
-
-// ─── Item System (get/drop/give) ─────────────────────────────────────────────
-
-describe("Item System", () => {
-  let engine: Engine;
-  let conn1: MockConnection;
-  let conn2: MockConnection;
-  let itemId: EntityId;
-
-  beforeEach(() => {
-    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000 });
-    engine.registerRoom(roomId("test/start"), makeTestRoom());
-    conn1 = new MockConnection("c1");
-    conn2 = new MockConnection("c2");
-    engine.addConnection(conn1);
-    engine.addConnection(conn2);
-    engine.login("c1", "Alice");
-    engine.login("c2", "Bob");
-
-    // Spawn an object in the room
-    const item = engine.entities.create({
-      name: "Crystal Key",
-      short: "A glowing crystal key lies here.",
-      long: "A crystal key that pulses with inner light.",
-      room: roomId("test/start"),
-      kind: "object",
-    });
-    itemId = item.id;
-
-    conn1.clear();
-    conn2.clear();
-  });
-
-  it("should pick up items with get", () => {
-    engine.processCommand(conn1.entity!, "get crystal");
-    expect(stripAnsi(conn1.lastText())).toContain("pick up Crystal Key");
-    expect(stripAnsi(conn2.lastText())).toContain("picks up Crystal Key");
-
-    // Item should be in inventory
-    const alice = engine.entities.get(conn1.entity!);
-    expect(alice?.inventory).toContain(itemId);
-
-    // It left the room: a second pick-up must not duplicate it.
-    engine.processCommand(conn1.entity!, "get crystal");
-    expect(stripAnsi(conn1.lastText())).toContain("You don't see that here.");
-    expect(alice?.inventory.filter((id) => id === itemId)).toHaveLength(1);
-  });
-
-  it("should work with take alias", () => {
-    engine.processCommand(conn1.entity!, "take crystal");
-    expect(stripAnsi(conn1.lastText())).toContain("pick up Crystal Key");
-  });
-
-  it("should drop items", () => {
-    engine.processCommand(conn1.entity!, "get crystal");
-    conn1.clear();
-    conn2.clear();
-
-    engine.processCommand(conn1.entity!, "drop crystal");
-    expect(stripAnsi(conn1.lastText())).toContain("drop Crystal Key");
-    expect(stripAnsi(conn2.lastText())).toContain("drops Crystal Key");
-
-    const alice = engine.entities.get(conn1.entity!);
-    expect(alice?.inventory).not.toContain(itemId);
-    // Back in the room, so it can be picked up again.
-    expect(engine.entities.inRoom(alice!.room).some((e) => e.id === itemId)).toBe(true);
-  });
-
-  it("should not pick up non-existent items", () => {
-    engine.processCommand(conn1.entity!, "get sword");
-    expect(conn1.lastText()).toContain("don't see that");
-  });
-
-  it("should not drop items you don't have", () => {
-    engine.processCommand(conn1.entity!, "drop crystal");
-    expect(conn1.lastText()).toContain("don't have that");
-  });
-
-  it("should give items to other players", () => {
-    engine.processCommand(conn1.entity!, "get crystal");
-    conn1.clear();
-    conn2.clear();
-
-    engine.processCommand(conn1.entity!, "give crystal to Bob");
-    expect(stripAnsi(conn1.lastText())).toContain("give Crystal Key to Bob");
-    expect(conn2.allText().some((t) => stripAnsi(t).includes("gives you Crystal Key"))).toBe(true);
-
-    const alice = engine.entities.get(conn1.entity!);
-    const bob = engine.entities.get(conn2.entity!);
-    expect(alice?.inventory).not.toContain(itemId);
-    expect(bob?.inventory).toContain(itemId);
-  });
-
-  it("should require give syntax", () => {
-    engine.processCommand(conn1.entity!, "give crystal");
-    expect(conn1.lastText()).toContain("Usage");
-  });
-
-  it("should require argument for get", () => {
-    engine.processCommand(conn1.entity!, "get");
-    expect(conn1.lastText()).toContain("Get what");
-  });
-
-  it("should require argument for drop", () => {
-    engine.processCommand(conn1.entity!, "drop");
-    expect(conn1.lastText()).toContain("Drop what");
   });
 });
 
@@ -490,7 +335,6 @@ describe("Help Command (categorized)", () => {
     const text = conn.lastText();
     expect(text).toContain("Navigation");
     expect(text).toContain("Communication");
-    expect(text).toContain("Objects");
     expect(text).toContain("Information");
   });
 
