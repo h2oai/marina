@@ -22,7 +22,6 @@ import { EntityInspector } from "./EntityInspector";
 import { EntityRoster } from "./EntityRoster";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { MemoryContextCard } from "./MemoryContextCard";
-import { MyInventory } from "./MyInventory";
 import { AssetLibrary } from "./media/AssetLibrary";
 import { NarrativePlayback } from "./NarrativePlayback";
 import { ParticipantStreams } from "./ParticipantStreams";
@@ -181,7 +180,6 @@ export function ContextPanel(props: PanelFocusProps) {
   return (
     <GlassPanel title="Context" {...props} bodyScroll={false}>
       <div className="flex h-full min-h-0 flex-col">
-        <MyInventory />
         <MemoryContextCard />
         <ExtensionWidgets slot="sidebar" />
         <TrustedDashboardPanels slot="sidebar" />
