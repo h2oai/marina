@@ -414,9 +414,9 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
   // MARINA_EVENT_RETENTION), telemetry / ledger / audit tables by age, in
   // ≤ 5k-row batches (src/engine/retention.ts, MARINA_RETENTION_OVERRIDES).
   // Without this the append-only tables grow for the life of the deployment
-  // The work pulse: once a day, one real, bounded, reviewable task from a
-  // knowledge-hygiene finding when agents are running and the board has no
-  // open pulse task — so the task → review → outcome → lesson loop has
+  // The work pulse: every 6 h, one real, bounded, reviewable task from a
+  // knowledge-hygiene finding when agents are running and the board holds
+  // fewer than MARINA_WORK_PULSE_OPEN live pulse tasks — so the task → review → outcome → lesson loop has
   // something to learn from without a person feeding it (`work-pulse.ts`).
   s.register({
     name: "work-pulse",
@@ -769,6 +769,6 @@ export const LIVE_PROMOTION_PHASE = 4200;
 
 /** The hourly phase of the lessons-from-work flush (distinct from every other hourly job). */
 export const LESSONS_FROM_WORK_PHASE = 3300;
-/** The work pulse: daily, durable on wall clock (`DURABLE_MIN_EVERY`), on its own phase. */
-export const WORK_PULSE_INTERVAL = 24 * NOTE_IMPORTANCE_INTERVAL;
+/** The work pulse: every 6 h, durable on wall clock (`DURABLE_MIN_EVERY`), on its own phase. */
+export const WORK_PULSE_INTERVAL = 6 * NOTE_IMPORTANCE_INTERVAL;
 export const WORK_PULSE_PHASE = 5400;

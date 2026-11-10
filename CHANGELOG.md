@@ -133,6 +133,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The work pulse no longer stalls on one stuck task.** It kept one pulse task open at a time, and
+  the reviewer had claimed and submitted its own task, which it never reviewed, so no new work
+  opened for four days. The pulse now runs every 6 hours and keeps up to `MARINA_WORK_PULSE_OPEN`
+  (default 3) live pulse tasks; a task its own reviewer claimed, or with no activity for 3 days,
+  no longer counts. The knowledge auditor no longer flags text that quotes its own findings
+  (`unknown pool action`), which had made the pulse re-file a note about the auditor.
+- **`MARINA_ANTHROPIC_AUTO_CACHE` is measured on live traffic.** Its posture asked for a paired
+  `benchmark compare-run`, but compare-run arms switch request instruments, not process settings,
+  so that evidence could never exist. It now reads cache-read tokens per route from `trace stats`.
+
 - **`help` leads with what people use.**
   - Bare `help` opens with "Start here": thirteen commands that cover nearly all use (`look`,
     `work`, `tell`, `say`, `channel send`, `board post`, `task list`, `memory note`,

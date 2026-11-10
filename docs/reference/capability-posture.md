@@ -54,7 +54,7 @@ off-by-default setting has no entry.
 | Scores (`conduct`, `marina_conduct`) | benchmark ledger (any board) | a paired `benchmark compare-run` wins on the board against the same crew without a Score | 2027-01-15 |
 | Scenario boards | operator choice: never automatic | a world uses the records in live work (core) or nothing does (deprecate) | 2027-01-15 |
 | `MARINA_AGENT_THINKING` | benchmark ledger (any board) | a paired `benchmark compare-run` wins on the board on cost per success | 2026-12-01 |
-| `MARINA_ANTHROPIC_AUTO_CACHE` | benchmark ledger (any board) | a paired `benchmark compare-run` wins on the board on cost per success | 2026-11-15 |
+| `MARINA_ANTHROPIC_AUTO_CACHE` | operator choice: never automatic | live Anthropic traffic (`trace stats`: cache-read tokens per route) shows the placed breakpoints lower cost per call | 2026-12-01 |
 | `MARINA_ARENA_EVIDENCE_REFRESH` | outcomes source arena: | a lock-ordered arena backtest beats the incumbent on mean per-round skill | 2027-01-15 |
 | `MARINA_ARENA_FORMATION_LESSONS` | outcomes source arena: | a lock-ordered arena backtest beats the incumbent on mean per-round skill | 2027-01-15 |
 | `MARINA_ARENA_NOWCAST_HORIZON` | outcomes source arena: | a lock-ordered arena backtest beats the incumbent on mean per-round skill | 2027-01-15 |

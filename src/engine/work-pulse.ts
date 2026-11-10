@@ -11,9 +11,9 @@
  * verdict and no outcome. The loops downstream of work (the outcome judges,
  * lessons from work, standing) had nothing to learn from.
  *
- * Once a day, when at least one agent is running and the pulse project
- * (`MARINA_WORK_PULSE_PROJECT`, default "Demo Pulse") has no open pulse task,
- * the pulse audits the shared knowledge pool (`MARINA_WORK_PULSE_POOL`,
+ * Every 6 hours, when at least one agent is running and the pulse project
+ * (`MARINA_WORK_PULSE_PROJECT`, default "Demo Pulse") holds fewer than
+ * `MARINA_WORK_PULSE_OPEN` (default 3) live pulse tasks, the pulse audits the shared knowledge pool (`MARINA_WORK_PULSE_POOL`,
  * default `guide`) with the same auditor as `guide audit` and turns ONE
  * finding into one task: fix a stale command reference, merge a duplicate,
  * ground an unsupported claim, split an overlong note. The task names the
@@ -23,6 +23,12 @@
  * standing. A finding is worked once: the task carries a marker the pulse
  * checks before opening another. `MARINA_WORK_PULSE=off` disables it. No
  * model call; the agents' own cycles do the work.
+ *
+ * Measured 2026-11-10: one open pulse task at a time stalled the supply for
+ * four days — the reviewer had claimed and submitted its own task, which it
+ * never reviewed, and nothing else could open. So a task claimed by its own
+ * reviewer, or with no activity for `WORK_PULSE_IDLE_MS`, no longer holds a
+ * place: it stays on the board, and the pulse opens new work beside it.
  */
 
 import { TaskManager } from "../coordination/task-manager";
@@ -37,6 +43,10 @@ export const WORK_PULSE_TITLE_PREFIX = "Work pulse:";
 const DAY_MS = 86_400_000;
 /** Notes untouched this long count as stale for the audit (as `guide audit`). */
 export const WORK_PULSE_STALE_MS = 90 * DAY_MS;
+/** A pulse task with no task or claim activity this long no longer holds a place. */
+export const WORK_PULSE_IDLE_MS = 3 * DAY_MS;
+/** Live pulse tasks the pulse keeps open at most (`MARINA_WORK_PULSE_OPEN`). */
+export const WORK_PULSE_DEFAULT_OPEN = 3;
 
 export interface WorkPulseDeps {
   db: Pick<
@@ -48,6 +58,7 @@ export interface WorkPulseDeps {
     | "getUserByName"
     | "createTask"
     | "getTask"
+    | "getTaskClaims"
     | "updateTaskStatus"
   >;
   /** The live command vocabulary (`commandVocabulary(engine)`); without it stale-command findings are skipped. */
@@ -74,6 +85,12 @@ export interface WorkPulseResult {
 
 export function workPulseEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return (env.MARINA_WORK_PULSE ?? "").trim().toLowerCase() !== "off";
+}
+
+/** `MARINA_WORK_PULSE_OPEN`: a positive integer, else the default. */
+export function workPulseOpenCap(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number.parseInt(env.MARINA_WORK_PULSE_OPEN?.trim() ?? "", 10);
+  return Number.isFinite(n) && n >= 1 ? n : WORK_PULSE_DEFAULT_OPEN;
 }
 
 /** The marker a pulse task carries so its finding is never worked twice. */
@@ -132,13 +149,37 @@ export function openWorkPulseTask(deps: WorkPulseDeps): WorkPulseResult {
   const reviewer = deps.db.getUserByName(reviewerName);
   if (!reviewer) return { skipped: `no reviewer account "${reviewerName}"` };
   const tasks = deps.db.listTasks({ groupId: project.group_id, limit: 500 });
-  const open = tasks.find(
-    (t) =>
-      t.title.startsWith(WORK_PULSE_TITLE_PREFIX) &&
-      t.status !== "completed" &&
-      t.status !== "cancelled",
-  );
-  if (open) return { skipped: `pulse task #${open.id} is still open` };
+  const now = (deps.now ?? Date.now)();
+  // A live pulse task holds a place; one its own reviewer claimed (it would
+  // review its own work) or one idle past WORK_PULSE_IDLE_MS does not.
+  const live = tasks.filter((t) => {
+    if (!t.title.startsWith(WORK_PULSE_TITLE_PREFIX)) return false;
+    if (t.status === "completed" || t.status === "cancelled") return false;
+    const claims = deps.db.getTaskClaims(t.id);
+    // By id or by name: a claim keeps the claimant's id from its session.
+    if (claims.some((c) => c.entity_id === t.creator_id || c.entity_name === t.creator_name))
+      return false;
+    const lastActivity = Math.max(
+      t.created_at,
+      t.updated_at,
+      ...claims.flatMap((c) =>
+        [c.claimed_at, c.heartbeat_at, c.submitted_at, c.resolved_at].filter(
+          (v): v is number => typeof v === "number",
+        ),
+      ),
+    );
+    return now - lastActivity < WORK_PULSE_IDLE_MS;
+  });
+  const cap = workPulseOpenCap(env);
+  if (live.length >= cap) {
+    const ids = live.map((t) => `#${t.id}`).join(", ");
+    return {
+      skipped:
+        live.length === 1
+          ? `pulse task ${ids} is still open`
+          : `pulse tasks ${ids} are still open (cap ${cap})`,
+    };
+  }
   const poolName = env.MARINA_WORK_PULSE_POOL?.trim() || "guide";
   const pool = deps.db.getMemoryPool(poolName);
   if (!pool) return { skipped: `no pool "${poolName}"` };

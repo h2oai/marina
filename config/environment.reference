@@ -446,8 +446,11 @@
 # Comma-separated agent names that seeders, autorespawn and room-agent spawning must not bring back. `agent disable <name>` does the same in-world and persists.
 # MARINA_DISABLED_AGENTS=
 
-# The work pulse (tick job `work-pulse`, daily): when at least one agent is running and the pulse project has no open pulse task, audit the shared knowledge pool with the same auditor as `guide audit` and open ONE bounded, reviewable task from one finding (a stale command reference, a duplicate, an unsupported claim, an overlong note), created by the reviewer account so its verdict is an independent party's. A finding is worked once (the task carries a marker). No model call; the agents' own cycles do the work. `off` disables it.
+# The work pulse (tick job `work-pulse`, every 6 h): when at least one agent is running and the pulse project holds fewer than MARINA_WORK_PULSE_OPEN live pulse tasks, audit the shared knowledge pool with the same auditor as `guide audit` and open ONE bounded, reviewable task from one finding (a stale command reference, a duplicate, an unsupported claim, an overlong note), created by the reviewer account so its verdict is an independent party's. A finding is worked once (the task carries a marker). No model call; the agents' own cycles do the work. `off` disables it.
 # MARINA_WORK_PULSE=on
+
+# How many live pulse tasks the work pulse keeps open at most (a positive integer). A pulse task its own reviewer claimed, or with no task or claim activity for 3 days, no longer counts, so one stuck task cannot stop the supply.
+# MARINA_WORK_PULSE_OPEN=3
 
 # The project the work pulse files its task under (must exist, with a group). Default the Workbench's "Demo Pulse".
 # MARINA_WORK_PULSE_PROJECT=Demo Pulse
