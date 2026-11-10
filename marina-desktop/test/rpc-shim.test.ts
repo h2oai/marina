@@ -11,7 +11,7 @@ test("native socket relays detach on close and a late connect cannot reopen a cl
   const proxyApi = mock(async (_params: unknown) => ({
     status: 200,
     contentType: "application/json",
-    body: JSON.stringify({ privateVisible: true, inventory: [] }),
+    body: JSON.stringify({ privateVisible: true }),
   }));
   let messages: Record<string, (data: unknown) => void> = {};
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");

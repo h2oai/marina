@@ -77,14 +77,14 @@ describe("dashboard discovery", () => {
     expect(other).toMatchObject({
       name: "Bob",
       privateVisible: false,
-      inventory: null,
       task: null,
       crew: null,
     });
     expect(typeof other.rank).toBe("number");
-    expect(await (await get("/api/entities/Alice/preview")).json()).toMatchObject({
-      privateVisible: true,
-      inventory: [],
-    });
+    const own = await (await get("/api/entities/Alice/preview")).json();
+    expect(own).toMatchObject({ privateVisible: true });
+    // Nothing can fill an inventory, so the preview no longer carries one.
+    expect("inventory" in own).toBe(false);
+    expect("inventory" in other).toBe(false);
   });
 });

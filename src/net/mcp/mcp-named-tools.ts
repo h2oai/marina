@@ -298,7 +298,7 @@ export function registerNamedWorldTools(
   mcp.tool(
     "command",
     "Send any raw command to the engine. Use for commands without a dedicated tool " +
-      "(e.g. pool, project, orient, score, map, inventory, macro, connect, experiment). " +
+      "(e.g. pool, project, orient, score, map, macro, connect, experiment). " +
       "Type 'help' to see all available commands.",
     mcpNamedCommandSchema(NAMED_COMMAND_FORMS.command),
     { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },

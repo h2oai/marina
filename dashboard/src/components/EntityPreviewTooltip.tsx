@@ -119,8 +119,6 @@ export function EntityPreviewTooltip() {
             </p>
             {data.privateVisible ? (
               <dl className="space-y-1">
-                <dt className="text-text-dim">Inventory</dt>
-                <dd className="line-clamp-2">{data.inventory?.join(", ") || "Empty"}</dd>
                 <dt className="text-text-dim">Current task</dt>
                 <dd className="line-clamp-2">{data.task ?? "None"}</dd>
                 <dt className="text-text-dim">Active crew</dt>

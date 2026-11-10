@@ -145,7 +145,7 @@ function getEntityDetail(
   const entity = engine.findEntityGlobal(name);
   if (!entity) return json({ error: "Entity not found" }, 404);
 
-  // Raw command input, the full property bag, inventory, core memory and
+  // Raw command input, the full property bag, core memory and
   // notes are private to the entity, its owning person and privileged readers;
   // everyone else gets the public view.
   const privateView = seesEntityPrivate(memory, {
@@ -159,7 +159,6 @@ function getEntityDetail(
     room: entity.room,
     rank: (entity.properties.rank as number) ?? 0,
     properties: privateView ? entity.properties : publicEntityProperties(entity.properties),
-    ...(privateView ? { inventory: entity.inventory } : {}),
     private: privateView,
   };
   const presence = engine.presence.statusOf(entity.name)?.status;

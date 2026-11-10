@@ -41,7 +41,6 @@ export function scoreCommand(deps: {
         label("Rank", `${rank(rankVal)} ${dim(`(${rankVal})`)}`),
         label("Location", roomShort),
         label("Session", dim(sessionTime)),
-        label("Objects", String(entity.inventory.length)),
       ];
 
       const BENCH_LABELS: [string, string][] = [

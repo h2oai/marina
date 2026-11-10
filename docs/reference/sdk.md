@@ -401,8 +401,6 @@ export declare class MarinaAgent extends MarinaClient {
     who(): Promise<Perception[]>;
     /** Get help. */
     help(command?: string): Promise<Perception[]>;
-    /** Check inventory. */
-    inventory(): Promise<Perception[]>;
     /** Take a note anchored to the current room. */
     think(action: "note" | "recall" | "reflect", text: string, opts?: {
         importance?: number;

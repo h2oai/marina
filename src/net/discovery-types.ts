@@ -15,7 +15,6 @@ export interface EntityPreview {
   name: string;
   rank: number;
   standing: number | null;
-  inventory: string[] | null;
   task: string | null;
   crew: string | null;
   privateVisible: boolean;
