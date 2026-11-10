@@ -715,6 +715,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`market live` lists markets that actually resolve soon.** It took the first 200 open markets
+  in the venue's own order and filtered them afterwards. On Kalshi those were multi-leg parlays,
+  priced `undefined¢` because the API now quotes dollar strings. On Polymarket it never filtered
+  by date at all, so it showed dead 2025 events at 0¢. Both venues are now asked for the window
+  (Kalshi without combo markets), results are ranked by 24-hour volume, prices come from the
+  current fields (unknown shows `—`, never a made-up 50¢), and times under two days show in hours.
+
 - **A memory-assistance worker is no longer told about its own work.** Each claim and each read
   a worker made on a job sent that worker a "Memory assistance …: running; N operations remain"
   message, so a worker agent was steered once per operation, mid-run, about its own action.

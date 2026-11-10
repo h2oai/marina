@@ -37,6 +37,10 @@ export interface PolymarketEvent {
   title: string;
   slug: string;
   markets: PolymarketMarket[];
+  /** ISO time the event ends (gamma `endDate`). */
+  endDate?: string;
+  /** Dollar volume over the last 24 h. */
+  volume24hr?: number;
 }
 
 export interface PolymarketMarket {
@@ -53,6 +57,8 @@ export interface PolymarketMarket {
   /** Token IDs for CLOB ordering. JSON-encoded array. */
   clobTokenIds?: string;
   volume: number;
+  /** Dollar volume over the last 24 h. */
+  volume24hr?: number;
   active: boolean;
   closed: boolean;
 }
@@ -179,7 +185,17 @@ export function isPaperMode(opts: PolymarketClientOpts = {}): boolean {
 // ─── Public API (read endpoints — gamma) ────────────────────────────────────
 
 export async function getEvents(
-  filter: { active?: boolean; closed?: boolean; limit?: number } = {},
+  filter: {
+    active?: boolean;
+    closed?: boolean;
+    limit?: number;
+    /** End time window, ISO (`end_date_min` / `end_date_max`). */
+    endDateMin?: string;
+    endDateMax?: string;
+    /** Sort field (`volume24hr`, `endDate`, …); descending unless `ascending`. */
+    order?: string;
+    ascending?: boolean;
+  } = {},
   opts: PolymarketClientOpts = {},
 ): Promise<PolymarketResult<PolymarketEvent[]>> {
   const base = opts.gammaBase ?? process.env.POLYMARKET_GAMMA_BASE ?? DEFAULT_GAMMA_BASE;
@@ -187,6 +203,12 @@ export async function getEvents(
   if (filter.active !== undefined) params.set("active", String(filter.active));
   if (filter.closed !== undefined) params.set("closed", String(filter.closed));
   if (filter.limit) params.set("limit", String(filter.limit));
+  if (filter.endDateMin) params.set("end_date_min", filter.endDateMin);
+  if (filter.endDateMax) params.set("end_date_max", filter.endDateMax);
+  if (filter.order) {
+    params.set("order", filter.order);
+    params.set("ascending", String(filter.ascending ?? false));
+  }
   const url = `${base}/events${params.toString() ? `?${params}` : ""}`;
   return await jsonGet<PolymarketEvent[]>(url, opts);
 }
