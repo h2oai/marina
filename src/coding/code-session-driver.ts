@@ -291,6 +291,9 @@ export class CodeSessionDriver {
       run
         ? `Task #${codingRunMetadata(run).taskId}; attempt artifact:${run.id}. Record a summary only after finishing checks. A stored summary submits the task for the requester to review.`
         : undefined,
+      // The terminal shows each change, the check verdict and the review commands
+      // (scripts/code-presentation.ts); the reply explains, the summary keeps evidence ids.
+      "Your final chat reply is read by the person at the terminal, which already shows every change, the check result and the review commands. In plain words: what you changed, why, and what the checks showed. No artifact ids in the reply (candidate_, verification_, summary_, task_run_); keep those in the stored summary.",
       `Profile: ${opts.profile}`,
       `Execution target: ${opts.session.execution_target}`,
       opts.modelTarget ? `Model target: ${opts.modelTarget}` : undefined,

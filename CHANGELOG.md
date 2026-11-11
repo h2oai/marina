@@ -133,6 +133,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The coder's closing reply is written for the person reading it.** Its brief now says the
+  terminal already shows each change, the check result and the review commands, so the reply
+  explains what changed, why and what the checks showed, without artifact ids (they stay in the
+  stored summary). A recorded run went from three ids in the reply to none.
+
 - **The work pulse no longer stalls on one stuck task.** It kept one pulse task open at a time, and
   the reviewer had claimed and submitted its own task, which it never reviewed, so no new work
   opened for four days. The pulse now runs every 6 hours and keeps up to `MARINA_WORK_PULSE_OPEN`
