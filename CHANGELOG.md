@@ -142,7 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coder's words are labelled Coder, and the input rule shows the working time and the latest
   step. A run ends with one block: how it ended, the files changed, whether checks passed, its
   own time and cost, and the exact next commands (`/diff`, `/review approve|reject <attempt>`,
-  `git restore`). Task-board notices and the periodic brief stay in the World view (F6).
+  `git restore`). Task-board notices stay in the World view (F6), and the periodic world brief skips a person in Code Mode (`brief` on request still works).
 
 - **The work pulse no longer stalls on one stuck task.** It kept one pulse task open at a time, and
   the reviewer had claimed and submitted its own task, which it never reviewed, so no new work

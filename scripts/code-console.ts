@@ -669,14 +669,7 @@ export class CodeConsole {
     }
     this.settingUp = true;
     try {
-      // A first login subscribes a person to periodic world briefs; a coding
-      // session is not the place for them (F6 and /world still show the world).
-      // Inside the setup promise that typed input waits on, so nothing typed early
-      // runs (and is muted) while setup is still in progress.
-      // `/` sends it to the world: in Code Mode a bare line is a task for the coder.
-      this.commands = this.command("/brief unwatch")
-        .catch(() => [])
-        .then(() => this.selectHarness(this.harness, { quiet: true }));
+      this.commands = this.selectHarness(this.harness, { quiet: true });
       await this.commands;
     } finally {
       this.settingUp = false;
