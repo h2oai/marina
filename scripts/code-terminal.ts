@@ -4,10 +4,12 @@
 import type { Terminal } from "@earendil-works/pi-tui";
 import { isWorldInput, TERMINAL_COMMANDS } from "./code-controls";
 import type { CodeEditor, CodeEditorOptions } from "./code-editor";
+import { MODES, modeUsage, nextMode, parseMode, type WorkspaceMode } from "./code-modes";
 import type { PanelInput, TerminalPanelState } from "./code-panel-form";
 import { terminalText } from "./code-presentation";
 import { ReadlineCodeEditor } from "./code-readline";
 import {
+  type ConversationView,
   type EntryFormat,
   type TerminalView,
   TerminalViews,
@@ -51,6 +53,12 @@ export interface CodeTerminalOptions {
   screen?: Terminal;
   panelInput?: (input: PanelInput) => void;
   viewChanged?: (view: TerminalView) => void;
+  /** First use-case mode (--tui only; default coding). */
+  mode?: WorkspaceMode;
+  /** The mode changed: start or stop what its board reads. */
+  modeChanged?: (mode: WorkspaceMode) => void;
+  /** Draws the mode's live board at a width; re-read on every frame. */
+  board?: (mode: WorkspaceMode, width: number) => string[];
 }
 
 /** One routing/approval controller for both renderers. A view never owns a world action. */
@@ -73,9 +81,13 @@ export class CodeTerminal {
   };
   private redrawTimer?: ReturnType<typeof setTimeout>;
   private layout: WorkspaceLayout = "auto";
+  private mode: WorkspaceMode = "coding";
+  /** Coding mode: the latest World message addressed to you, and how many since you looked. */
+  private mention?: { text: string; count: number };
 
   constructor(private options: CodeTerminalOptions) {
     if (options.status) this.status = options.status;
+    if (options.mode) this.mode = options.mode;
     const input = options.input ?? process.stdin;
     const output = options.output ?? process.stderr;
     this.tty = !!input.isTTY && !!output.isTTY;
@@ -110,7 +122,32 @@ export class CodeTerminal {
     this.editor = this.workspace
       ? new WorkspaceCodeEditor(editorOptions, options.screen)
       : new ReadlineCodeEditor(editorOptions);
+    if (this.workspace && this.mode !== "coding") this.enterMode(this.mode, false);
+    else this.redraw();
+  }
+
+  get currentMode(): WorkspaceMode {
+    return this.workspace ? this.mode : "coding";
+  }
+
+  /** Switch the use-case mode. Arranges views only: no worker or session changes. */
+  private enterMode(mode: WorkspaceMode, announce = true) {
+    this.mode = mode;
+    this.options.modeChanged?.(mode);
+    const composer = MODES[mode].composer;
+    if (this.views && this.views.focus !== composer && this.views.focus !== "approvals")
+      this.selectView(composer);
+    if (announce)
+      this.print(`Mode: ${MODES[mode].label} · ${MODES[mode].describe}. ${MODES[mode].hint}`);
     this.redraw();
+  }
+
+  /** A World message addressed to you (coding mode shows it on one line). */
+  noteMention(from: string, message: string) {
+    const text = terminalText(`${from ? `${from}: ` : ""}${message}`).replace(/\s+/g, " ");
+    const seen = this.views?.focus === "world";
+    this.mention = seen ? undefined : { text, count: (this.mention?.count ?? 0) + 1 };
+    if (!seen) this.scheduleRedraw();
   }
 
   private panelContent =
@@ -138,9 +175,18 @@ export class CodeTerminal {
             ? ({ auto: "focus", focus: "split", split: "auto" } as const)[this.layout]
             : name;
         this.print(
-          `Layout: ${this.layout}. Split requires 80 columns; auto splits at 110. F2 changes layout.`,
+          `Layout: ${this.layout}. Split needs 80 columns; auto shows Coding alone, or a mode's board beside the World. F2 changes layout.`,
         );
       } else this.print("Use /layout auto | focus | split. F2 cycles layouts.");
+      return;
+    }
+    if (/^\/mode(?:\s|$)/.test(line.trimStart())) {
+      const name = line.trim().slice(5).trim();
+      const mode = name ? parseMode(name) : nextMode(this.mode);
+      if (!this.workspace)
+        this.print("Modes require marina --tui. /live draws the same boards here.");
+      else if (!mode) this.print(modeUsage());
+      else this.enterMode(mode);
       return;
     }
     if (/^\/view(?:\s|$)/.test(line.trimStart())) {
@@ -218,6 +264,7 @@ export class CodeTerminal {
       return false;
     }
     this.views.select(name);
+    if (name === "world") this.mention = undefined;
     if (name !== "approvals") this.returnView = name;
     this.editor.focus(name);
     this.options.viewChanged?.(name);
@@ -272,6 +319,19 @@ export class CodeTerminal {
       multiline: this.multiline[focus].length > 0,
       panel: this.panelState,
       statusLine: this.options.statusLine?.() || undefined,
+      ...(this.workspace
+        ? {
+            mode: this.mode,
+            ...(this.options.board && MODES[this.mode].board.length
+              ? { board: (width: number) => this.options.board!(this.mode, width) }
+              : {}),
+            ...(this.mention && this.mode === "coding"
+              ? {
+                  mention: `${this.mention.count > 1 ? `(${this.mention.count}) ` : ""}${this.mention.text}  · F6 World`,
+                }
+              : {}),
+          }
+        : {}),
     });
   }
 
@@ -311,6 +371,13 @@ export class CodeTerminal {
       }
     }
     this.print(text, format);
+  }
+
+  /** The conversation a locally drawn card belongs in, and that pane's width (--tui only). */
+  cardTarget(): { view: ConversationView; columns?: number } {
+    const view: ConversationView = this.views?.focus === "world" ? "world" : "coding";
+    const columns = this.workspace ? this.editor.paneColumns?.(view) : undefined;
+    return columns === undefined ? { view } : { view, columns };
   }
 
   /** Opens the fullscreen diff view (--tui only). Scrollback output is unchanged. */

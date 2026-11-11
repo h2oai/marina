@@ -9,6 +9,7 @@ import { parseCodingCommandTarget } from "../src/sdk/command-target";
 import { execApprovalRequest, terminalCodeLifecycle } from "./code";
 import { CodeConsole } from "./code-console";
 import { HarnessStore, validateHarness } from "./code-harness";
+import type { WorkspaceMode } from "./code-modes";
 import { formatCodePerception, terminalText } from "./code-terminal";
 import { cachedParticipantToken, participantUrl, saveParticipantToken } from "./session-cache";
 
@@ -20,6 +21,8 @@ export interface ConnectedCodeOptions {
   token?: string;
   cacheDirectory?: string;
   tui?: boolean;
+  /** First use-case mode for --tui. */
+  mode?: WorkspaceMode;
   /**
    * Chooses among this identity's active coding sessions once authenticated, on the same
    * connection. Throws when none fits; the connection is closed without dispatching work.
@@ -197,6 +200,7 @@ export async function runConnectedCodeSession(options: ConnectedCodeOptions): Pr
     const directory = join(homedir(), ".marina", "connected", key);
     consoleView = new CodeConsole({
       tui: options.tui,
+      ...(options.mode ? { mode: options.mode } : {}),
       agent: attached.agent,
       url: attached.url.replace(/^ws/, "http"),
       root: attached.workspace,

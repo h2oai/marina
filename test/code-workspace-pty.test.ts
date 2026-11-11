@@ -36,6 +36,8 @@ test.skipIf(process.platform === "win32")(
       await until(() => received("ready") || child.exitCode !== null);
       if (!received("ready"))
         throw new Error(`PTY child exited ${child.exitCode}: ${terminalText(output)}`);
+      // Coding mode shows the World beside Coding only when split is asked for.
+      tty.write("\x1b[200~/layout split\x1b[201~\r");
       child.send({ event: "output" });
       await until(() => terminalText(output).includes("world-pty-proof"));
       expect(terminalText(output)).toContain("coding-pty-proof");

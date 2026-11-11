@@ -11,6 +11,7 @@ import { colorizeDiff, type DiffPayload, diffColorEnabled, diffPayloadFor } from
 import { CodeDiscovery } from "./code-discovery";
 import { type CodingHarness, codingAgent, type HarnessStore } from "./code-harness";
 import { fastestModelFor, inferCodeDefaultModel } from "./code-model";
+import { addressedMessage, MODES, type WorkspaceMode } from "./code-modes";
 import { installedCodingAdapters, NativeTerminal, type TerminalAgent } from "./code-native";
 import {
   codePerceptionFormat,
@@ -55,6 +56,8 @@ export interface CodeConsoleOptions {
   connected?: boolean;
   sessionId?: string;
   tui?: boolean;
+  /** First use-case mode for --tui (default coding). */
+  mode?: WorkspaceMode;
   /** The welcome card already told the person what to type. */
   welcomed?: boolean;
   /** No provider key or local runtime: idle reads "no model", never "ready". */
@@ -237,6 +240,21 @@ export class CodeConsole {
     return theme.level ? renderFormat(this.liveFormat, this.liveContext(theme)) : "";
   }
 
+  /** A mode's board: its live cards stacked, each sized to the board pane. */
+  private board(mode: WorkspaceMode, width: number): string[] {
+    const out = (this.options.terminalStreams?.output ?? process.stderr) as { isTTY?: boolean };
+    const theme = themeFor(out.isTTY ? { isTTY: true, columns: width } : undefined);
+    const context = this.liveContext(theme);
+    return MODES[mode].board.flatMap((name) => {
+      const panel = findPanel(name);
+      if (!panel) return [];
+      return [
+        ...panel.render(context).map((line) => sanitizeServerText(this.redact(line), theme)),
+        "",
+      ];
+    });
+  }
+
   /** `/live [panel]`: a dashboard view of the live world, drawn in the terminal. */
   private async live(argument: string) {
     const name = argument.trim() || "status";
@@ -253,8 +271,18 @@ export class CodeConsole {
       isTTY?: boolean;
       columns?: number;
     };
-    const theme = themeFor(out.isTTY ? out : undefined);
-    this.write(panel.render(this.liveContext(theme)).join("\n"), "all", false, "styled");
+    // In the fullscreen workspace the card goes to the focused pane only, drawn at that
+    // pane's width; a terminal-wide card would wrap its borders inside a narrow pane.
+    const target = this.terminal?.cardTarget();
+    const sized =
+      target?.columns === undefined ? out : { isTTY: out.isTTY, columns: target.columns };
+    const theme = themeFor(sized.isTTY ? sized : undefined);
+    this.write(
+      panel.render(this.liveContext(theme)).join("\n"),
+      target?.view ?? "all",
+      false,
+      "styled",
+    );
   }
 
   private redact(text: string) {
@@ -310,6 +338,9 @@ export class CodeConsole {
       return;
     }
     this.observe(p);
+    const mention = addressedMessage(p, this.options.agent.getSession()?.name ?? "");
+    if (mention)
+      this.terminal?.noteMention(this.redact(mention.from), this.redact(mention.message));
     this.discovery.observe(p, this.sessionId);
     const urgent = p.kind === "error" || p.kind === "auth_error" || !!p.data?.execApproval;
     if (this.settingUp && !urgent) return;
@@ -603,6 +634,9 @@ export class CodeConsole {
         viewChanged: (view) => this.panels?.setActive(view === "panel"),
         location: `${this.options.connected ? "Server" : "Local"} workspace · ${this.options.root}`,
         statusLine: () => this.liveStatusLine(),
+        ...(this.options.mode ? { mode: this.options.mode } : {}),
+        modeChanged: () => void this.liveStatus?.refresh(true),
+        board: (mode, width) => this.board(mode, width),
         status: this.idlePhase(),
         line: (text) => {
           if (!interactive) return;
@@ -624,7 +658,8 @@ export class CodeConsole {
       }, 1_000);
       this.ticker.unref?.();
     }
-    if (interactive && !this.options.welcomed) this.write("Type a task in plain words, or /help.");
+    if (interactive && (!this.options.welcomed || this.terminal?.currentMode !== "coding"))
+      this.write(MODES[this.terminal?.currentMode ?? "coding"].hint);
     if (this.options.connected) {
       this.terminal?.setTarget(`marina:${this.sessionId}`);
       this.write(

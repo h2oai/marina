@@ -39,10 +39,13 @@ For the fullscreen workspace, run **`marina --tui`** (or add `--tui` to `marina 
 or a connected `--url … --name … --session …` invocation). It keeps the project location, active
 conversation, task status and unread counts visible around the transcript and composer.
 Coding remains a single session; World messages and independent agents continue alongside it.
-Omit `--tui` to use the scrollback terminal described below.
+Omit `--tui` to use the scrollback terminal described below. The
+[terminal workspace guide](interfaces.md#terminal-workspace-tui) has the full layout, keys and
+slash commands in one place.
 
-At 110 columns or wider, **Coding and World appear side by side**. F6 changes which
-conversation receives your input; the marked pane header and composer label identify the
+The workspace opens in **coding mode**: the coding conversation alone, with messages addressed to
+you on one line above the composer (see [modes](interfaces.md#modes)). `/layout split` puts
+**Coding and World side by side** from 80 columns. F6 changes which conversation receives your input; the marked pane header and composer label identify the
 destination. F7 opens Requests in the left pane while World stays visible; F8 does the same
 for your panel. Incoming requests never take over your draft. Each pane retains its scroll
 position, and each conversation retains its draft when focus or terminal size changes.
@@ -386,7 +389,7 @@ Disconnect that terminal with Ctrl+D, then attach the coding terminal:
 marina attach ws://localhost:3300
 ```
 
-`marina attach [url] [--name <account>] [--session <id>] [--tui]` fills in what you leave
+`marina attach [url] [--name <account>] [--session <id>] [--tui] [--mode <name>]` fills in what you leave
 out:
 
 | Piece | Resolution |
