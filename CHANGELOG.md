@@ -725,6 +725,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Stopping Marina is quick and quiet.** Repeated start/stop cycles found a Ctrl-C or SIGTERM
+  that took 11.8 s: shutdown waited on a model call to turn pending lessons-from-work into lessons.
+  A server stopped by a signal now parks them for the next boot (nothing is lost; short-lived
+  tools keep the final flush), and stops in under a second. A model request cut off by the stop
+  is no longer logged as an upstream failure, and the log ends with `Marina stopped cleanly in N
+  s` at the real end instead of an early "engine stopped".
+
 - **`market live` lists markets that actually resolve soon.** It took the first 200 open markets
   in the venue's own order and filtered them afterwards. On Kalshi those were multi-leg parlays,
   priced `undefined¢` because the API now quotes dollar strings. On Polymarket it never filtered

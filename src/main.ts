@@ -1003,6 +1003,7 @@ let shuttingDown = false;
 async function shutdown(code = 0) {
   if (shuttingDown) return; // re-entrancy guard (e.g. SIGTERM during a crash unwind)
   shuttingDown = true;
+  const stopStarted = Date.now();
   logger.info("engine", "Shutting down...");
 
   // Hard watchdog: if graceful cleanup stalls (a hung upstream during an
@@ -1045,7 +1046,9 @@ async function shutdown(code = 0) {
   await Promise.all([wsServer.drainRequests(), mcpServer?.drainRequests()]);
   await engine.drainCommands();
   await stopExtensions();
-  await engine.shutdown();
+  // A signal is a person or a service manager waiting: pending lessons are
+  // parked for the next boot rather than flushed through a model call.
+  await engine.shutdown({ flushLessons: false });
   await Promise.all([wsServer.stop(), mcpServer?.stop()]);
   telnetServer?.stop();
   await closeWorldMemoryService(db);
@@ -1055,6 +1058,10 @@ async function shutdown(code = 0) {
   if (ENDPOINT_FILE) removeEndpointFile(ENDPOINT_FILE);
   db.close();
   releaseDatabaseLease();
+  logger.info(
+    "engine",
+    `Marina stopped cleanly in ${((Date.now() - stopStarted) / 1000).toFixed(1)} s.`,
+  );
   process.exit(code);
 }
 
