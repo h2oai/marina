@@ -7,7 +7,7 @@
  * terminal), wait for its real answer and screenshot the dark dashboard the tour uses. Run it
  * again whenever the dashboard or the message text changes, and replace docs/assets/field-*.png.
  *
- *   node site/scripts/capture-field.mjs record [only=forecast,memory]  # the default world
+ *   node site/scripts/capture-field.mjs record [only=forecast,memory,predict]  # the default world
  *   node site/scripts/capture-field.mjs tabletop                         # the war room (agents)
  *   node site/scripts/capture-field.mjs tabletop-shot                    # its pictures again, no rerun
  *   node site/scripts/capture-field.mjs dd                               # the due-diligence team
@@ -352,6 +352,34 @@ async function keysShot(browser) {
   await page.close();
 }
 
+/** The Predict page (/predict) with a real answer, as the home page's "Forecast anything" card
+ * shows it: the same dark theme as every other picture, never a fixture. */
+async function predictShot(browser) {
+  console.log("prediction-answer.png");
+  const page = await open(browser, WORLDS.main.port, "Ivy", { maximizeChat: false });
+  await page.goto(`http://127.0.0.1:${WORLDS.main.port}/predict`, { waitUntil: "networkidle" });
+  const nameBox = page.locator('[placeholder="Enter your name..."]');
+  if (await nameBox.isVisible().catch(() => false)) {
+    await nameBox.fill("Ivy");
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+  }
+  await page.getByLabel("What shall we predict?").fill(PREDICT_QUESTION);
+  await page.getByRole("main").getByRole("button", { name: "Predict", exact: true }).click();
+  const t0 = Date.now();
+  // Several vendors research in parallel; with provider retries this can pass 10 minutes.
+  await page
+    .getByRole("region", { name: "Investigation answer" })
+    .getByText("Answer ready", { exact: true })
+    .waitFor({ timeout: 1_500_000 });
+  console.log(`  ${((Date.now() - t0) / 1000).toFixed(0)} s  ${PREDICT_QUESTION}`);
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: join(OUT, "prediction-answer.png") });
+  await page.close();
+}
+
+/** The question the home page's forecast card names in its own example. */
+const PREDICT_QUESTION = "Will the Fed cut rates at the December meeting?";
+
 /** The middle (Workspace) column of the 1440-wide layout. */
 const workspaceClip = (height) => ({ x: 437, y: 92, width: 639, height });
 
@@ -482,6 +510,7 @@ async function record() {
     await chatShots(browser, only);
     if (!only || only.includes("endpoint")) await endpointShot(browser);
     if (!only || only.includes("keys")) await keysShot(browser);
+    if (!only || only.includes("predict")) await predictShot(browser);
   } finally {
     await browser.close();
   }
