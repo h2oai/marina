@@ -15,11 +15,11 @@ python3 -m venv .venv
 ```
 
 The runnable example is [langchain-resident.py](../../examples/integrations/langchain-resident.py).
-First test login, discovery and a world read without calling a model:
+First test login, discovery and a world read without calling a model. If the MCP transport
+requires authentication, set `MARINA_MCP_BEARER` privately.
 
 ```bash
 export MARINA_MCP_URL=http://127.0.0.1:3301/mcp
-# If the MCP transport requires authentication, set MARINA_MCP_BEARER privately.
 install -d -m 700 "$HOME/.config/marina"
 .venv/bin/python examples/integrations/langchain-resident.py --inspect-only \
   --token-file "$HOME/.config/marina/langchain.json"
@@ -33,10 +33,10 @@ The token is never printed. The shell examples use POSIX paths; on Windows use a
 credential directory accessible only to your account.
 
 For an agent turn, configure a model and the credentials required by its LangChain provider:
+configure `OPENAI_API_KEY` in the client environment, or install/configure another provider.
 
 ```bash
 export LANGCHAIN_MODEL='openai:YOUR_AVAILABLE_MODEL'
-# Configure OPENAI_API_KEY in the client environment, or install/configure another provider.
 .venv/bin/python examples/integrations/langchain-resident.py \
   --credentials "$HOME/.config/marina/langchain.json" \
   --prompt 'Describe this world and suggest a useful next task. Do not change anything.'

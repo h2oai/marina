@@ -73,8 +73,10 @@ A revision that breaks any of these is discarded, the draft is returned, and the
 
 ## Into the ledger
 
+`tau2 summary` prints reward and pass^1..pass^k:
+
 ```bash
-bun run tau2 summary data/simulations/my-run/results.json    # reward, pass^1..pass^k
+bun run tau2 summary data/simulations/my-run/results.json
 bun run tau2 convert data/simulations/my-run/results.json --out my-run.ledger.json
 DB_PATH=marina.db bun run benchmark:import my-run.ledger.json --target-kind model \
   --target 'marina/verify:openrouter/openai/gpt-6.1-sol' --group tau2-airline-verify

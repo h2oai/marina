@@ -41,8 +41,8 @@ You can use **any** image model, including local ones — no code change:
   ```bash
   TOGETHER_IMAGE_BASE_URL=https://api.together.xyz/v1
   TOGETHER_API_KEY=...
-  # image generate a fox in snow --model together/black-forest-labs/FLUX.1-schnell
   ```
+  then `image generate a fox in snow --model together/black-forest-labs/FLUX.1-schnell`.
   Local servers (LocalAI, vLLM image, etc.) work the same way — just point the base URL at
   `http://localhost:<port>/v1`.
 
@@ -125,8 +125,9 @@ curl -X POST http://localhost:3300/v1/media \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MARINA_MODEL_KEY" \
   -d '{"type":"image","prompt":"a futuristic city at dawn","model":"openai/gpt-image-2"}'
-# → poll GET /v1/media/<jobId>
 ```
+
+Then poll `GET /v1/media/<jobId>`.
 
 The job runs as the caller the key authenticates: a `secret:entity` key in
 `MODEL_API_KEYS` is that entity (its quota, spend and canvas), an unbound key is

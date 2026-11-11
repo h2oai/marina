@@ -221,10 +221,10 @@ A world can also add a dedicated room, `searchRoom({ exits })`, whose verbs are 
 
 ## Local corpora
 
-A local corpus is a fixed document collection with an offline BM25 index (SQLite FTS5, Porter stemming). It needs no network and no key. Use it for a benchmark's closed corpus, an archive or a team's documents.
+A local corpus is a fixed document collection with an offline BM25 index (SQLite FTS5, Porter stemming). It needs no network and no key. Use it for a benchmark's closed corpus, an archive or a team's documents. The input to `corpus build` has one `{"docid","text","title"?,"url"?}` object per line.
 
 ```bash
-bun run corpus build <name> <docs.jsonl> [--replace] [--source <label>]   # {"docid","text","title"?,"url"?} per line
+bun run corpus build <name> <docs.jsonl> [--replace] [--source <label>]
 bun run corpus list
 bun run corpus search <name> <query> [--k 5]
 bun run corpus get <name> <docid>
@@ -254,22 +254,33 @@ Nothing here is required. With no embedding model configured, every corpus ranks
 
 A corpus can also hold dense vectors, one per document per embedding model, in its own file. When the process has a query embedder for the same model, each search fuses the BM25 ranking and the dense ranking by weighted reciprocal rank. A document the dense list finds can enter the results even when it contains none of the query's words.
 
-```bash
-# 1. Pick the query embedder (any one; the same settings embed the documents):
+1. Pick the query embedder (any one; the same settings embed the documents):
+
+```dotenv
 MARINA_CORPUS_EMBEDDINGS=openai                     # any OpenAI-compatible /v1/embeddings
 MARINA_CORPUS_EMBEDDING_URL=http://127.0.0.1:8080/v1  # a local server, OpenAI, OpenRouter, …
 MARINA_CORPUS_EMBEDDING_MODEL=<model id>
 MARINA_CORPUS_EMBEDDING_REVISION=<immutable revision you declare>
 #    (or MARINA_CORPUS_EMBEDDINGS=local for the pinned MiniLM extension, or ollama)
+```
 
-# 2. Embed the documents (resumable; int8 storage by default):
+2. Embed the documents (resumable; int8 storage by default):
+
+```bash
 bun run corpus embed <name> [--format int8|f32] [--dims N] [--max-chars 16000] [--query-prefix "…"]
+```
 
-#    …or import vectors someone already computed (raw float32 rows + one docid per line):
+…or import vectors someone already computed (raw float32 rows + one docid per line):
+
+```bash
 bun run corpus vectors import <name> vectors.f32 docids.txt --model <provider id> --source-dims 4096
+```
 
-bun run corpus vectors <name>      # what the corpus holds
-bun run corpus search <name> <q>   # prints which ranking ran
+`corpus vectors` shows what the corpus holds, and `corpus search` prints which ranking ran:
+
+```bash
+bun run corpus vectors <name>
+bun run corpus search <name> <q>
 ```
 
 - **Applies only when it matches.** Hybrid runs only if the corpus holds vectors from the configured embedder's model (its provider id). Otherwise, and on an embedding failure or the daily spend cap, the search is BM25 and reports `degraded` (`embedding_model_mismatch`, `embedding_unavailable`). It never fails a search.

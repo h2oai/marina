@@ -16,14 +16,15 @@ The backend sees only what every backend sees: trajectories on insert and the qu
 
 ## Setup
 
-Keep the dataset and the official checkout outside the repository.
+Keep the dataset and the official checkout outside the repository. The data (Hugging Face
+`xiaowu0162/longmemeval-v2`) is `questions.jsonl`, `trajectories.jsonl` (1.2 GB) and
+`haystacks/*.json`. Screenshots (5.9 GB) are not needed for the text-only adapter. The venv uses
+Python 3.11.
 
 ```bash
 LME=~/.cache/marina-lme
 git clone https://github.com/xiaowu0162/LongMemEval-V2 $LME/LongMemEval-V2
-# Data (Hugging Face xiaowu0162/longmemeval-v2): questions.jsonl, trajectories.jsonl (1.2 GB),
-# haystacks/*.json. Screenshots (5.9 GB) are not needed for the text-only adapter.
-python3 -m venv $LME/venv          # Python 3.11
+python3 -m venv $LME/venv
 $LME/venv/bin/pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 $LME/venv/bin/pip install "transformers>=5" huggingface_hub numpy openai openai-agents pillow tqdm
 $LME/venv/bin/pip install --no-deps -e $LME/LongMemEval-V2

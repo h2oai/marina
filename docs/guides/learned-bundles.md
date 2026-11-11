@@ -86,11 +86,21 @@ The manifest identifies the artifact with these fields:
 A world's state does not have to live in one long-lived database. A world can
 be the code seed plus the bundles you import into it. To move an old world
 over, distill its database into a bundle, archive the database, and start a
-new world:
+new world. Distill and archive:
 
 ```bash
 marina learned distill ./old/marina.db --out ./packs/old-world --archive
-marina start                                  # a new world from the code seed
+```
+
+Start a new world from the code seed:
+
+```bash
+marina start
+```
+
+Then import the bundle into it:
+
+```bash
 MARINA_UPSTREAM=on DB_PATH=marina.db marina learned import ./packs/old-world --own --allow-unsigned
 ```
 
@@ -361,11 +371,16 @@ its learned-bundle key. It is verified offline against the same pinned keys as
 bundles, so an import still works air-gapped. Payment happens outside Marina:
 a checkout run by the publisher issues the token.
 
+The publisher issues a token for one buyer:
+
 ```bash
-# publisher: issue a token for one buyer
 MARINA_LEARNED_SIGNING_KEY=… bun run learned entitle --artifact marina-memory:…/curated \
   --tiers tier:standard --licensee buyer-co --versions '^1.0.0' --days 365 > buyer.json
-# buyer: import the paid slice
+```
+
+The buyer imports the paid slice:
+
+```bash
 MARINA_UPSTREAM=on DB_PATH=marina.db bun run learned import ./packs/curated-1.1.0 \
   --slices tier:standard --entitlement buyer.json
 ```
@@ -441,10 +456,12 @@ The public key embedded in a signature is never trusted on its own.
 **An instance key, for internal packs between your own worlds:**
 
 ```bash
-bun run learned keygen ~/.marina/learned.key   # mode 0600; prints the public key
-# exporting world:  MARINA_LEARNED_SIGNING_KEY=$(cat ~/.marina/learned.key)
-# importing world:  MARINA_LEARNED_PUBLISHER_KEYS=mine=<printed public key>
+bun run learned keygen ~/.marina/learned.key
 ```
+
+The key file is written with mode 0600 and the public key is printed. The exporting world sets
+`MARINA_LEARNED_SIGNING_KEY=$(cat ~/.marina/learned.key)`; the importing world sets
+`MARINA_LEARNED_PUBLISHER_KEYS=mine=<printed public key>`.
 
 **A publisher key for public packs.** A publisher key, such as an
 organisation's key for public packs, is created offline by its owner. It is

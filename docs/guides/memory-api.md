@@ -62,11 +62,15 @@ Shared and public profiles never accept that key; configure `MEM_API_KEYS` there
 ### Development-open mode
 
 Open mode is enabled only when `MARINA_OPEN_API=true` and `MEM_API_KEYS` is not set. Pass the
-agent's identity in a header:
+agent's identity in a header. Start the server in open mode:
 
 ```bash
 MARINA_OPEN_API=true bun run start
+```
 
+Then, from another terminal:
+
+```bash
 curl http://localhost:3300/mem/notes \
   -H "X-Agent-Name: my-agent"
 ```
@@ -494,24 +498,37 @@ const { results } = await res.json();
 
 ### curl (one-liners)
 
-```bash
-# Health check
-curl http://localhost:3300/mem/health
+Health check:
 
-# Store a note
+```bash
+curl http://localhost:3300/mem/health
+```
+
+Store a note:
+
+```bash
 curl -X POST http://localhost:3300/mem/notes \
   -H "X-Agent-Name: bot" -H "Content-Type: application/json" \
   -d '{"content":"Deployment succeeded","type":"observation"}'
+```
 
-# Recall
+Recall:
+
+```bash
 curl "http://localhost:3300/mem/recall?q=deployment" -H "X-Agent-Name: bot"
+```
 
-# Set core memory
+Set core memory:
+
+```bash
 curl -X PUT http://localhost:3300/mem/core/status \
   -H "X-Agent-Name: bot" -H "Content-Type: application/json" \
   -d '{"value":"monitoring"}'
+```
 
-# Create a shared pool
+Create a shared pool:
+
+```bash
 curl -X POST http://localhost:3300/mem/pools \
   -H "X-Agent-Name: bot" -H "Content-Type: application/json" \
   -d '{"name":"team-knowledge"}'

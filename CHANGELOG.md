@@ -743,6 +743,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Kalshi without combo markets), results are ranked by 24-hour volume, prices come from the
   current fields (unknown shows `—`, never a made-up 50¢), and times under two days show in hours.
 
+- **Shell snippets in the docs paste into a shell as a whole block.** Copying the getting-started
+  "from any folder" block failed: zsh (the macOS default) passes a trailing `# comment` to the
+  command as arguments, and `marina init` read the lines pasted after it as its answers. Shell
+  blocks in the README, the site and every guide now carry no comments, end on any command that
+  reads the terminal or keeps running, and split alternatives into their own blocks. A test holds
+  the front-door pages (README, getting started, the site overview and home page) to it;
+  `bun run check:paste-safe` reports the other guides without failing CI.
 - **A memory-assistance worker is no longer told about its own work.** Each claim and each read
   a worker made on a job sent that worker a "Memory assistance …: running; N operations remain"
   message, so a worker agent was steered once per operation, mid-run, about its own action.
