@@ -304,7 +304,7 @@ from that file — the key itself is never printed:
 bun run start
 ```
 
-```text
+```plaintext
   Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:3300/v1 OPENAI_API_KEY="$(cat '/path/to/marina.db.local-api-key')"
 ```
 
