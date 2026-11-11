@@ -4,11 +4,17 @@
 import { availableModels } from "../../agent/available-models";
 import { RateLimiter } from "../../auth/rate-limiter";
 import type { AnswerSpec } from "../../forecast/answer-types";
+import {
+  fetchLiveKalshiPick,
+  kalshiQuestion,
+  LIVE_FORECAST_WINDOW_MS,
+} from "../../forecast/live-market";
 import type { ForecastAnswer } from "../../forecast/question";
 import { residentsMode } from "../../forecast/resident-mode";
 import type { ForecastScale } from "../../forecast/service";
 import type { TypedForecastAnswer } from "../../forecast/typed";
 import { bold, dim, header, separator } from "../../net/ansi";
+import { kalshiPrice } from "../../net/clients/kalshi-client";
 import { providerSetupHint } from "../../net/model/provider-setup";
 import {
   TYPED_FORMATION_NAMES,
@@ -18,12 +24,13 @@ import type { MarinaDB } from "../../persistence/database";
 import type { ForecastAnswerRow } from "../../persistence/db-markets";
 import type { MarinaStores } from "../../persistence/interfaces";
 import { parseSampleId } from "../../resolvers/calibration";
-import type { CommandDef, RoomContext } from "../../types";
+import type { CommandDef, EntityId, RoomContext } from "../../types";
 import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
 import { parseModifiers } from "../parse-input";
 import { dailyCapRefusal } from "../spend-ledger";
+import { parseDuration } from "./format-duration";
 
 const logger = new Logger();
 
@@ -33,6 +40,8 @@ const USAGE = [
   "                                         a typed answer: plan → research rounds → several runs → critique",
   "       forecast [formation:<name>] [retriever:<spec>] … -- <question>",
   "                                         choose the formation (or verify / arbiter) and a retriever the operator allows",
+  "       forecast market:live [window:48h]  pick the most traded open Kalshi market closing in the window and",
+  "                                         forecast it, scored when it settles (daily: schedule add … -- forecast market:live)",
   "       forecast list                     your saved forecasts and, once resolved, their scores",
   "       forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves",
   "       forecast competence [family]      what Marina's resolved record says each method is good at",
@@ -66,7 +75,7 @@ export interface ForecastCommandDeps {
  * scored by the `forecast-question` calibration finder when that Sample resolves.
  */
 export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
-  return {
+  const def: CommandDef = {
     category: "Markets & Forecasting",
     usage: [
       { syntax: "forecast <question> [resolves:<venue>/<ticker>]", effect: "execute" },
@@ -79,6 +88,7 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
         syntax: "forecast [formation:<name>] [retriever:<spec>] [type:<t>] … -- <question>",
         effect: "execute",
       },
+      { syntax: "forecast market:live [window:<duration>]", effect: "execute" },
       { syntax: "forecast list", effect: "read" },
       { syntax: "forecast track <id> <venue>/<ticker>", effect: "write" },
       { syntax: "forecast competence [<family prefix>]", effect: "read" },
@@ -146,6 +156,18 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
           deps.db.linkForecastToSample(id, name, sampleId)
             ? `Forecast #${id} will be scored when ${sampleId} resolves.`
             : `No open forecast #${id} of yours to track.`,
+        );
+      }
+      // `forecast market:live …` — only as the first word, so a question that
+      // merely contains "market:" or "window:" parses exactly as before.
+      if (/^(--)?market[:=]/i.test(first ?? "")) {
+        const live = parseModifiers(args.split(/\s+/), {
+          ...forecastModifierSpec(),
+          market: { type: "string" },
+          window: { type: "string" },
+        } as const);
+        return forecastLiveMarket(ctx, input.entity, name, live, deps, (next) =>
+          def.handler(ctx, { ...input, args: next, tokens: next.split(/\s+/) }),
         );
       }
       const parsed = parseModifiers(args.split(/\s+/), forecastModifierSpec());
@@ -331,6 +353,80 @@ export function forecastCommand(deps: ForecastCommandDeps = {}): CommandDef {
       );
     },
   };
+  return def;
+}
+
+/** Modifiers `market:live` keeps for the forecast it runs (it sets `resolves:` itself). */
+const LIVE_PICK_OWN = new Set(["market", "window", "resolves"]);
+const LIVE_WINDOW_MAX_MS = 30 * 86_400_000;
+
+/**
+ * `forecast market:live [window:48h]` — pick the most traded open Kalshi market
+ * closing inside the window that is still undecided (5–95¢) and that this
+ * forecaster has not answered, then run `forecast resolves:kalshi/<ticker> --
+ * <its question>` through the same handler: same budget, spend cap, saving and
+ * shadow. One ordinary schedule makes it a daily duty.
+ */
+export function forecastLiveMarket(
+  ctx: RoomContext,
+  entity: EntityId,
+  name: string | undefined,
+  parsed: ReturnType<typeof parseModifiers>,
+  deps: ForecastCommandDeps,
+  rerun: (args: string) => void | Promise<void>,
+  pick: typeof fetchLiveKalshiPick = fetchLiveKalshiPick,
+): void | Promise<void> {
+  const market = parsed.values.market;
+  if (market !== "live")
+    return refuseCommand(
+      ctx,
+      entity,
+      `market: takes live (forecast market:live), not "${market ?? ""}".`,
+    );
+  if (parsed.values.resolves !== undefined)
+    return refuseCommand(
+      ctx,
+      entity,
+      "market:live files against the market it picks; leave out resolves:.",
+    );
+  if (parsed.rest.some((t) => t.trim() && t !== "--"))
+    return refuseCommand(
+      ctx,
+      entity,
+      "market:live picks its own question; leave the question out.",
+    );
+  const rawWindow = parsed.raw.window;
+  const windowMs = rawWindow === undefined ? LIVE_FORECAST_WINDOW_MS : parseDuration(rawWindow);
+  if (windowMs === undefined || windowMs < 3_600_000 || windowMs > LIVE_WINDOW_MAX_MS)
+    return refuseCommand(ctx, entity, "window: takes a duration from 1h to 30d (default 48h).");
+  const answered = new Set<string>();
+  if (deps.db && name) {
+    for (const row of deps.db.listForecastAnswers(name, 500)) {
+      if (row.sample_id?.startsWith("kalshi/")) answered.add(row.sample_id.slice("kalshi/".length));
+    }
+  }
+  return (async () => {
+    const picked = await pick(windowMs, answered);
+    if (!picked.ok) return refuseCommand(ctx, entity, `Kalshi unreachable: ${picked.error}`);
+    const m = picked.market;
+    if (!m) {
+      return ctx.send(
+        entity,
+        `No open Kalshi market closing within ${rawWindow ?? "48h"} is undecided (5–95¢) and new to you.`,
+      );
+    }
+    const yes = kalshiPrice(m.yes_ask_dollars, m.yes_ask);
+    ctx.send(
+      entity,
+      dim(
+        `Picked kalshi/${m.ticker}${Number.isFinite(yes) ? ` (yes ${Math.round(yes * 100)}¢)` : ""}, closes ${m.close_time}.`,
+      ),
+    );
+    const keep = Object.entries(parsed.raw)
+      .filter(([k, v]) => v !== undefined && !LIVE_PICK_OWN.has(k))
+      .map(([k, v]) => `${k}:${v}`);
+    await rerun([`resolves:kalshi/${m.ticker}`, ...keep, "--", kalshiQuestion(m)].join(" "));
+  })().catch((err) => refuseCommand(ctx, entity, `Forecast failed: ${getErrorMessage(err)}`));
 }
 
 /**

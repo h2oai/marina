@@ -734,6 +734,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   have no members); a group task's work is now open to its creator and claimants as well as its
   members. The same run now prints no WARN or ERROR.
 
+- **`bun run code <dir> --tui` opens the terminal workspace.** The checkout entry point read only
+  the folder argument, so `--tui` was ignored and the scrollback terminal opened. It now takes
+  `--tui` and `--mode`; `marina` takes every other option.
+- **`/live` cards fit the terminal workspace pane they are drawn in.** In `marina --tui`'s split
+  layout a `/live` card went to both panes at the full terminal width, so in the narrower World
+  pane its borders wrapped into broken lines. The card now goes to the focused pane only, drawn at
+  that pane's width. The scrollback terminal is unchanged.
+- **The terminal workspace has its own guide.** `marina --tui` was mentioned in five guides but
+  explained in none. [Dashboard, desktop and terminal](docs/guides/interfaces.md#terminal-workspace-tui)
+  now covers starting it (local folder, checkout, `marina attach`), the panes, every key and slash
+  command, and which dashboard views it does not show yet. The other guides link to it.
 - **`market live` lists markets that actually resolve soon.** It took the first 200 open markets
   in the venue's own order and filtered them afterwards. On Kalshi those were multi-leg parlays,
   priced `undefined¢` because the API now quotes dollar strings. On Polymarket it never filtered
@@ -1214,6 +1225,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     their own capped spend scope. It installs, enables and starts nothing.
 
 ### Added
+
+- **The terminal workspace has use-case modes.** `marina --tui` opens in `coding` mode: the
+  coding conversation alone, with the World cut down to one line showing the latest message
+  addressed to you (a tell, or a message naming you). `operate` puts a live board beside the
+  World: Attention, Agents, Spend and Status, the dashboard's own data, scrolled with
+  Shift+PageUp/PageDown. The composer starts in the World. Switch with F3, `/mode <name>`, or
+  `--mode <name>` on `marina`, `marina attach` and `bun run code`. A mode only arranges the
+  screen; the coding session keeps running. Coding no longer splits the World beside it at 110
+  columns on its own; `/layout split` still does, from 80.
+- **`forecast market:live` forecasts a real market that settles soon.** It picks the most traded
+  open Kalshi market closing within the window (`window:`, default 48 h) that is still undecided
+  (5–95¢) and new to you, and forecasts it in the market's own resolution words, filed against
+  that market so the answer is scored when it settles. Nothing runs on its own; `schedule add
+  daily-forecast daily:14:00 -- forecast market:live` makes it a daily duty. See the forecasting
+  guide, "A forecast a day on a live market".
 
 - **References in dashboard messages open what they name.** Hovering or focusing a reference in a
   message shows a card: a task (title, state, who holds it), a channel (latest post), a board

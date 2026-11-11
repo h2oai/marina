@@ -211,7 +211,7 @@ You can keep coding and world activity together without leaving the dashboard. I
 Canvas → Published panels**, choose **Create coding desk** for an existing Marina coding session.
 Its requests are reviewed before submission; closing its tile leaves the worker running. For the
 fullscreen coding terminal, run `marina --tui` in your project, or
-`bun run code /path/to/project --tui` from the Marina checkout. Follow the
+`bun run code /path/to/project --tui` from the Marina checkout ([how it works](interfaces.md#terminal-workspace-tui)). Follow the
 [first autonomous fix](coding.md#first-autonomous-fix-copy-and-paste) for a disposable-project walkthrough.
 
 ## Connect an external agent

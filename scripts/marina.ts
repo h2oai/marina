@@ -51,6 +51,7 @@ import { AGENT_THINKING_LEVELS, parseAgentThinkingLevel } from "../src/agent/age
 import { bunVersionRefusal, MARINA_VERSION } from "../src/version";
 import { applyCliEnvironment } from "./cli-env";
 import { ATTACH_USAGE } from "./code-attach";
+import { parseMode, WORKSPACE_MODES, type WorkspaceMode } from "./code-modes";
 import { themeFor } from "./code-style";
 import { styleStatusReport, styleUsage } from "./term-help";
 
@@ -84,6 +85,7 @@ export type Dispatch =
       profile?: string;
       harness?: string;
       tui?: boolean;
+      mode?: WorkspaceMode;
       verbose?: boolean;
       allowUnverified?: boolean;
       /** One-shot verification requirement (`code do verification:<mode>`); default `delivery`. */
@@ -95,8 +97,22 @@ export type Dispatch =
       json?: boolean;
     }
   | { kind: "connect"; rest: string[] }
-  | { kind: "code-connected"; url: string; name: string; session: string; tui?: boolean }
-  | { kind: "attach"; url?: string; name?: string; session?: string; tui?: boolean }
+  | {
+      kind: "code-connected";
+      url: string;
+      name: string;
+      session: string;
+      tui?: boolean;
+      mode?: WorkspaceMode;
+    }
+  | {
+      kind: "attach";
+      url?: string;
+      name?: string;
+      session?: string;
+      tui?: boolean;
+      mode?: WorkspaceMode;
+    }
   | { kind: "route"; rest: string[] }
   | { kind: "learned"; rest: string[] }
   | { kind: "inquiry"; mode: "predict" | "research" | "inquiry"; rest: string[] }
@@ -131,7 +147,13 @@ export function looksLikeDirectory(arg: string, isDir: (p: string) => boolean): 
 
 /** `marina attach [url] [--name N] [--session S] [--tui]`; resolution happens at run time. */
 function parseAttach(argv: string[]): Dispatch {
-  const attach: { url?: string; name?: string; session?: string; tui?: boolean } = {};
+  const attach: {
+    url?: string;
+    name?: string;
+    session?: string;
+    tui?: boolean;
+    mode?: WorkspaceMode;
+  } = {};
   const invalid = (arg: string, problem: string): Dispatch => ({
     kind: "usage-error",
     arg,
@@ -140,6 +162,13 @@ function parseAttach(argv: string[]): Dispatch {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--tui") {
+      attach.tui = true;
+      continue;
+    }
+    if (arg === "--mode") {
+      const mode = parseMode(argv[++i]);
+      if (!mode) return invalid(arg, `--mode needs one of ${WORKSPACE_MODES.join(", ")}`);
+      attach.mode = mode;
       attach.tui = true;
       continue;
     }
@@ -215,6 +244,7 @@ export function parseDispatch(
   let dir: string | undefined;
   let fresh: boolean | undefined;
   let tui: boolean | undefined;
+  let mode: WorkspaceMode | undefined;
   let verbose: boolean | undefined;
   let allowUnverified: boolean | undefined;
   let verification: PrintVerification | undefined;
@@ -230,6 +260,17 @@ export function parseDispatch(
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--tui") {
+      tui = true;
+      continue;
+    }
+    if (arg === "--mode") {
+      mode = parseMode(argv[++i]);
+      if (!mode)
+        return {
+          kind: "usage-error",
+          arg: "--mode",
+          message: `--mode needs one of ${WORKSPACE_MODES.join(", ")}`,
+        };
       tui = true;
       continue;
     }
@@ -357,6 +398,7 @@ export function parseDispatch(
       name: connected.name,
       session: connected.session,
       ...(tui ? { tui } : {}),
+      ...(mode ? { mode } : {}),
     };
   }
   return {
@@ -364,6 +406,7 @@ export function parseDispatch(
     dir,
     ...selection,
     ...(tui ? { tui } : {}),
+    ...(mode ? { mode } : {}),
     ...(verbose ? { verbose } : {}),
     ...(allowUnverified ? { allowUnverified } : {}),
     ...(json ? { json } : {}),
@@ -427,9 +470,11 @@ Usage:
 Options:
   --tui                      interactive workspace with inline command guidance;
                               omit for scrollback; one-shot and pipes stay plain
+  --mode <name>               the workspace's first use-case mode (implies --tui):
+                              coding (default) or operate; F3 or /mode switches
   --url --name --session      connected interactive coding, using the server's workspace;
                               --url defaults to MARINA_URL; no new world is started
-                              (marina attach takes the same --name/--session/--tui)
+                              (marina attach takes the same --name/--session/--tui/--mode)
   --agent <runtime>           marina (default), claude, codex, or pi
   --model <id>                model for the selected runtime; \`route\` picks a tier
                               model for the task from MARINA_ROUTES / tier models
@@ -902,6 +947,7 @@ if (import.meta.main) {
         profile: dispatch.profile,
         harness: dispatch.harness,
         tui: dispatch.tui,
+        mode: dispatch.mode,
         verbose: dispatch.verbose,
         allowUnverified: dispatch.allowUnverified,
         verification: dispatch.verification,

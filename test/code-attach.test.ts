@@ -66,7 +66,7 @@ describe("marina attach dispatch", () => {
     const missing = (argv: string[], env: Record<string, string> = {}) =>
       (parseDispatch(argv, () => false, env) as { message?: string }).message;
     expect(missing(["--name", "Ada", "--session", "s"])).toBe(
-      "Connected coding is missing --url <url> (or MARINA_URL). Or let Marina find them: marina attach [url] [--name <account>] [--session <id>] [--tui]",
+      "Connected coding is missing --url <url> (or MARINA_URL). Or let Marina find them: marina attach [url] [--name <account>] [--session <id>] [--tui] [--mode <name>]",
     );
     expect(missing(["--url", "ws://h", "--session", "s"])).toStartWith(
       "Connected coding is missing --name <account>. ",
