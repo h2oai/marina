@@ -725,6 +725,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bun run code <dir> --tui` opens the terminal workspace.** The checkout entry point read only
+  the folder argument, so `--tui` was ignored and the scrollback terminal opened. It now takes
+  `--tui` and `--mode`; `marina` takes every other option.
 - **`/live` cards fit the terminal workspace pane they are drawn in.** In `marina --tui`'s split
   layout a `/live` card went to both panes at the full terminal width, so in the narrower World
   pane its borders wrapped into broken lines. The card now goes to the focused pane only, drawn at
@@ -1214,6 +1217,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The terminal workspace has use-case modes.** `marina --tui` opens in `coding` mode: the
+  coding conversation alone, with the World cut down to one line showing the latest message
+  addressed to you (a tell, or a message naming you). `operate` puts a live board beside the
+  World: Attention, Agents, Spend and Status, the dashboard's own data, scrolled with
+  Shift+PageUp/PageDown. The composer starts in the World. Switch with F3, `/mode <name>`, or
+  `--mode <name>` on `marina`, `marina attach` and `bun run code`. A mode only arranges the
+  screen; the coding session keeps running. Coding no longer splits the World beside it at 110
+  columns on its own; `/layout split` still does, from 80.
 - **`forecast market:live` forecasts a real market that settles soon.** It picks the most traded
   open Kalshi market closing within the window (`window:`, default 48 h) that is still undecided
   (5–95¢) and new to you, and forecasts it in the market's own resolution words, filed against

@@ -10,9 +10,10 @@ import {
   terminalCompletion,
   terminalCompletionFor,
 } from "../scripts/code-completion";
+import { addressedMessage, nextMode, parseMode } from "../scripts/code-modes";
 import type { PanelInput, TerminalPanelState } from "../scripts/code-panel-form";
 import { themeFor } from "../scripts/code-style";
-import { CodeTerminal, terminalText } from "../scripts/code-terminal";
+import { CodeTerminal, type CodeTerminalOptions, terminalText } from "../scripts/code-terminal";
 import { WorkspacePanes } from "../scripts/code-workspace-panes";
 import { parseDispatch } from "../scripts/marina";
 import { card } from "../scripts/term-panels";
@@ -58,7 +59,10 @@ class Screen implements Terminal {
   }
 }
 
-function workspace(panelInput?: (input: PanelInput) => void) {
+function workspace(
+  panelInput?: (input: PanelInput) => void,
+  extra: Partial<CodeTerminalOptions> = {},
+) {
   const screen = new Screen();
   const input = Object.assign(new PassThrough(), { isTTY: true });
   const output = Object.assign(new PassThrough(), { isTTY: true });
@@ -79,6 +83,7 @@ function workspace(panelInput?: (input: PanelInput) => void) {
     interrupt: () => {
       interrupts++;
     },
+    ...extra,
   });
   return {
     screen,
@@ -318,8 +323,9 @@ it("tiles live coding and world output, keeps routing explicit and restores focu
   f.screen.resize();
   f.terminal.write("candidate verification running", "coding");
   f.terminal.write("Peer: independent task still running", "world");
-  f.screen.send("repair 界 draft");
   const request = f.terminal.ask("Approve only command 17?");
+  f.screen.send("\x1b[200~/layout split\x1b[201~\r");
+  f.screen.send("repair 界 draft");
   await until(() => f.screen.text().includes("independent task"));
   expect(f.screen.text()).toContain("candidate verification running");
   expect(f.lines).toEqual([]);
@@ -354,6 +360,7 @@ it("keeps independent scroll positions and renders two panes only when there is 
       coding: Array.from({ length: 60 }, (_, n) => `code-${n}`).join("\n"),
       world: Array.from({ length: 60 }, (_, n) => `world-${n}`).join("\n"),
     },
+    layout: "split" as const,
   };
   panes.update(state);
   const frame = (width: number, height: number) =>
@@ -382,15 +389,17 @@ it("keeps independent scroll positions and renders two panes only when there is 
   expect(coding.isFollowingEnd).toBe(true);
   expect(world.scrollTop).toBe(20);
   for (const [width, height] of [
-    [80, 18],
+    [79, 18],
     [35, 8],
     [120, 5],
   ]) {
     const narrow = frame(width!, height!);
     expect(narrow.lines.join("\n")).not.toContain("world-");
   }
-  panes.update({ ...state, layout: "split" });
   expect(frame(80, 18).lines.join("\n")).toContain("world-");
+  // Coding mode's automatic layout is the coding conversation alone, at any width.
+  panes.update({ ...state, layout: "auto" });
+  expect(frame(200, 40).lines.join("\n")).not.toContain("world-");
   panes.update({ ...state, layout: "focus" });
   expect(frame(160, 30).lines.join("\n")).not.toContain("world-");
   panes.update({ ...state, focus: "world", layout: "focus" });
@@ -496,6 +505,7 @@ it("sizes locally drawn cards to the focused pane and sends them to that pane on
   f.screen.columns = 140;
   f.screen.rows = 36;
   f.screen.resize();
+  f.screen.send("\x1b[200~/layout split\x1b[201~\r");
   f.terminal.write("first", "coding");
   await until(() => f.screen.text().includes("first"));
   const coding = f.terminal.cardTarget();
@@ -531,4 +541,110 @@ it("reports no pane width outside the fullscreen workspace", () => {
     input.destroy();
     output.destroy();
   }
+});
+
+it("operate mode sits a live board beside the World, sized to its pane, and points the composer at the World", async () => {
+  const widths: number[] = [];
+  const modes: string[] = [];
+  using f = workspace(undefined, {
+    mode: "operate",
+    modeChanged: (mode) => modes.push(mode),
+    board: (mode, width) => {
+      widths.push(width);
+      return [`board-${mode}`, "x".repeat(width)];
+    },
+  });
+  f.screen.columns = 120;
+  f.screen.rows = 30;
+  f.screen.resize();
+  f.terminal.write("world-line", "world");
+  await until(
+    () => f.screen.text().includes("board-operate") && f.screen.text().includes("world-line"),
+  );
+  expect(modes).toEqual(["operate"]);
+  expect(f.screen.text()).toContain("Operate · live");
+  expect(f.screen.text()).toContain("F3 mode: Operate");
+  expect(Math.max(...widths)).toBeLessThan(120);
+  // The composer starts in the World: plain text is a world command.
+  f.screen.send("challenge list\r");
+  expect(f.lines).toEqual(["/world challenge list"]);
+  // F3 cycles back to coding: the board is gone and the composer is Coding's again.
+  f.screen.send("\x1bOR");
+  await until(() => f.terminal.currentMode === "coding");
+  expect(modes).toEqual(["operate", "coding"]);
+  f.screen.send("fix it\r");
+  expect(f.lines.at(-1)).toBe("fix it");
+  // Below 80 columns the World stands alone.
+  f.screen.send("\x1b[200~/mode operate\x1b[201~\r");
+  f.screen.columns = 70;
+  f.screen.resize();
+  const before = widths.length;
+  f.terminal.write("narrow-world", "world");
+  await until(() => f.screen.text().includes("narrow-world"));
+  expect(widths.length).toBe(before);
+});
+
+it("coding mode reduces the World to one line of messages addressed to you", async () => {
+  using f = workspace();
+  f.screen.columns = 160;
+  f.screen.rows = 30;
+  f.screen.resize();
+  f.terminal.write("ambient room chatter", "world");
+  f.terminal.write("coding-line", "coding");
+  await until(() => f.screen.text().includes("coding-line"));
+  expect(f.screen.text()).not.toContain("ambient room chatter");
+  f.terminal.noteMention("Reviewer", "c3 looks good, ship it");
+  await until(() => f.screen.text().includes("Reviewer: c3 looks good"));
+  f.terminal.noteMention("Reviewer", "also the docs");
+  await until(() => f.screen.text().includes("(2) Reviewer: also the docs"));
+  // Reading the World clears it.
+  f.screen.send("\x1b[17~");
+  await until(() => f.screen.text().includes("ambient room chatter"));
+  f.screen.send("\x1b[17~");
+  f.screen.output = "";
+  f.screen.columns = 150;
+  f.screen.resize();
+  f.terminal.write("after-reading", "coding");
+  await until(() => f.screen.text().includes("after-reading"));
+  expect(f.screen.text()).not.toContain("also the docs");
+});
+
+it("addresses a person by tell or by name, never by their own receipts", () => {
+  const p = (tag: string, data: Record<string, unknown>) =>
+    ({ kind: "message", timestamp: 0, tag, data }) as never;
+  expect(addressedMessage(p("tell", { senderName: "Ada", message: "ping" }), "Jo")).toEqual({
+    from: "Ada",
+    message: "ping",
+  });
+  expect(addressedMessage(p("say", { senderName: "Ada", message: "@Jo ready?" }), "Jo")).toEqual({
+    from: "Ada",
+    message: "@Jo ready?",
+  });
+  expect(
+    addressedMessage(p("say", { senderName: "Ada", message: "lunch?" }), "Jo"),
+  ).toBeUndefined();
+  expect(
+    addressedMessage(p("tell", { delivery: { kind: "tell" }, message: "x" }), "Jo"),
+  ).toBeUndefined();
+  expect(
+    addressedMessage(p("say", { senderName: "Jo", message: "@Jo note" }), "Jo"),
+  ).toBeUndefined();
+  expect(parseMode("Operate")).toBe("operate");
+  expect(parseMode("nope")).toBeUndefined();
+  expect(nextMode("operate")).toBe("coding");
+});
+
+it("--mode picks the first mode and implies --tui", () => {
+  expect(parseDispatch([".", "--mode", "operate"])).toEqual({
+    kind: "code",
+    dir: ".",
+    tui: true,
+    mode: "operate",
+  });
+  expect(parseDispatch(["--mode", "nope"])).toMatchObject({ kind: "usage-error", arg: "--mode" });
+  expect(parseDispatch(["attach", "--mode", "operate"])).toMatchObject({
+    kind: "attach",
+    tui: true,
+    mode: "operate",
+  });
 });

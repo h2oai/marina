@@ -43,8 +43,9 @@ Omit `--tui` to use the scrollback terminal described below. The
 [terminal workspace guide](interfaces.md#terminal-workspace-tui) has the full layout, keys and
 slash commands in one place.
 
-At 110 columns or wider, **Coding and World appear side by side**. F6 changes which
-conversation receives your input; the marked pane header and composer label identify the
+The workspace opens in **coding mode**: the coding conversation alone, with messages addressed to
+you on one line above the composer (see [modes](interfaces.md#modes)). `/layout split` puts
+**Coding and World side by side** from 80 columns. F6 changes which conversation receives your input; the marked pane header and composer label identify the
 destination. F7 opens Requests in the left pane while World stays visible; F8 does the same
 for your panel. Incoming requests never take over your draft. Each pane retains its scroll
 position, and each conversation retains its draft when focus or terminal size changes.

@@ -56,6 +56,9 @@ bun run code /path/to/project --tui
 # Attach to a world that is already running. Missing values are prompted for.
 marina attach --tui
 marina attach ws://localhost:3300/ws --name Builder --session <id> --tui
+
+# Open straight into a use-case mode (implies --tui).
+marina --mode operate
 ```
 
 `--tui` works with the other coding options, such as `--agent claude|codex|pi`, `--model` and
@@ -75,9 +78,23 @@ terminal. One-shot `-p`, pipes and redirected output keep plain text. `NO_COLOR=
 | Composer | One line editor for each conversation, with the destination named above it |
 | Footer | Folder, status and the keys |
 
-At 110 columns or wider, Coding and World sit side by side. The pane marked `●` receives your
-input. Each pane keeps its own scroll position, and each conversation keeps its own draft and
-history when you switch.
+The pane marked `●` receives your input. Each pane keeps its own scroll position, and each
+conversation keeps its own draft and history when you switch.
+
+### Modes
+
+A mode arranges the screen for one kind of work and leaves out the rest. Switching modes never
+starts, stops or changes a worker: the coding session keeps running in every mode. Press **F3**
+to cycle, type `/mode <name>`, or start with `--mode <name>`.
+
+| Mode | Shows | The composer starts in |
+|---|---|---|
+| `coding` (default) | The coding conversation alone. The World is cut down to one line above the composer: the latest message addressed to you (a tell, or a message naming you), with a count. F6 opens the full World and clears it | Coding |
+| `operate` | A live board beside the World: Attention (requests to answer, held actions, alerts), Agents, Spend and Status. It shows the same data as the dashboard, refreshed every few seconds. Shift+PageUp / Shift+PageDown scroll the board | World, for commands such as `challenge approve <token>` or `agent stop <name>` |
+
+In `coding`, `/layout split` (or F2) still puts the whole World beside Coding when you want it.
+In `operate` the board sits beside the World from 80 columns; narrower, the World is shown alone.
+More modes for other kinds of work are planned.
 
 ### Keys
 
@@ -85,6 +102,8 @@ history when you switch.
 |---|---|
 | F1 | Help |
 | F2 | Cycle layouts: auto, focus, split (`/layout auto\|focus\|split`) |
+| F3 | Cycle modes (`/mode coding\|operate`) |
+| Shift+PageUp / Shift+PageDown | Scroll a mode's board |
 | F6 | Switch the composer between Coding and World |
 | F7 | Open pending requests |
 | F8 | Focus the published panel. Tab / Shift+Tab move between fields, Space toggles, Enter reviews |
@@ -131,7 +150,7 @@ Some dashboard views have no pane yet. You can still reach most of their data as
 | Participant Streams | Native agents through `/agents` and `/use`; other participants' messages in World |
 | Memory workspace, dreams | `/memory`, `/world memory dream log` |
 | Traces, logs, activity feed | `/world trace …`, `/world feed list …` |
-| Ops, health, spend | `/live status`, `/live readiness`, `/live alerts`, `/cost` |
+| Ops, health, spend | `operate` mode, or `/live status`, `/live readiness`, `/live alerts`, `/cost` |
 | Canvas, media, Admin settings | Browser dashboard only |
 
 `marina connect` is the world REPL. It uses the scrollback screen and has no fullscreen mode.
