@@ -33,13 +33,17 @@ OpenAI-compatible server ([one model](single-model.md) explains what changes).
 `MARINA_DEFAULT_MODEL` when set, else the first configured provider's default in the order
 Anthropic, OpenAI, Google, OpenRouter, Together, Nebius, Groq, Hugging Face (override one with
 `MARINA_DEFAULT_<PROVIDER>_MODEL`, e.g. `MARINA_DEFAULT_ANTHROPIC_MODEL`), else a pinned local
-model. The welcome card names it. To change it:
+model. The welcome card names it. To change it for this launch:
 
 ```bash
-marina --model openrouter/<model-id>        # for this launch
-/model anthropic/claude-sonnet-5            # inside the session
-/fast                                       # inside the session: the cheapest model your keys reach
-marina --agent claude                       # or run Claude Code, Codex or pi with their own login
+marina --model openrouter/<model-id>
+```
+
+Inside the session, `/model anthropic/claude-sonnet-5` switches the model and `/fast` picks the
+cheapest model your keys reach. Or run Claude Code, Codex or pi with their own login:
+
+```bash
+marina --agent claude
 ```
 
 Residents, crews and judges choose their models by tier, below in
@@ -192,7 +196,7 @@ Work that names no model runs on one of two **model tiers**
 
 One line moves a tier; one entry moves a single role:
 
-```bash
+```dotenv
 MARINA_MODEL_TIER_CHEAP=openrouter/deepseek/deepseek-v4.1-flash-1017   # every resident and crew
 MARINA_MODEL_TIER_STRONG=openrouter/anthropic/claude-opus-5.5     # every judge and the Arbiter
 MARINA_AGENT_MODELS=role:crew=anthropic/claude-sonnet-5-5,Host=openai/gpt-6.1-sol
@@ -263,8 +267,15 @@ closed otherwise.
 
 ### Connect Discord or Telegram
 
+For Discord:
+
 ```bash
 DISCORD_TOKEN=your-discord-bot-token bun run start
+```
+
+For Telegram:
+
+```bash
 TELEGRAM_TOKEN=your-telegram-bot-token bun run start
 ```
 
@@ -339,7 +350,7 @@ A `tabh2o` connector row is seeded on every world boot so `connect list` always 
 
 ## Production Example
 
-```bash
+```dotenv
 # .env
 WS_PORT=8080
 TELNET_PORT=0          # telnet off (plaintext/unauthenticated) — recommended in production

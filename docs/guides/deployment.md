@@ -62,7 +62,12 @@ Put a single durable volume at `/app/data` and your entire world persists across
 The repo ships a multi-stage `Dockerfile` and a `docker-compose.yml`. From a clean checkout:
 
 ```bash
-cp .env.example .env        # uncomment keys + secrets (see Security below)
+cp .env.example .env
+```
+
+Uncomment the keys and secrets you need in `.env` (see Security below), then build and start:
+
+```bash
 docker compose up -d --build
 docker compose logs -f
 ```
@@ -100,7 +105,7 @@ is reachable from that machine only. A reverse proxy or load balancer on **anoth
 to this host's routable address, not its loopback — so with the default it cannot connect at all and
 every health check fails. Set the host interface to publish on:
 
-```bash
+```dotenv
 # in .env — 0.0.0.0 for every interface, or pin a specific host IP
 MARINA_BIND_IP=0.0.0.0
 ```
@@ -132,17 +137,18 @@ docker run -d --name marina \
   --env-file .env \
   -e MARINA_PUBLISHED_HOST=127.0.0.1 \
   marina
-# The 127.0.0.1: publish prefix keeps the instance host-local; MARINA_PUBLISHED_HOST
-# tells Marina so (the container-internal bind is 0.0.0.0 so the mapping works at
-# all). Keep the two in step. Widening to -p 3300:3300 exposes passwordless login
-# to the network: enable MARINA_AUTH=better-auth first.
 ```
+
+The `127.0.0.1:` publish prefix keeps the instance host-local; `MARINA_PUBLISHED_HOST` tells
+Marina so (the container-internal bind is `0.0.0.0` so the mapping works at all). Keep the two in
+step. Widening to `-p 3300:3300` exposes passwordless login to the network: enable
+`MARINA_AUTH=better-auth` first.
 
 ## Configuration essentials
 
 All variables are optional with sane defaults. [`.env.example`](https://github.com/h2oai/Marina/blob/main/.env.example) is a short starter; the complete annotated catalog is [`config/environment.reference`](https://github.com/h2oai/Marina/blob/main/config/environment.reference) (rendered as the [environment reference](../reference/environment.md)). The load-bearing ones for a deployment:
 
-```bash
+```dotenv
 MARINA_WORLD=default          # which world to load
 DB_PATH=/app/data/marina.db   # keep on the durable volume
 ASSETS_DIR=/app/data/assets     # ditto
@@ -203,10 +209,10 @@ Caddy proxies WebSockets transparently. The equivalent nginx `location /` needs 
 
 ## Persistence & backups
 
-The world database, optional auth database, assets, workspaces and configuration form the recoverable instance. A database-only online snapshot is useful independently:
+The world database, optional auth database, assets, workspaces and configuration form the recoverable instance. A database-only online snapshot is useful independently. Take a consistent, WAL-safe and verified
+database snapshot:
 
 ```bash
-# Consistent, WAL-safe and verified database snapshot
 docker compose exec marina ./scripts/backup.sh /app/data/marina.db /app/data/backups
 ```
 

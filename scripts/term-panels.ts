@@ -186,6 +186,304 @@ export const PANELS: Panel[] = [
     },
   },
   {
+    name: "streams",
+    aliases: ["participants"],
+    describe: "participant sessions (Claude, Codex, pi …): who is asking, failing or running",
+    needs: ["streams"],
+    render: (c) => {
+      const t = c.theme;
+      const g = glyphsFor(t);
+      const streams = c.snapshot.streams;
+      if (c.snapshot.denied?.streams)
+        return card(t, "Streams", [t.fg("faint")("streams need a signed-in world account")]);
+      if (!streams) return card(t, "Streams", waiting(c, "participant sessions"));
+      if (!streams.items.length)
+        return card(t, "Streams", [
+          t.fg("faint")("no participant sessions — /spawn claude|codex|pi starts one"),
+        ]);
+      // Needs-you first: asking, then failing, then running; idle and gone last.
+      const rank = (r: (typeof streams.items)[number]) =>
+        r.asking
+          ? 0
+          : r.status === "failed" || r.error || r.deliveryError
+            ? 1
+            : r.status === "running"
+              ? 2
+              : r.status === "left" || r.status === "stopped"
+                ? 4
+                : 3;
+      const rows = [...streams.items].sort(
+        (a, b) => rank(a) - rank(b) || b.lastSeenAt - a.lastSeenAt,
+      );
+      const body = columns(
+        rows.map((r) => {
+          const tone: Token = r.asking
+            ? "warning"
+            : rank(r) === 1
+              ? "error"
+              : r.status === "running"
+                ? "success"
+                : "faint";
+          const state = r.asking
+            ? "asking you"
+            : r.deliveryError && !r.error
+              ? "delivery failed"
+              : r.status;
+          return [
+            `${t.fg(tone)(r.asking ? g.approval : g.agent)} ${t.identity(r.label)(clean(t, r.label))}`,
+            t.fg("muted")(clean(t, r.adapter || r.kind || "—")),
+            t.fg("code")(clean(t, r.model || "—")),
+            t.fg(tone)(clean(t, state)),
+            r.error
+              ? t.fg("error")(clean(t, r.error))
+              : t.fg("muted")(r.owned ? "yours" : "shared"),
+          ];
+        }),
+      );
+      const asking = rows.filter((r) => r.asking).length;
+      return card(t, "Streams", body, `${streams.total}${asking ? ` · ${asking} asking` : ""}`);
+    },
+  },
+  {
+    name: "tasks",
+    aliases: ["work"],
+    describe: "the shared task board: open, claimed and waiting for review",
+    needs: ["tasks"],
+    render: (c) => {
+      const t = c.theme;
+      const tasks = c.snapshot.tasks;
+      if (!tasks) return card(t, "Tasks", waiting(c, "the task board"));
+      const live = tasks.items.filter((r) => r.status === "open" || r.status === "claimed");
+      if (!live.length)
+        return card(t, "Tasks", [t.fg("faint")("no open tasks — task create <title> posts one")]);
+      // Waiting for review first: an open task with submissions is the creator's move.
+      const rank = (r: (typeof live)[number]) => (r.submitted ? 0 : r.claimed ? 1 : 2);
+      const rows = [...live].sort(
+        (a, b) => rank(a) - rank(b) || b.priority - a.priority || b.id - a.id,
+      );
+      const body = columns(
+        rows.map((r) => {
+          const state = r.submitted
+            ? `${r.submitted} to review`
+            : r.claimed
+              ? `${r.claimed} working`
+              : "open";
+          const tone: Token = r.submitted ? "warning" : r.claimed ? "success" : "muted";
+          return [
+            t.fg("faint")(`#${r.id}`),
+            clean(t, r.title),
+            t.fg(tone)(state),
+            t.fg("muted")(clean(t, r.creator)),
+          ];
+        }),
+      );
+      const review = live.filter((r) => r.submitted).length;
+      return card(t, "Tasks", body, `${live.length} open${review ? ` · ${review} to review` : ""}`);
+    },
+  },
+  {
+    name: "dreams",
+    describe: "the dream pass: proposals waiting for you, then what recent dreams did",
+    needs: ["dreams"],
+    render: (c) => {
+      const t = c.theme;
+      const d = c.snapshot.dreams;
+      if (!d) return card(t, "Dreams", waiting(c, "dream records"));
+      const right = `dreaming ${d.mode || "?"}`;
+      if (!d.items.length)
+        return card(
+          t,
+          "Dreams",
+          [t.fg("faint")("no dreams yet — memory dream why says what each gate is waiting on")],
+          right,
+        );
+      // Waiting for you first: pending proposals take `memory dream adopt|dismiss`.
+      const rows = [...d.items].sort(
+        (a, b) => Number(b.pending > 0) - Number(a.pending > 0) || b.createdAt - a.createdAt,
+      );
+      const body = columns(
+        rows.map((r) => {
+          const tone: Token = r.pending
+            ? "warning"
+            : r.state === "applied"
+              ? "success"
+              : r.state === "rolled_back"
+                ? "faint"
+                : "muted";
+          return [
+            t.fg("faint")(`#${r.id}`),
+            t.identity(r.entity)(clean(t, r.pool ? `pool:${r.entity}` : r.entity)),
+            t.fg(tone)(r.pending ? `${r.pending} to adopt` : r.state.replace("_", " ")),
+            t.fg("muted")(`${r.applied} applied · ${r.rejected} rejected`),
+            t.fg("faint")(fmtDuration(Date.now() - r.createdAt)),
+          ];
+        }),
+      );
+      const pending = rows.filter((r) => r.pending).length;
+      const lines = [
+        ...body,
+        ...(pending
+          ? [t.fg("muted")("memory dream proposals · memory dream adopt|dismiss <id> [n]")]
+          : []),
+        ...(d.guarded.length
+          ? [t.fg("warning")(`guard tripped: ${d.guarded.map((n) => clean(t, n)).join(", ")}`)]
+          : []),
+      ];
+      return card(t, "Dreams", lines, pending ? `${pending} waiting · ${right}` : right);
+    },
+  },
+  {
+    name: "memory",
+    aliases: ["mem"],
+    describe: "memory health: contradictions, stale and duplicate records, provenance, open jobs",
+    needs: ["memory"],
+    render: (c) => {
+      const t = c.theme;
+      const m = c.snapshot.memory;
+      if (!m) return card(t, "Memory", waiting(c, "memory health"));
+      const of = (x: { n: number; of: number }, bad: boolean) => {
+        const tone: Token = !x.of ? "faint" : bad && x.n ? "warning" : "muted";
+        return t.fg(tone)(x.of ? `${x.n} of ${x.of}` : "—");
+      };
+      const body = kv(t, [
+        [
+          "contradictions",
+          `${of(m.unresolved, true)}${m.unresolved.n ? t.fg("muted")("  · note conflicts") : ""}`,
+        ],
+        ["stale", of(m.stale, true)],
+        ["duplicates", of(m.duplicates, true)],
+        ["with sources", of(m.provenance, false)],
+        [
+          "memory jobs",
+          m.openJobs ? t.fg("warning")(`${m.openJobs} open`) : t.fg("muted")("none open"),
+        ],
+        ["resolutions", t.fg("muted")(String(m.resolutions))],
+      ]);
+      return card(
+        t,
+        "Memory",
+        body,
+        m.scope === "own" ? "yours" : m.scope === "all" ? "whole world" : m.scope,
+      );
+    },
+  },
+  {
+    name: "traces",
+    describe: "recent execution traces: failed runs and failed checks first",
+    needs: ["traces"],
+    render: (c) => {
+      const t = c.theme;
+      if (c.snapshot.denied?.traces)
+        return card(t, "Traces", [
+          t.fg("faint")(
+            "traces need operator read — trace find status=failed still searches yours",
+          ),
+        ]);
+      const traces = c.snapshot.traces;
+      if (!traces) return card(t, "Traces", waiting(c, "execution traces"));
+      if (!traces.length)
+        return card(t, "Traces", [
+          t.fg("faint")("no traces yet — they appear as models are called"),
+        ]);
+      const bad = (r: (typeof traces)[number]) =>
+        r.status === "failed" || r.failedChecks.length > 0;
+      const rows = [...traces].sort(
+        (a, b) => Number(bad(b)) - Number(bad(a)) || b.startedAt - a.startedAt,
+      );
+      const body = columns(
+        rows.map((r) => {
+          const tone: Token = bad(r) ? "error" : r.status === "running" ? "warning" : "success";
+          return [
+            t.fg("faint")(clean(t, r.id)),
+            t.fg(tone)(r.status),
+            t.fg("code")(clean(t, r.model || "—")),
+            t.fg("muted")(r.durationMs === null ? "…" : `${(r.durationMs / 1000).toFixed(1)}s`),
+            t.fg("muted")(`${r.spans} spans`),
+            r.failedChecks.length
+              ? t.fg("error")(clean(t, r.failedChecks.join(", ")))
+              : t.fg("faint")(fmtDuration(Date.now() - r.startedAt)),
+          ];
+        }),
+      );
+      const failed = rows.filter(bad).length;
+      return card(
+        t,
+        "Traces",
+        [...body, t.fg("muted")("trace show <id> · trace find status=failed")],
+        failed ? `${failed} failed of ${rows.length}` : `${rows.length}`,
+      );
+    },
+  },
+  {
+    name: "feed",
+    aliases: ["activity"],
+    describe: "the activity feed: what happened in the world, newest first",
+    needs: ["feed"],
+    render: (c) => {
+      const t = c.theme;
+      const feed = c.snapshot.feed;
+      if (!feed) return card(t, "Feed", waiting(c, "the activity feed"));
+      if (!feed.length) return card(t, "Feed", [t.fg("faint")("nothing has happened yet")]);
+      const body = columns(
+        [...feed]
+          .sort((a, b) => b.at - a.at)
+          .map((r) => [
+            t.fg("faint")(fmtDuration(Date.now() - r.at)),
+            t.fg("muted")(clean(t, r.kind)),
+            r.entity ? t.identity(r.entity)(clean(t, r.entity)) : t.fg("faint")("—"),
+            clean(t, r.summary),
+          ]),
+      );
+      return card(t, "Feed", [...body, t.fg("muted")("feed list kind:<k> entity:<name> since:2h")]);
+    },
+  },
+  {
+    name: "forecasts",
+    aliases: ["predictions", "inquiries"],
+    describe: "your newest predictions and research: running first, then answers and scores",
+    needs: ["forecasts"],
+    render: (c) => {
+      const t = c.theme;
+      if (c.snapshot.denied?.forecasts)
+        return card(t, "Forecasts", [t.fg("faint")("predictions need a signed-in world account")]);
+      const f = c.snapshot.forecasts;
+      if (!f) return card(t, "Forecasts", waiting(c, "your predictions"));
+      if (!f.items.length)
+        return card(t, "Forecasts", [
+          t.fg("faint")("no predictions yet — inquiry predict -- <question> asks one"),
+        ]);
+      const active = (r: (typeof f.items)[number]) => r.state === "running" || r.state === "queued";
+      const rows = [...f.items].sort(
+        (a, b) => Number(active(b)) - Number(active(a)) || b.updatedAt - a.updatedAt,
+      );
+      const lines = rows.flatMap((r) => {
+        const tone: Token = active(r)
+          ? "warning"
+          : r.state === "failed" || r.state === "interrupted"
+            ? "error"
+            : r.state === "completed"
+              ? "success"
+              : "faint";
+        const outcome = r.resolved
+          ? t.fg("accent")(`resolved${r.loss === null ? "" : ` · loss ${r.loss.toFixed(3)}`}`)
+          : r.answer
+            ? clean(t, r.answer)
+            : t.fg(tone)(r.state || "unknown");
+        return [
+          `${t.fg(tone)(r.kind === "research" ? "◇" : "◆")} ${clean(t, r.question)}`,
+          `   ${outcome}  ${t.fg("faint")(`${r.id} · ${fmtDuration(Date.now() - r.updatedAt)}`)}`,
+        ];
+      });
+      const running = rows.filter(active).length;
+      return card(
+        t,
+        "Forecasts",
+        [...lines, t.fg("muted")("inquiry show <case-id> · inquiry why <case-id>")],
+        `${f.total}${running ? ` · ${running} running` : ""}`,
+      );
+    },
+  },
+  {
     name: "spend",
     aliases: ["cost", "$"],
     describe: "upstream spend today by scope, against the daily cap",
