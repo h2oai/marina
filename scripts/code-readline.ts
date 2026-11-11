@@ -9,7 +9,7 @@ import { terminalCompletionItems } from "./code-completion";
 import { colorizeDiff, diffColorEnabled } from "./code-diff";
 import type { CodeEditor, CodeEditorOptions, CodeEditorState } from "./code-editor";
 import { terminalText } from "./code-presentation";
-import { styleCodeEntry, styleLocation, themeFor } from "./code-style";
+import { styleActivity, styleCodeEntry, styleLocation, themeFor } from "./code-style";
 import type { EntryFormat, TerminalView } from "./code-views";
 import { footerLine, frameCompletion, InputFrame, ruleLine } from "./term-frame";
 import { glyphsFor } from "./term-render";
@@ -256,7 +256,7 @@ export class ReadlineCodeEditor implements CodeEditor {
     // Colour is added after sanitising, only from structure: the diff hint
     // and the entry's label, never from bytes in the text.
     this.options.output.write(
-      `${format === "diff" ? colorizeDiff(safe, diffColorEnabled(this.options.output), theme) : styleCodeEntry(safe, theme)}\n`,
+      `${format === "diff" ? colorizeDiff(safe, diffColorEnabled(this.options.output), theme) : format === "activity" ? styleActivity(safe, theme) : styleCodeEntry(safe, theme)}\n`,
     );
     this.redraw(true);
   }

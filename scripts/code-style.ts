@@ -37,6 +37,9 @@ export function labelStyle(label: string, theme: Theme): LabelStyle {
   const g = glyphsFor(theme);
   const l = label.toLowerCase();
   if (l === "error") return { glyph: g.error, tone: "error" };
+  if (l === "checks passed") return { glyph: g.ok, tone: "success" };
+  if (l === "checks failed" || l === "step failed") return { glyph: g.warn, tone: "warning" };
+  if (l === "coder") return { glyph: g.agent, tone: "accent2" };
   if (l.startsWith("approval")) return { glyph: g.approval, tone: "warning" };
   if (/needs? attention|blocked|stopped|paused|unavailable|unknown/.test(l))
     return { glyph: g.warn, tone: "warning" };
@@ -116,6 +119,25 @@ export function styleCodeEntry(
     inline ? `${head}  ${first}` : head,
     ...(inline ? more : body).map((line) => (line ? `  ${line}` : line)),
   ].join("\n");
+}
+
+/**
+ * One agent action (`formatCodePerception`'s activity entries): `● Edit paginate.js`, and a
+ * change under it behind the `⎿` gutter, removed lines red, added green. Structure only:
+ * the first line is the action, every later line is the change, as the stream sent them.
+ */
+export function styleActivity(text: string, theme: Theme): string {
+  const [label = "", ...body] = text.split("\n");
+  if (theme.level === 0)
+    return [`* ${label}`, ...body.map((l, i) => `${i === 0 ? "  L " : "    "}${l}`)].join("\n");
+  const g = glyphsFor(theme);
+  const head = `${theme.fg("accent")(g.voice)} ${theme.bold(label)}`;
+  const gutter = theme.unicode ? "⎿" : "L";
+  const lines = body.map((line, i) => {
+    const tone: Token = line.startsWith("+") ? "success" : line.startsWith("-") ? "error" : "muted";
+    return `  ${theme.fg("faint")(i === 0 ? gutter : " ")} ${theme.fg(tone)(line)}`;
+  });
+  return [head, ...lines].join("\n");
 }
 
 /** Where input goes (the input area's rule label): folder, agent and status in their tones. */

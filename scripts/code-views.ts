@@ -13,7 +13,7 @@ export type TranscriptView = ConversationView | "all";
  * `styled`: text this terminal rendered itself (a live panel); its SGR is
  * re-validated on print and everything else is still removed.
  */
-export type EntryFormat = "diff" | "styled";
+export type EntryFormat = "diff" | "styled" | "activity";
 
 export const TERMINAL_HISTORY_LIMITS = {
   entries: 400,
@@ -42,6 +42,9 @@ export function perceptionView(p: Perception): TranscriptView {
       "disconnect",
       "move",
       "leave",
+      // Task-board notices (claims, submissions) are the world's record; the coding
+      // view reports the same run from its own events.
+      "task",
     ].includes(p.tag ?? "")
   )
     return "world";

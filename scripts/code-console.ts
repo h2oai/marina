@@ -7,13 +7,18 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getErrorMessage } from "../src/engine/errors";
 import type { CommandOptions, MarinaAgent, Perception } from "../src/sdk/client";
-import { colorizeDiff, diffColorEnabled } from "./code-diff";
+import { colorizeDiff, type DiffPayload, diffColorEnabled, diffPayloadFor } from "./code-diff";
 import { CodeDiscovery } from "./code-discovery";
 import { type CodingHarness, codingAgent, type HarnessStore } from "./code-harness";
 import { fastestModelFor, inferCodeDefaultModel } from "./code-model";
 import { installedCodingAdapters, NativeTerminal, type TerminalAgent } from "./code-native";
-import { codePerceptionFormat, codingSessionPhase, workerActivityLabel } from "./code-presentation";
-import { styleCodeEntry, themeFor } from "./code-style";
+import {
+  codePerceptionFormat,
+  codingSessionPhase,
+  renderRunResult,
+  workerActivityLabel,
+} from "./code-presentation";
+import { styleActivity, styleCodeEntry, themeFor } from "./code-style";
 import {
   CodeTerminal,
   type CodeTerminalOptions,
@@ -76,6 +81,17 @@ export class CodeConsole {
   private workerObservedAt = -Infinity;
   private runId?: string;
   private runSettled = false;
+  /** The end-of-run result block, once per attempt (interactive only). */
+  private resultShown = new Set<string>();
+  private runStartedAt?: number;
+  /** Each agent's reported spend when the run began (ops snapshot), for the run's own cost. */
+  private runCostStart = new Map<string, number>();
+  /** When the coder's stream last spoke: the result waits until its final words are in. */
+  private lastStreamAt = 0;
+  /** When the coder last finished a message (its words, not a tool line). */
+  private lastProseAt = 0;
+  /** While the result block fetches the diff, that reply is not echoed on its own. */
+  private quietReplies = false;
   private supersededRuns = new Set<string>();
   private interrupted = false;
   private lastInterruptAt = 0;
@@ -161,12 +177,19 @@ export class CodeConsole {
   }
   private activity() {
     if (this.runSettled || this.marinaPhase === "interrupt requested") return this.marinaPhase;
-    return (
+    const base =
       this.workerActivity ??
       this.verificationReadiness ??
-      `${this.marinaPhase}${this.checksRunning ? " · checks running" : ""}`
-    );
+      `${this.marinaPhase}${this.checksRunning ? " · checks running" : ""}`;
+    if (!this.marinaBusy || this.runStartedAt === undefined) return base;
+    // Alive and moving: how long it has been working and what it did last.
+    const s = Math.max(0, Math.floor((Date.now() - this.runStartedAt) / 1000));
+    const clock = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    return `${base} · ${clock}${this.lastStep ? ` · ${this.lastStep}` : ""}`;
   }
+  /** The coder's latest visible step ("Edit paginate.js"), for the status line. */
+  private lastStep?: string;
+  private ticker?: ReturnType<typeof setInterval>;
   private updatePrompt() {
     const selected = this.selected ? this.native?.agents.get(this.selected) : undefined;
     this.terminal?.setStatus(this.safeText(selected ? selected.state.status : this.activity()));
@@ -255,7 +278,7 @@ export class CodeConsole {
       const stream = out as { isTTY?: boolean; columns?: number };
       const theme = themeFor(stream.isTTY ? stream : undefined);
       out.write(
-        `${format === "diff" ? colorizeDiff(text, diffColorEnabled(stream), theme) : format === "styled" ? sanitizeServerText(text, theme) : styleCodeEntry(text, theme)}\n`,
+        `${format === "diff" ? colorizeDiff(text, diffColorEnabled(stream), theme) : format === "styled" ? sanitizeServerText(text, theme) : format === "activity" ? styleActivity(text, theme) : styleCodeEntry(text, theme)}\n`,
       );
     }
   }
@@ -268,6 +291,24 @@ export class CodeConsole {
   private settingUp = false;
 
   receive(p: Perception) {
+    const stream = p.data?.code as
+      | {
+          event?: string;
+          metadata?: { kind?: string; activity?: { label?: unknown; quiet?: unknown } };
+        }
+      | undefined;
+    if (stream?.event === "agent_output") {
+      this.lastStreamAt = Date.now();
+      if (stream.metadata?.kind === "prose") this.lastProseAt = Date.now();
+      const step = stream.metadata?.kind === "tool" ? stream.metadata.activity : undefined;
+      if (step && step.quiet !== true && typeof step.label === "string")
+        this.lastStep = terminalText(step.label).slice(0, 60);
+    }
+    // The result block's own `code diff` reply is part of that block, not a separate entry.
+    if (this.quietReplies && p.command_request_id) {
+      this.observe(p);
+      return;
+    }
     this.observe(p);
     this.discovery.observe(p, this.sessionId);
     const urgent = p.kind === "error" || p.kind === "auth_error" || !!p.data?.execApproval;
@@ -280,6 +321,58 @@ export class CodeConsole {
         p.kind === "error" || p.kind === "auth_error" || !!p.data?.execApproval,
         codePerceptionFormat(p),
       );
+  }
+  /**
+   * The end of a run, once: wait for the coder's last words, then the session diff,
+   * the checks, the time and cost, and the exact next commands (`renderRunResult`).
+   */
+  private async showResult(runId: string, meta: Record<string, unknown> | undefined) {
+    const m = meta ?? {};
+    // The coder's closing words usually arrive just after it submits: wait for them
+    // (and a short quiet after), so the result is the last thing on the page.
+    const endedAt = Date.now();
+    const giveUp = endedAt + 12_000;
+    const sleep = () => new Promise((resolve) => setTimeout(resolve, 200));
+    while (Date.now() < giveUp && this.lastProseAt < endedAt - 3_000) await sleep();
+    while (Date.now() < giveUp && Date.now() - this.lastStreamAt < 800) await sleep();
+    let diff: DiffPayload | undefined;
+    this.quietReplies = true;
+    try {
+      const replies = await this.command("code diff");
+      diff = replies
+        .map((p) => diffPayloadFor(p.data?.code as Record<string, unknown> | undefined))
+        .find((d): d is DiffPayload => d !== undefined);
+    } catch {
+      // No diff to show: the block still says how the run ended.
+    } finally {
+      this.quietReplies = false;
+    }
+    if (runId !== this.runId) return; // a newer run started meanwhile
+    const agent = typeof m.agent === "string" ? m.agent : undefined;
+    let costUsd: number | undefined;
+    if (agent && this.liveStatus) {
+      await this.liveStatus.refresh(true, ["ops"]).catch(() => undefined);
+      const now = this.liveStatus.snapshot.ops?.agents.find((a) => a.name === agent);
+      if (now) costUsd = now.cost.totalUsd - (this.runCostStart.get(agent) ?? 0);
+    }
+    const text = (v: unknown) => (typeof v === "string" ? v : undefined);
+    this.write(
+      renderRunResult({
+        outcome: text(m.outcome),
+        reason: text(m.reason),
+        detail: text(m.detail),
+        verification: text(m.verification),
+        verificationReason: text(m.verificationReason),
+        budgetForced: !!m.budgetForced,
+        runId,
+        ...(this.runStartedAt !== undefined ? { elapsedMs: Date.now() - this.runStartedAt } : {}),
+        ...(costUsd !== undefined ? { costUsd } : {}),
+        ...(diff ? { diff } : {}),
+      }),
+      "coding",
+      false,
+      "diff",
+    );
   }
   ask(text: string, signal?: AbortSignal) {
     return this.terminal?.ask(this.safeText(text), signal) ?? Promise.resolve("");
@@ -337,6 +430,11 @@ export class CodeConsole {
       if (this.runId) this.supersededRuns.add(this.runId);
       this.runId = runId;
       this.runSettled = false;
+      this.runStartedAt = Date.now();
+      this.lastStep = undefined;
+      this.runCostStart = new Map(
+        (this.liveStatus?.snapshot.ops?.agents ?? []).map((a) => [a.name, a.cost.totalUsd]),
+      );
       this.verificationReadiness = undefined;
       this.workerActivity = undefined;
       this.workerObservedAt = -Infinity;
@@ -417,6 +515,14 @@ export class CodeConsole {
               ? "blocked"
               : "stopped";
         this.updatePrompt();
+        // One block per submission: a run the coder submits again gets the new outcome.
+        const resultKey = `${this.runId}:${String((code.metadata as { summaryId?: unknown })?.summaryId ?? "")}`;
+        if (this.interactive && this.runId && !this.resultShown.has(resultKey)) {
+          this.resultShown.add(resultKey);
+          void this.showResult(this.runId, code.metadata as Record<string, unknown>).catch(() => {
+            // The result block is a summary of what already printed; a failed fetch loses nothing.
+          });
+        }
         return;
       }
     }
@@ -511,6 +617,13 @@ export class CodeConsole {
       });
     }
     if (interactive && this.terminal) this.startLiveStatus();
+    // The working clock ticks once a second while a run is busy.
+    if (interactive && this.terminal) {
+      this.ticker = setInterval(() => {
+        if (this.marinaBusy && !this.runSettled) this.updatePrompt();
+      }, 1_000);
+      this.ticker.unref?.();
+    }
     if (interactive && !this.options.welcomed) this.write("Type a task in plain words, or /help.");
     if (this.options.connected) {
       this.terminal?.setTarget(`marina:${this.sessionId}`);
@@ -521,7 +634,14 @@ export class CodeConsole {
     }
     this.settingUp = true;
     try {
-      this.commands = this.selectHarness(this.harness, { quiet: true });
+      // A first login subscribes a person to periodic world briefs; a coding
+      // session is not the place for them (F6 and /world still show the world).
+      // Inside the setup promise that typed input waits on, so nothing typed early
+      // runs (and is muted) while setup is still in progress.
+      // `/` sends it to the world: in Code Mode a bare line is a task for the coder.
+      this.commands = this.command("/brief unwatch")
+        .catch(() => [])
+        .then(() => this.selectHarness(this.harness, { quiet: true }));
       await this.commands;
     } finally {
       this.settingUp = false;
@@ -967,6 +1087,7 @@ export class CodeConsole {
   async close(code: number) {
     if (this.closing) return;
     this.closing = true;
+    if (this.ticker) clearInterval(this.ticker);
     this.liveStatus?.stop();
     this.panels?.dispose();
     this.terminal?.close();
