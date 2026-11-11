@@ -22,15 +22,23 @@ Open **http://localhost:3300**. The root redirects to the dashboard.
 
 #### Use `marina` from any folder
 
+Link `marina` onto your PATH, then connect a model (a provider key, or a local model):
+
 ```bash
-bun run setup:cli     # links marina into ~/.bun/bin or ~/.local/bin, whichever is on PATH
-marina init           # connect a model (a provider key, or a local model); writes this checkout's .env
-cd ~/your-project
-marina                # code in this folder
+bun run setup:cli
+marina init
 ```
 
-If neither folder is on your PATH, it links into `~/.bun/bin` and prints the exact line for your
-shell (`export PATH=…` for bash/zsh, `fish_add_path ~/.bun/bin` for fish).
+`setup:cli` links `marina` into `~/.bun/bin` or `~/.local/bin`, whichever is on your PATH. If
+neither is, it links into `~/.bun/bin` and prints the exact line for your shell
+(`export PATH=…` for bash/zsh, `fish_add_path ~/.bun/bin` for fish). `marina init` asks its
+questions in the terminal, so it comes last in the block. Once it finishes, code in any folder:
+
+```bash
+cd ~/your-project
+marina
+```
+
 `marina init` writes the checkout's `.env` when run inside the checkout, as here, and
 `~/.marina/.env` when run anywhere else (or `--directory <dir>` for one instance).
 `marina` reads provider keys from `~/.marina/.env` and from this checkout's `.env`, in every
@@ -121,11 +129,15 @@ Marina supports configured local OpenAI-compatible runtimes such as llama.cpp an
 runtime must already be installed, running, and reachable; Marina does not download a model
 silently, and it does not probe for one: set the runtime's base URL (or key) to opt it in.
 
-```bash
-# Ollama (keyless); the first installed model is used unless MARINA_DEFAULT_OLLAMA_MODEL is set
-OLLAMA_BASE_URL=http://localhost:11434/v1 bun run start
+Ollama is keyless; the first installed model is used unless `MARINA_DEFAULT_OLLAMA_MODEL` is set:
 
-# llama.cpp llama-server; LLAMA_API_KEY only when the server runs with --api-key
+```bash
+OLLAMA_BASE_URL=http://localhost:11434/v1 bun run start
+```
+
+llama.cpp `llama-server` (add `LLAMA_API_KEY` only when the server runs with `--api-key`):
+
+```bash
 LLAMA_BASE_URL=http://localhost:8080/v1 MARINA_DEFAULT_LLAMA_MODEL=local-model bun run start
 ```
 
@@ -145,11 +157,16 @@ The default world seeds Host, Builder, Critic, and Chronicler configurations. On
 (loopback bind, no external sign-in) they start on boot as soon as a provider key or local runtime
 is configured. Spend is capped at $50 per UTC day by default; change it with
 `MARINA_DAILY_SPEND_CAP_USD=<usd>` (`0` removes the cap). To keep them off, or to start them on a
-shared or public deployment:
+shared or public deployment, start the server with one of these. Never start saved agents on boot:
 
 ```bash
-AGENT_AUTORESPAWN=false bun run start   # never start saved agents on boot
-AGENT_AUTORESPAWN=true bun run start    # always start them (shared/public deployments)
+AGENT_AUTORESPAWN=false bun run start
+```
+
+Always start them (shared and public deployments):
+
+```bash
+AGENT_AUTORESPAWN=true bun run start
 ```
 
 For an existing server, an authorized operator can launch agents from the **Agents** panel. Direct
@@ -250,8 +267,15 @@ agents.
 
 ### Command line
 
+Open an interactive session:
+
 ```bash
 bun run scripts/connect.ts Operator
+```
+
+Or run one command and exit:
+
+```bash
 bun run scripts/connect.ts Operator -c "readiness"
 ```
 
@@ -262,8 +286,10 @@ ports: `WS_PORT`, `WS_PORT+1` (MCP) and `WS_PORT+2` (logs), so space instances a
 A first useful result from the terminal, with any provider key or local model (a single model runs
 `forecast` in a degraded mode; OpenRouter adds web retrieval and analysts from several vendors):
 
+The first line needs no server; the second asks the running one:
+
 ```bash
-bun run forecast "Will the Fed cut rates at its next meeting?"   # no server needed
+bun run forecast "Will the Fed cut rates at its next meeting?"
 bun run scripts/connect.ts Operator -c "forecast Will it rain in Boston tomorrow?"
 ```
 
@@ -276,10 +302,16 @@ from that file — the key itself is never printed:
 
 ```bash
 bun run start
-#   Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:3300/v1 OPENAI_API_KEY="$(cat '/path/to/marina.db.local-api-key')"
+```
 
-export OPENAI_API_KEY="$(cat marina.db.local-api-key)"   # paste the printed line, or read the file
+```text
+  Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:3300/v1 OPENAI_API_KEY="$(cat '/path/to/marina.db.local-api-key')"
+```
 
+In a second terminal, in the checkout, paste the printed line or read the file, then call it:
+
+```bash
+export OPENAI_API_KEY="$(cat marina.db.local-api-key)"
 curl http://localhost:3300/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "Content-Type: application/json" \
