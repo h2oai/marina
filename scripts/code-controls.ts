@@ -17,7 +17,7 @@ export const TERMINAL_CONTROLS = [
   },
   {
     name: "/mode",
-    usage: "/mode coding|operate|coordinate|memory|investigate",
+    usage: "/mode coding|operate|coordinate|memory|investigate|forecast",
     help: "Switch the TUI's use-case mode (F3 cycles); the session keeps running",
   },
   {

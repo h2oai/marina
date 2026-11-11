@@ -438,6 +438,52 @@ export const PANELS: Panel[] = [
     },
   },
   {
+    name: "forecasts",
+    aliases: ["predictions", "inquiries"],
+    describe: "your newest predictions and research: running first, then answers and scores",
+    needs: ["forecasts"],
+    render: (c) => {
+      const t = c.theme;
+      if (c.snapshot.denied?.forecasts)
+        return card(t, "Forecasts", [t.fg("faint")("predictions need a signed-in world account")]);
+      const f = c.snapshot.forecasts;
+      if (!f) return card(t, "Forecasts", waiting(c, "your predictions"));
+      if (!f.items.length)
+        return card(t, "Forecasts", [
+          t.fg("faint")("no predictions yet — inquiry predict -- <question> asks one"),
+        ]);
+      const active = (r: (typeof f.items)[number]) => r.state === "running" || r.state === "queued";
+      const rows = [...f.items].sort(
+        (a, b) => Number(active(b)) - Number(active(a)) || b.updatedAt - a.updatedAt,
+      );
+      const lines = rows.flatMap((r) => {
+        const tone: Token = active(r)
+          ? "warning"
+          : r.state === "failed" || r.state === "interrupted"
+            ? "error"
+            : r.state === "completed"
+              ? "success"
+              : "faint";
+        const outcome = r.resolved
+          ? t.fg("accent")(`resolved${r.loss === null ? "" : ` · loss ${r.loss.toFixed(3)}`}`)
+          : r.answer
+            ? clean(t, r.answer)
+            : t.fg(tone)(r.state || "unknown");
+        return [
+          `${t.fg(tone)(r.kind === "research" ? "◇" : "◆")} ${clean(t, r.question)}`,
+          `   ${outcome}  ${t.fg("faint")(`${r.id} · ${fmtDuration(Date.now() - r.updatedAt)}`)}`,
+        ];
+      });
+      const running = rows.filter(active).length;
+      return card(
+        t,
+        "Forecasts",
+        [...lines, t.fg("muted")("inquiry show <case-id> · inquiry why <case-id>")],
+        `${f.total}${running ? ` · ${running} running` : ""}`,
+      );
+    },
+  },
+  {
     name: "spend",
     aliases: ["cost", "$"],
     describe: "upstream spend today by scope, against the daily cap",

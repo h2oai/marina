@@ -111,10 +111,10 @@ to cycle, type `/mode <name>`, or start with `--mode <name>`.
 | `coordinate` | Who is working on what, beside the World. **Streams** lists participant sessions (Claude, Codex, pi …) with the ones asking you or failing first. **Tasks** lists open and claimed tasks with the ones waiting for your review first. Streams needs a signed-in world account | World, for `tell <name> <message>` and `task approve <id> <claimant>`; `/agents` and `/use` reach native sessions |
 | `memory` | Curating what the world knows. **Dreams** lists recent dreams with the proposals waiting for you first. **Memory** shows counts only: unresolved contradictions, stale and duplicate records, records with sources, open memory jobs. Both are scoped to what you may see | World, for `memory recall <query>`, `memory dream adopt <id>` and `note conflicts` |
 | `investigate` | After the fact. **Traces** lists recent execution traces, with failed runs and failed checks first; it needs operator read, and otherwise says so. **Feed** shows the activity feed, newest first | World, for `trace show <id>`, `trace find status=failed` and `feed list since:2h` |
+| `forecast` | Your newest predictions and research (the dashboard's Predict and Research pages). Running ones come first, then answers and resolved scores, with today's **Spend** below, because every prediction costs model calls. Needs a signed-in world account | World, for `inquiry predict -- <question>`, `inquiry show <case-id>` and `forecast <question>` |
 
 In `coding`, `/layout split` (or F2) still puts the whole World beside Coding when you want it.
 In every mode but `coding` the board sits beside the World from 80 columns; narrower, the World is shown alone.
-More modes for other kinds of work are planned.
 
 ### Keys
 
@@ -122,7 +122,7 @@ More modes for other kinds of work are planned.
 |---|---|
 | F1 | Help |
 | F2 | Cycle layouts: auto, focus, split (`/layout auto\|focus\|split`) |
-| F3 | Cycle modes (`/mode coding\|operate\|coordinate\|memory\|investigate`) |
+| F3 | Cycle modes (`/mode coding\|operate\|coordinate\|memory\|investigate\|forecast`) |
 | Shift+PageUp / Shift+PageDown | Scroll a mode's board |
 | F6 | Switch the composer between Coding and World |
 | F7 | Open pending requests |
@@ -171,6 +171,7 @@ Some dashboard views have no pane yet. You can still reach most of their data as
 | Memory workspace, dreams | `memory` mode, or `/live dreams`, `/live memory`; `/memory`, `/world memory dream log` |
 | Traces, logs, activity feed | `investigate` mode, or `/live traces`, `/live feed`; `/world trace …`, `/world feed list …`. Logs stay in the browser |
 | Ops, health, spend | `operate` mode, or `/live status`, `/live readiness`, `/live alerts`, `/cost` |
+| Predict and Research pages | `forecast` mode, or `/live forecasts`; `marina inquiry tui` is the full-screen case browser |
 | Canvas, media, Admin settings | Browser dashboard only |
 
 `marina connect` is the world REPL. It uses the scrollback screen and has no fullscreen mode.

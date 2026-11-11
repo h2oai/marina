@@ -16,6 +16,8 @@
  *   you and memory health — beside the World, where `memory …` runs.
  * - `investigate`: after the fact — execution traces (failures first) and
  *   the activity feed — beside the World, where `trace …` drills in.
+ * - `forecast`: your predictions and research — running first, then
+ *   answers and resolutions — beside the World, where `inquiry …` asks.
  */
 
 import { isAddressedTo } from "../src/agent/social";
@@ -29,6 +31,7 @@ export const WORKSPACE_MODES = [
   "coordinate",
   "memory",
   "investigate",
+  "forecast",
 ] as const;
 export type WorkspaceMode = (typeof WORKSPACE_MODES)[number];
 
@@ -91,6 +94,15 @@ export const MODES: Record<WorkspaceMode, ModeDef> = {
     board: ["traces", "feed"],
     parts: ["traces", "feed"],
     hint: "World commands go here: trace show <id>, trace find status=failed, trace eval <id>, feed list since:2h. F3 cycles modes.",
+  },
+  forecast: {
+    name: "forecast",
+    label: "Forecast",
+    describe: "your predictions and research, running first, beside the World",
+    composer: "world",
+    board: ["forecasts", "spend"],
+    parts: ["forecasts"],
+    hint: "World commands go here: inquiry predict -- <question>, inquiry show <case-id>, inquiry why <case-id>, forecast <question>. Every prediction costs model calls; Spend is below. F3 cycles modes.",
   },
 };
 
