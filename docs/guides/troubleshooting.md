@@ -36,11 +36,15 @@ and WS_PORT+2 (logs) — try WS_PORT=3303 bun run start, or lsof -i :3300` (the 
 `MCP_PORT` / `TELNET_PORT`). Either stop the other process or move the instance clear of all three
 ports — `WS_PORT=3301` would collide with the default MCP port:
 
-```bash
-# Find what's using the port
-lsof -i :3300
+Find what's using the port:
 
-# Use a different port
+```bash
+lsof -i :3300
+```
+
+Or use a different port:
+
+```bash
 WS_PORT=3400 bun run start
 ```
 
@@ -59,10 +63,16 @@ loadable; you can also check yourself:
 
 ```bash
 ls worlds/*.ts
-# commons  craft  data-investigation  deep-research  default  demos  due-diligence  empty
-# evolve  markets  personal  prediction-lab  red-team  research  showcase
-# (seed.ts and focused-example.ts are shared helpers, not worlds)
 ```
+
+The worlds it lists, by name:
+
+```text
+commons  craft  data-investigation  deep-research  default  demos  due-diligence  empty
+evolve  markets  personal  prediction-lab  red-team  research  showcase
+```
+
+`seed.ts` and `focused-example.ts` are shared helpers, not worlds.
 
 Use the filename without `.ts`:
 
@@ -97,8 +107,9 @@ Check the server is up:
 
 ```bash
 curl http://localhost:3300/health
-# {"status":"ok"}
 ```
+
+A running server answers `{"status":"ok"}`.
 
 ### MCP won't connect in Claude Desktop
 
@@ -304,16 +315,25 @@ bun run typecheck
 
 ### Lint issues
 
+Run the linter, then auto-fix formatting:
+
 ```bash
 bun run lint
-bun run format     # auto-fix formatting
+bun run format
 ```
 
 ### Tests
 
+Run all tests:
+
 ```bash
-bun test                   # all tests
-bun test src/engine        # specific directory
+bun test
+```
+
+Or one directory:
+
+```bash
+bun test src/engine
 ```
 
 ---

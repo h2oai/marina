@@ -33,7 +33,11 @@ the `-shm` file is not needed; never copy `marina.db` alone with `cp` while it i
 
 ```bash
 scripts/backup.sh "$DB_PATH" backups/
-# or, to a named file:
+```
+
+Or, to a named file:
+
+```bash
 bun run memory backup --db "$DB_PATH" --output backups/pre-upgrade.db
 ```
 
@@ -94,10 +98,11 @@ memory-integrity counts. It exits nonzero while migrations are pending (naming t
 ## 5. Verify
 
 - **Schema version.** A fresh verified snapshot reports the version now on disk; it
-  must equal the new binary's latest migration:
+  must equal the new binary's latest migration. The first command's receipt carries
+  `schema_version`:
 
   ```bash
-  bun run memory backup --db "$DB_PATH" --output backups/post-upgrade.db   # receipt: schema_version
+  bun run memory backup --db "$DB_PATH" --output backups/post-upgrade.db
   bun -e 'import { SCHEMA_VERSION } from "./src/persistence/schema"; console.log(SCHEMA_VERSION)'
   ```
 

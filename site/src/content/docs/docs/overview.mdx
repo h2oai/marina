@@ -95,10 +95,21 @@ Nothing was lost when the chat ended, because there was no chat to end.
 ```bash
 git clone https://github.com/h2oai/marina.git
 cd marina && bun install && bun run dashboard:build
-bun run setup:cli    # puts `marina` on your PATH
-marina init          # connect a model: a provider key, or a local one
-cd ~/my-project && marina    # code here; the first screen links this world's dashboard
-marina start                 # or run the server and open http://localhost:3300
+bun run setup:cli
+marina init
+```
+
+`setup:cli` puts `marina` on your PATH and `marina init` connects a model (a provider key, or a
+local one). Then code in a folder; the first screen links this world's dashboard:
+
+```bash
+cd ~/my-project && marina
+```
+
+Or run the server and open http://localhost:3300:
+
+```bash
+marina start
 ```
 
 Type `readiness` any time to see what's working and what to switch on next. The
