@@ -8,15 +8,18 @@
  *
  * - `coding`: the coding conversation alone. The World is reduced to the
  *   messages addressed to you, shown on one line above the composer.
- * - `operate`: a live board (health, attention, agents, spend, readiness)
- *   beside the World conversation, where approvals and world commands go.
+ * - `operate`: a live board (attention, agents, spend, status) beside the
+ *   World conversation, where approvals and world commands go.
+ * - `coordinate`: who is working on what — participant sessions (Streams)
+ *   and the task board — beside the World, where you steer them.
  */
 
 import { isAddressedTo } from "../src/agent/social";
 import type { Perception } from "../src/sdk/client";
 import type { ConversationView } from "./code-views";
+import type { Part } from "./term-status";
 
-export const WORKSPACE_MODES = ["coding", "operate"] as const;
+export const WORKSPACE_MODES = ["coding", "operate", "coordinate"] as const;
 export type WorkspaceMode = (typeof WORKSPACE_MODES)[number];
 
 export interface ModeDef {
@@ -29,6 +32,8 @@ export interface ModeDef {
   board: readonly string[];
   /** The first line the mode prints: what to type here. */
   hint: string;
+  /** On-demand snapshot parts its board reads; polled only while the mode is shown. */
+  parts?: readonly Part[];
 }
 
 export const MODES: Record<WorkspaceMode, ModeDef> = {
@@ -48,6 +53,16 @@ export const MODES: Record<WorkspaceMode, ModeDef> = {
     // What needs a person first; readiness detail stays one `/live readiness` away.
     board: ["alerts", "agents", "spend", "status"],
     hint: "World commands go here: challenge approve <token>, agent stop <name>, readiness. Shift+PageUp/PageDown scroll the board; F3 returns to Coding.",
+  },
+  coordinate: {
+    name: "coordinate",
+    label: "Coordinate",
+    describe: "participant sessions and the task board beside the World",
+    composer: "world",
+    // Who needs you first (asking, failing), then the board's reviews and claims.
+    board: ["streams", "tasks"],
+    parts: ["streams", "tasks"],
+    hint: "World commands go here: tell <name> <message>, task show <id>, task approve <id> <claimant>. /agents and /use reach native sessions. F3 cycles modes.",
   },
 };
 

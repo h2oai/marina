@@ -91,9 +91,10 @@ to cycle, type `/mode <name>`, or start with `--mode <name>`.
 |---|---|---|
 | `coding` (default) | The coding conversation alone. The World is cut down to one line above the composer: the latest message addressed to you (a tell, or a message naming you), with a count. F6 opens the full World and clears it | Coding |
 | `operate` | A live board beside the World: Attention (requests to answer, held actions, alerts), Agents, Spend and Status. It shows the same data as the dashboard, refreshed every few seconds. Shift+PageUp / Shift+PageDown scroll the board | World, for commands such as `challenge approve <token>` or `agent stop <name>` |
+| `coordinate` | Who is working on what, beside the World. **Streams** lists participant sessions (Claude, Codex, pi …) with the ones asking you or failing first. **Tasks** lists open and claimed tasks with the ones waiting for your review first. Streams needs a signed-in world account | World, for `tell <name> <message>` and `task approve <id> <claimant>`; `/agents` and `/use` reach native sessions |
 
 In `coding`, `/layout split` (or F2) still puts the whole World beside Coding when you want it.
-In `operate` the board sits beside the World from 80 columns; narrower, the World is shown alone.
+In `operate` and `coordinate` the board sits beside the World from 80 columns; narrower, the World is shown alone.
 More modes for other kinds of work are planned.
 
 ### Keys
@@ -102,7 +103,7 @@ More modes for other kinds of work are planned.
 |---|---|
 | F1 | Help |
 | F2 | Cycle layouts: auto, focus, split (`/layout auto\|focus\|split`) |
-| F3 | Cycle modes (`/mode coding\|operate`) |
+| F3 | Cycle modes (`/mode coding\|operate\|coordinate`) |
 | Shift+PageUp / Shift+PageDown | Scroll a mode's board |
 | F6 | Switch the composer between Coding and World |
 | F7 | Open pending requests |
@@ -147,7 +148,7 @@ Some dashboard views have no pane yet. You can still reach most of their data as
 
 | Dashboard view | In the terminal |
 |---|---|
-| Participant Streams | Native agents through `/agents` and `/use`; other participants' messages in World |
+| Participant Streams | `coordinate` mode, or `/live streams`; `/agents` and `/use` for native agents |
 | Memory workspace, dreams | `/memory`, `/world memory dream log` |
 | Traces, logs, activity feed | `/world trace …`, `/world feed list …` |
 | Ops, health, spend | `operate` mode, or `/live status`, `/live readiness`, `/live alerts`, `/cost` |

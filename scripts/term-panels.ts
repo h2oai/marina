@@ -186,6 +186,102 @@ export const PANELS: Panel[] = [
     },
   },
   {
+    name: "streams",
+    aliases: ["participants"],
+    describe: "participant sessions (Claude, Codex, pi …): who is asking, failing or running",
+    needs: ["streams"],
+    render: (c) => {
+      const t = c.theme;
+      const g = glyphsFor(t);
+      const streams = c.snapshot.streams;
+      if (c.snapshot.denied?.streams)
+        return card(t, "Streams", [t.fg("faint")("streams need a signed-in world account")]);
+      if (!streams) return card(t, "Streams", waiting(c, "participant sessions"));
+      if (!streams.items.length)
+        return card(t, "Streams", [
+          t.fg("faint")("no participant sessions — /spawn claude|codex|pi starts one"),
+        ]);
+      // Needs-you first: asking, then failing, then running; idle and gone last.
+      const rank = (r: (typeof streams.items)[number]) =>
+        r.asking
+          ? 0
+          : r.status === "failed" || r.error || r.deliveryError
+            ? 1
+            : r.status === "running"
+              ? 2
+              : r.status === "left" || r.status === "stopped"
+                ? 4
+                : 3;
+      const rows = [...streams.items].sort(
+        (a, b) => rank(a) - rank(b) || b.lastSeenAt - a.lastSeenAt,
+      );
+      const body = columns(
+        rows.map((r) => {
+          const tone: Token = r.asking
+            ? "warning"
+            : rank(r) === 1
+              ? "error"
+              : r.status === "running"
+                ? "success"
+                : "faint";
+          const state = r.asking
+            ? "asking you"
+            : r.deliveryError && !r.error
+              ? "delivery failed"
+              : r.status;
+          return [
+            `${t.fg(tone)(r.asking ? g.approval : g.agent)} ${t.identity(r.label)(clean(t, r.label))}`,
+            t.fg("muted")(clean(t, r.adapter || r.kind || "—")),
+            t.fg("code")(clean(t, r.model || "—")),
+            t.fg(tone)(clean(t, state)),
+            r.error
+              ? t.fg("error")(clean(t, r.error))
+              : t.fg("muted")(r.owned ? "yours" : "shared"),
+          ];
+        }),
+      );
+      const asking = rows.filter((r) => r.asking).length;
+      return card(t, "Streams", body, `${streams.total}${asking ? ` · ${asking} asking` : ""}`);
+    },
+  },
+  {
+    name: "tasks",
+    aliases: ["work"],
+    describe: "the shared task board: open, claimed and waiting for review",
+    needs: ["tasks"],
+    render: (c) => {
+      const t = c.theme;
+      const tasks = c.snapshot.tasks;
+      if (!tasks) return card(t, "Tasks", waiting(c, "the task board"));
+      const live = tasks.items.filter((r) => r.status === "open" || r.status === "claimed");
+      if (!live.length)
+        return card(t, "Tasks", [t.fg("faint")("no open tasks — task create <title> posts one")]);
+      // Waiting for review first: an open task with submissions is the creator's move.
+      const rank = (r: (typeof live)[number]) => (r.submitted ? 0 : r.claimed ? 1 : 2);
+      const rows = [...live].sort(
+        (a, b) => rank(a) - rank(b) || b.priority - a.priority || b.id - a.id,
+      );
+      const body = columns(
+        rows.map((r) => {
+          const state = r.submitted
+            ? `${r.submitted} to review`
+            : r.claimed
+              ? `${r.claimed} working`
+              : "open";
+          const tone: Token = r.submitted ? "warning" : r.claimed ? "success" : "muted";
+          return [
+            t.fg("faint")(`#${r.id}`),
+            clean(t, r.title),
+            t.fg(tone)(state),
+            t.fg("muted")(clean(t, r.creator)),
+          ];
+        }),
+      );
+      const review = live.filter((r) => r.submitted).length;
+      return card(t, "Tasks", body, `${live.length} open${review ? ` · ${review} to review` : ""}`);
+    },
+  },
+  {
     name: "spend",
     aliases: ["cost", "$"],
     describe: "upstream spend today by scope, against the daily cap",

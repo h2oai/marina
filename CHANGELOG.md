@@ -1221,7 +1221,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coding conversation alone, with the World cut down to one line showing the latest message
   addressed to you (a tell, or a message naming you). `operate` puts a live board beside the
   World: Attention, Agents, Spend and Status, the dashboard's own data, scrolled with
-  Shift+PageUp/PageDown. The composer starts in the World. Switch with F3, `/mode <name>`, or
+  Shift+PageUp/PageDown. The composer starts in the World. `coordinate` shows who is working on
+  what: participant sessions (Streams, the ones asking you or failing first) and the task board
+  (tasks waiting for your review first). Both cards are also `/live streams` and `/live tasks`,
+  and they are polled only while shown. Switch with F3, `/mode <name>`, or
   `--mode <name>` on `marina`, `marina attach` and `bun run code`. A mode only arranges the
   screen; the coding session keeps running. Coding no longer splits the World beside it at 110
   columns on its own; `/layout split` still does, from 80.
