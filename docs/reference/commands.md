@@ -4512,6 +4512,8 @@ Usage: forecast <question> [resolves:<venue>/<ticker>]   e.g. forecast Will the 
                                          a typed answer: plan → research rounds → several runs → critique
        forecast [formation:<name>] [retriever:<spec>] … -- <question>
                                          choose the formation (or verify / arbiter) and a retriever the operator allows
+       forecast market:live [window:48h]  pick the most traded open Kalshi market closing in the window and
+                                         forecast it, scored when it settles (daily: schedule add … -- forecast market:live)
        forecast list                     your saved forecasts and, once resolved, their scores
        forecast track <id> <venue>/<ticker>   score forecast #id when that market/watch resolves
        forecast competence [family]      what Marina's resolved record says each method is good at
@@ -4556,6 +4558,13 @@ Effect: execute.
 - Group `option-0`: `formation:name`.
 - Group `option-1`: `retriever:spec`.
 - Group `option-2`: `type:t`.
+
+### `forecast market:live [window:<duration>]`
+
+Effect: execute.
+
+- `field-0` (`window`): text, optional group `option-0`.
+- Group `option-0`: `window:duration`.
 
 ### `forecast list`
 
