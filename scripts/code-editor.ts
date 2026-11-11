@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import type { WorkspaceMode } from "./code-modes";
 import type { PanelInput, TerminalPanelState } from "./code-panel-form";
 import type { EntryFormat, TerminalView } from "./code-views";
 import type { WorkspaceLayout } from "./code-workspace-panes";
@@ -22,6 +23,12 @@ export interface CodeEditorState {
   panel?: TerminalPanelState;
   /** Live world segments (the status bar), already rendered; shown only when styled. */
   statusLine?: string;
+  /** The use-case mode (--tui only); defaults to coding. */
+  mode?: WorkspaceMode;
+  /** The mode's live board, drawn at the pane's width on every frame. */
+  board?: (width: number) => string[];
+  /** Coding mode: the latest World message addressed to you, one line. */
+  mention?: string;
 }
 
 export interface CodeEditorOptions {
@@ -45,5 +52,7 @@ export interface CodeEditor {
   print(text: string, format?: EntryFormat): void;
   /** Fullscreen renderers open a navigable diff view; scrollback renderers return false. */
   showDiff?(text: string): boolean;
+  /** Fullscreen renderers report a pane's drawn width so local cards fit it. */
+  paneColumns?(view: TerminalView): number | undefined;
   close(): void;
 }

@@ -16,6 +16,11 @@ export const TERMINAL_CONTROLS = [
     help: "Arrange TUI panes without changing your session",
   },
   {
+    name: "/mode",
+    usage: "/mode coding|operate",
+    help: "Switch the TUI's use-case mode (F3 cycles); the session keeps running",
+  },
+  {
     name: "/help",
     usage: "/help [all]",
     help: "Show the essentials; /help all lists every control",

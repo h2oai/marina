@@ -47,6 +47,7 @@ import { applyCliEnvironment, userMarinaDir } from "./cli-env";
 import { CodeConsole } from "./code-console";
 import { HarnessStore, validateHarness } from "./code-harness";
 import { inferCodeDefaultModel, localRuntimeFor } from "./code-model";
+import { parseMode, WORKSPACE_MODES, type WorkspaceMode } from "./code-modes";
 import { installedCodingAdapters } from "./code-native";
 import { styleStartupLine, themeFor } from "./code-style";
 import { formatCodePerception, terminalText } from "./code-terminal";
@@ -58,6 +59,8 @@ const DEFAULT_TASK_TIMEOUT_MS = 600_000;
 
 export interface CodeSessionOptions {
   tui?: boolean;
+  /** First use-case mode for --tui (default coding). */
+  mode?: WorkspaceMode;
   /** Ephemeral tmp DB, deleted on exit (the pre-persistence behavior). */
   fresh?: boolean;
   agent?: string;
@@ -1051,6 +1054,7 @@ export async function runCodeSession(
 
   sessionConsole = new CodeConsole({
     tui: opts.tui,
+    ...(opts.mode ? { mode: opts.mode } : {}),
     welcomed: card,
     noModel: noProviderKey,
     agent,
@@ -1208,5 +1212,17 @@ export function diffFileStats(
 }
 
 if (import.meta.main) {
-  await runCodeSession(process.argv[2] ?? process.cwd());
+  // `bun run code <dir> [--tui] [--mode <name>]`; `marina` takes every other option.
+  const args = process.argv.slice(2);
+  const modeAt = args.indexOf("--mode");
+  const mode = modeAt >= 0 ? parseMode(args[modeAt + 1]) : undefined;
+  if (modeAt >= 0 && !mode) {
+    console.error(`--mode needs one of ${WORKSPACE_MODES.join(", ")}`);
+    process.exit(2);
+  }
+  const dir = args.find((arg, index) => !arg.startsWith("-") && index !== modeAt + 1);
+  await runCodeSession(dir ?? process.cwd(), {
+    ...(args.includes("--tui") || mode ? { tui: true } : {}),
+    ...(mode ? { mode } : {}),
+  });
 }
