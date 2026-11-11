@@ -791,6 +791,14 @@ async function dispatchOpenAICompatible(
     };
   } catch (error) {
     const timedOut = abort.timedOut();
+    // The caller left (an agent stopped at shutdown, a client disconnected): its
+    // own cancellation, not an upstream fault.
+    if (!timedOut && clientSignal?.aborted) {
+      logger.debug("model-api", "upstream request cancelled by its caller", {
+        host: new URL(url).host,
+      });
+      return { response: null, networkError: true, timedOut };
+    }
     logger.warn(
       "model-api",
       timedOut
