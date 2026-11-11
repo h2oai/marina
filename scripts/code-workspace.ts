@@ -255,6 +255,10 @@ export class WorkspaceCodeEditor implements CodeEditor {
     this.tui.requestRender();
   }
 
+  paneColumns(view: TerminalView): number | undefined {
+    return this.panes.columns(view);
+  }
+
   follow() {
     this.panes.follow();
     this.tui.requestRender();
