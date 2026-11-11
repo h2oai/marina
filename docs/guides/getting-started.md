@@ -14,7 +14,6 @@ Requirements: Git and [Bun](https://bun.sh) 1.4.4 or newer.
 git clone https://github.com/h2oai/marina.git
 cd marina
 bun install
-bun run dashboard:build
 bun run start
 ```
 
@@ -38,8 +37,10 @@ folder; a project's own `.env` is never read. See
 [where the CLI reads settings](configuration.md#where-the-marina-cli-reads-settings).
 
 `marina` in a folder runs the whole Marina server for that folder, so the first screen shows
-a link to its dashboard (`http://localhost:<port>`). Once `bun run dashboard:build` has run,
-`/dashboard` opens it, signed in. The terminal itself works without the dashboard build.
+a link to its dashboard (`http://localhost:<port>`), and `/dashboard` opens it signed in as you —
+the same world as the terminal, to follow or steer it from the browser at any point. The server
+builds the dashboard itself when it starts (about a second, and again after an update changes
+it); `MARINA_DASHBOARD_AUTOBUILD=off` leaves that to `bun run dashboard:build`.
 
 ### Packaged desktop app
 
@@ -312,8 +313,8 @@ interpretation boundaries.
 
 ### The dashboard is empty
 
-Confirm `bun run dashboard:build` completed for a source checkout, then open the URL printed by the
-server. Dashboard data that requires identity appears after Web Chat connects. Use `readiness` for
+The server builds the dashboard when it starts; if the log says the build failed, run
+`bun run dashboard:build` to see why, then open the URL printed by the server. Dashboard data that requires identity appears after Web Chat connects. Use `readiness` for
 capabilities that need providers or agents.
 
 ### The world has no active agents

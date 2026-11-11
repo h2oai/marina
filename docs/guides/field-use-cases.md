@@ -60,7 +60,7 @@ and Bun 1.4.4 or newer. After that, everything happens in a web page.
 
 ```bash
 git clone https://github.com/h2oai/marina.git && cd marina
-bun install && bun run dashboard:build
+bun install
 bun run setup:cli        # puts the marina command on your PATH
 marina init              # connect an AI provider: paste a key, or pick a local model
 bun run start            # open http://localhost:3300

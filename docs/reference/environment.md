@@ -39,6 +39,7 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 | `MARINA_OPEN_API=false` | Development only: accept unauthenticated requests on the model, memory and dashboard read APIs. It does not grant operator actions: key and settings management, spawning and deletion still need an operator, and writes are refused outside the local profile. Fatal with a non-loopback bind unless MARINA_ALLOW_INSECURE_PUBLIC=true. | protected |
 | `ALLOWED_ORIGINS=http://localhost:5173` | Comma-separated origins allowed for CORS. Unset sends no Access-Control-Allow-Origin header (same-origin only). |  |
 | `MARINA_DASHBOARD_CSP=` | Content-Security-Policy for the dashboard HTML. Unset uses the built-in policy; `off` drops the header; any other value replaces the policy verbatim. | protected |
+| `MARINA_DASHBOARD_AUTOBUILD=on` | A source checkout builds the dashboard (`dist/dashboard`) in the background at boot when it is missing or older than its sources (about a second), so a session's dashboard link always works. `off` leaves it to `bun run dashboard:build`. A compiled binary or an install without `dashboard/` never builds. | restart |
 
 ## Sign-in (better-auth)
 

@@ -503,13 +503,13 @@ function say(line: string): void {
  */
 function dashboardLink(theme: ReturnType<typeof themeFor>, port: number): string[] {
   const muted = theme.fg("muted");
-  if (existsSync(join(MARINA_ROOT, "dist/dashboard/index.html")))
-    return [
-      theme.fg("info")(`http://localhost:${port}`),
-      muted("/dashboard opens it signed in as you"),
-    ];
-  // A checkout builds it once; the compiled binary has no bundle to point at.
-  return IS_COMPILED ? [] : [muted("bun run dashboard:build enables it")];
+  // A checkout's server builds the bundle itself when it starts (src/net/dashboard-build.ts),
+  // so the link is good a second after the card; a compiled binary has none to point at.
+  if (!existsSync(join(MARINA_ROOT, "dist/dashboard/index.html")) && IS_COMPILED) return [];
+  return [
+    theme.fg("info")(`http://localhost:${port}`),
+    muted("/dashboard opens it signed in as you"),
+  ];
 }
 
 /** A path under the home folder, written from `~`. */

@@ -19,10 +19,9 @@ owner. See [published panels](published-panels.md) and [participant routing](par
 
 ## Browser and terminal together
 
-Build the browser bundle from the same checkout as the server:
+The server builds the browser bundle from the same checkout when it starts:
 
 ```bash
-bun run dashboard:build
 bun run start
 # In another terminal, after bun run setup:cli:
 marina connect TerminalResident

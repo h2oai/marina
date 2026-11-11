@@ -45,6 +45,7 @@ import { closeWorldMemoryService, worldMemoryService } from "./memory/world-serv
 import { setLoopbackModelKey } from "./model/access";
 import { AdapterManager } from "./net/adapters/adapter-manager";
 import { bindSafetyRefusal, detectContainer } from "./net/bind-safety";
+import { ensureDashboardBuilt } from "./net/dashboard-build";
 import { DashboardBroadcaster } from "./net/dashboard-ws";
 import { FeedPublisher } from "./net/feed-publisher";
 import { formatPerception } from "./net/formatter";
@@ -679,6 +680,9 @@ function startListener(label: string, envVar: string, port: number, start: () =>
 }
 
 startListener("WebSocket/HTTP", "WS_PORT", WS_PORT, () => wsServer.start());
+// A source checkout builds its dashboard in the background when it is missing or
+// older than its sources (~1 s), so every session's dashboard link works.
+void ensureDashboardBuilt(logger);
 // Real bound port — differs from WS_PORT when WS_PORT=0 (ephemeral). MCP and the
 // log server default to it +1 / +2, so a custom or ephemeral WS_PORT never
 // collides on a hard-coded 3301/3302.

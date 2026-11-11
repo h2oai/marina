@@ -62,7 +62,7 @@ You need [Bun](https://bun.sh) 1.4.4 or newer.
 
 ```bash
 git clone https://github.com/h2oai/marina.git
-cd marina && bun install && bun run dashboard:build
+cd marina && bun install
 bun run setup:cli    # puts `marina` on your PATH
 marina init          # connect a model: paste a provider key, or pick a local one
 ```
