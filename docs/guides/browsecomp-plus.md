@@ -30,10 +30,10 @@ Build the index once. It takes about 20 minutes and several GB, under `MARINA_CO
 ```bash
 SQLITE_TMPDIR=$DATA/tmp bun run corpus build browsecomp-plus $DATA/data/corpus.jsonl \
   --source "Tevatron/browsecomp-plus-corpus (MIT)"
-bun run corpus search browsecomp-plus "a query"      # sanity check
+bun run corpus search browsecomp-plus "a query"
 ```
 
-`SQLITE_TMPDIR` keeps SQLite's sort files off a small `/tmp`.
+The last command is a sanity check. `SQLITE_TMPDIR` keeps SQLite's sort files off a small `/tmp`.
 
 ## Run
 

@@ -45,9 +45,12 @@ while it is 0.x, a minor release may remove deprecated surfaces under the
 
    ```bash
    docker build -t marina-release .
-   bun run qualify:image marina-release   # CONTAINER_RUNTIME=podman also works
-   bun run qualify:native                 # builds dist/marina and runs it outside the checkout
+   bun run qualify:image marina-release
+   bun run qualify:native
    ```
+
+   `CONTAINER_RUNTIME=podman` also works for `qualify:image`. `qualify:native` builds
+   `dist/marina` and runs it outside the checkout.
 
 4. **Run the provider-backed qualifications that match the release's claims.** These spend
    money or need a live target, so they are not in `qualify:release`. Do not describe a skipped
@@ -87,8 +90,10 @@ Then refresh the workspace entries in `bun.lock` and check:
 bun install
 bun run check:versions
 bun install --frozen-lockfile
-git grep -n '"OLD.VERSION"' -- ':!CHANGELOG.md' ':!bun.lock'   # anything left is deliberate or a miss
+git grep -n '"OLD.VERSION"' -- ':!CHANGELOG.md' ':!bun.lock'
 ```
+
+Anything `git grep` still finds is deliberate or a miss.
 
 Leave compatibility floors alone (for example marina-market's `minMarinaVersion` default) and
 version fixtures in tests; name them in the release PR body.
@@ -118,7 +123,12 @@ Tag the merged release commit on `main` with an annotated tag:
 
 ```bash
 git fetch origin && git checkout --detach origin/main
-git log -1 --oneline                      # must be the "release: X.Y.Z" commit
+git log -1 --oneline
+```
+
+The commit shown must be the "release: X.Y.Z" commit. Then tag and push:
+
+```bash
 git tag -a vX.Y.Z -m "Marina X.Y.Z — <one-line summary>. See CHANGELOG.md."
 git push origin vX.Y.Z
 ```
@@ -140,10 +150,15 @@ Pushing `vX.Y.Z` triggers **Supply Chain** (`supply-chain.yml`), which:
 - signs SLSA build provenance and an SBOM statement bound to the package digest.
 
 It uploads them as workflow artifacts (`marina-package-<sha>`, `marina-attestations-<sha>`,
-retained 90 days); it does not attach them to the release. To ship them, download and attach:
+retained 90 days); it does not attach them to the release. To ship them, find the tag's run id:
 
 ```bash
-gh run list --workflow "Supply Chain" --event push --limit 5    # find the tag's run id
+gh run list --workflow "Supply Chain" --event push --limit 5
+```
+
+Then download and attach:
+
+```bash
 gh run download RUN_ID --dir dist/release
 gh release upload vX.Y.Z dist/release/marina-package-*/* dist/release/marina-attestations-*/*
 ```
