@@ -594,7 +594,41 @@ Every in-world answer is saved with its full audit trail (`forecast list` shows 
 one scored, link it to the resolver Sample it resolves on — `forecast <question>
 resolves:kalshi/<ticker>`, or later `forecast track <id> kalshi/<ticker>`. When that market or
 watch resolves, the answer is scored once: Brier for a probability, CRPS for a number. Typed answers
-are saved with their answer as one string (`prediction`).
+are saved with their answer as one string (`prediction`). Linked answers do not wait for anyone:
+every hour Marina reads each market an open answer is linked to and settles it when the market
+resolves (`MARINA_OUTCOME_AUTORESOLVE`, on by default; public market reads, no model calls).
+
+### A forecast a day on a live market
+
+A track record needs questions that resolve soon. `forecast market:live` picks one for you:
+
+```text
+forecast market:live                 # the most traded open Kalshi market closing within 48 h
+forecast market:live window:24h      # a narrower window (1h to 30d)
+forecast market:live formation:verify
+```
+
+It takes the most traded open Kalshi market closing inside the window whose yes price is between
+5¢ and 95¢ (still undecided), leaving out combos and any market (or another outcome of the same
+event) you already forecast. Then it runs `forecast resolves:kalshi/<ticker> -- <question>`,
+with the question in the market's own resolution words, so the answer is scored when the market
+settles. Other modifiers (`formation:`, `type:` …) pass through. Each run costs what one forecast
+costs (several models and web research, typically a few dollars), within your forecast budget
+and the daily spend cap.
+
+Nothing runs on its own. To make it a daily duty, schedule it, for yourself or for an agent you
+run:
+
+```text
+schedule add daily-forecast daily:14:00 -- forecast market:live
+schedule list
+schedule remove daily-forecast
+```
+
+With `MARINA_FORECAST_SHADOW` set, a sampled share of these filed forecasts also runs a shadow
+challenger method beside the live one; both are settled together, which is the evidence for
+whether the challenger should replace the default (`forecast routes`). `forecast list` shows your
+answers and, once settled, their scores.
 
 ## Configuration
 
