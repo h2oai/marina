@@ -67,6 +67,26 @@ describe("engine shutdown flushes lessons from work", () => {
     }
   });
 
+  it("a server stopped by a signal parks even ready patterns: no model call holds the stop", async () => {
+    using _state = scopeProcessState({ env: { MARINA_LESSONS_FROM_WORK: "observe" } });
+    const world = createTestEngine();
+    try {
+      // At its floor: the default shutdown would flush it through the judge.
+      noteWork(world.db, signal());
+      noteWork(world.db, signal());
+      expect(pendingWorkPatterns(world.db)).toBe(1);
+      await world.engine.shutdown({ flushLessons: false });
+      expect(pendingWorkPatterns(world.db)).toBe(0);
+      expect(world.db.getCoreMemory(WORK_CARRY_OWNER, "carry")?.value).toContain('"count":2');
+      // The next boot claims it with its count and learns it on its own flush.
+      resetWorkLearner(world.db);
+      expect(claimParkedCarry(world.db).map((p) => p.count)).toEqual([2]);
+    } finally {
+      resetWorkLearner(world.db);
+      await world.dispose();
+    }
+  });
+
   it("parking merges with what another process parked; claiming takes it once", () => {
     const world = createTestEngine();
     try {

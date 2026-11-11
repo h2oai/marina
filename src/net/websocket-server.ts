@@ -52,6 +52,7 @@ import { buildCanvasPrincipal, LOOPBACK_PRINCIPAL } from "./canvas/canvas-princi
 import { CanvasBroadcaster, type CanvasSubscriptionPrincipal } from "./canvas/canvas-ws";
 import { corsHeaders, isTrustedBrowserOrigin } from "./cors";
 import { handleDashboardApi } from "./dashboard-api";
+import { dashboardBuildState } from "./dashboard-build";
 import type { DashboardBroadcaster, DashboardWSData } from "./dashboard-ws";
 import {
   hostHeaderAllowed,
@@ -132,7 +133,7 @@ const DASHBOARD_NOT_BUILT_HTML = `<!doctype html>
 <style>body{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b1220;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}main{max-width:44rem;padding:2rem}h1{font-size:1.1rem;color:#7dd3fc}code{background:#1e293b;padding:.15rem .4rem;border-radius:.25rem;color:#a5f3fc}pre{background:#1e293b;padding:1rem;border-radius:.5rem;overflow-x:auto}a{color:#7dd3fc}</style>
 </head><body><main>
 <h1>Dashboard not built yet</h1>
-<p>The Marina server is running, but the dashboard bundle (<code>dist/dashboard/</code>) hasn't been built. Build it once, then reload — no server restart needed:</p>
+<p>The Marina server is running and builds the dashboard (<code>dist/dashboard/</code>) by itself when it starts — reload in a few seconds. If it still isn't here, build it by hand (no server restart needed):</p>
 <pre>bun run dashboard:build</pre>
 <p>Meanwhile, the <a href="/chat">web chat</a> works right away.</p>
 </main></body></html>`;
@@ -1114,11 +1115,14 @@ export class WebSocketServer {
     });
     if (existsSync(DASHBOARD_INDEX)) {
       logger.info("ws", `Dashboard available at http://localhost:${this.port}/dashboard`);
-    } else {
+    } else if (dashboardBuildState() === "unavailable") {
       logger.warn(
         "ws",
         `Dashboard not built yet — run \`bun run dashboard:build\` (installs + builds dashboard/), then reload http://localhost:${this.port}/dashboard. No server restart needed.`,
       );
+    } else {
+      // A checkout builds it in the background (src/net/dashboard-build.ts).
+      logger.info("ws", `Dashboard building — http://localhost:${this.port}/dashboard in a moment`);
     }
     logger.info("ws", `Canvas available at http://localhost:${this.port}/canvas`);
   }

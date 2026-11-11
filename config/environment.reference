@@ -119,6 +119,10 @@
 # @protected
 # MARINA_DASHBOARD_CSP=
 
+# A source checkout builds the dashboard (`dist/dashboard`) in the background at boot when it is missing or older than its sources (about a second), so a session's dashboard link always works. `off` leaves it to `bun run dashboard:build`. A compiled binary or an install without `dashboard/` never builds.
+# @restart
+# MARINA_DASHBOARD_AUTOBUILD=on
+
 # ── Sign-in (better-auth) ────────────────────────────────────────────────────
 
 # `better-auth` requires human sign-in on the web chat and dashboard (email/password plus any configured OAuth providers) and rejects passwordless name login. A signed-in identity is bridged to a named Marina entity. Agents keep authenticating with session tokens. Off by default.

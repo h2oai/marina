@@ -62,7 +62,7 @@ Download and build, and put the `marina` command on your PATH:
 
 ```bash
 git clone https://github.com/h2oai/marina.git && cd marina
-bun install && bun run dashboard:build
+bun install
 bun run setup:cli
 ```
 

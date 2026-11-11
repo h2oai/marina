@@ -143,6 +143,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step. A run ends with one block: how it ended, the files changed, whether checks passed, its
   own time and cost, and the exact next commands (`/diff`, `/review approve|reject <attempt>`,
   `git restore`). Task-board notices stay in the World view (F6), and the periodic world brief skips a person in Code Mode (`brief` on request still works).
+- **The dashboard builds itself.** A source checkout used to need `bun run dashboard:build`, which
+  the `marina` CLI setup never ran, so a coding session's dashboard link opened a "not built yet"
+  page. The server now builds `dist/dashboard` in the background at boot when it is missing or
+  older than its sources (about a second, swapped in only when complete, one build at a time), and
+  the `marina` welcome card always shows the session's dashboard URL.
+  `MARINA_DASHBOARD_AUTOBUILD=off` turns it off.
 
 - **The work pulse no longer stalls on one stuck task.** It kept one pulse task open at a time, and
   the reviewer had claimed and submitted its own task, which it never reviewed, so no new work
@@ -735,6 +741,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     nothing.
 
 ### Fixed
+
+- **Stopping Marina is quick and quiet.** Repeated start/stop cycles found a Ctrl-C or SIGTERM
+  that took 11.8 s: shutdown waited on a model call to turn pending lessons-from-work into lessons.
+  A server stopped by a signal now parks them for the next boot (nothing is lost; short-lived
+  tools keep the final flush), and stops in under a second. A model request cut off by the stop
+  is no longer logged as an upstream failure, and the log ends with `Marina stopped cleanly in N
+  s` at the real end instead of an early "engine stopped".
 
 - **`bun run code <dir> --tui` opens the terminal workspace.** The checkout entry point read only
   the folder argument, so `--tui` was ignored and the scrollback terminal opened. It now takes

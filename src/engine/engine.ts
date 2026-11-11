@@ -933,7 +933,7 @@ export class Engine {
       this.tickTimer = null;
     }
     this.mediaManager?.stop();
-    this.logger.info("engine", "Marina engine stopped.");
+    this.logger.info("engine", "Engine tick loop stopped.");
   }
 
   /** Number of ticks whose body threw (each was caught; the loop kept running). */
@@ -2294,7 +2294,13 @@ export class Engine {
   }
 
   /** Save world state and stop the engine */
-  shutdown(): Promise<void> {
+  /**
+   * `flushLessons: false` (the server stopping on a signal) parks pending
+   * lessons-from-work for the next boot instead of a model-backed final flush,
+   * so a person's Ctrl-C never waits on a model call. Short-lived processes keep
+   * the default flush: nothing restarts on their database to claim the carry.
+   */
+  shutdown(opts: { flushLessons?: boolean } = {}): Promise<void> {
     this.beginDrain();
     closeInvestigationService(this.db);
     this.stop();
@@ -2338,7 +2344,13 @@ export class Engine {
     const learn = this.db !== undefined && pendingWorkPatterns(this.db) > 0;
     if (!pending && !learn) return finish();
     return (pending ? drain() : Promise.resolve())
-      .then(() => (learn ? this.flushWorkOnShutdown() : undefined))
+      .then(() =>
+        learn
+          ? opts.flushLessons === false
+            ? void (this.db && parkWorkCarry(this.db))
+            : this.flushWorkOnShutdown()
+          : undefined,
+      )
       .then(() => (this.db ? settleDelivery(this.db, BACKGROUND_DRAIN_TIMEOUT_MS) : undefined))
       .then(finish);
   }
