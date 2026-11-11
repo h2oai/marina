@@ -80,6 +80,9 @@ reference for file layout and rules is `test/README.md`.
 - `bun run test:ui` — frontend (Vitest on Node).
 - `bun run test:browser` — build + every Playwright journey in `dashboard/e2e`.
 - `bun run docs:api --check` — generated builtin API reference matches current definitions.
+- `bun run check:paste-safe` — shell examples in the guides that break when pasted as a whole
+  block (comments, or lines after `marina init`); advisory, exits 0 (`--strict` exits 1). Only
+  the front-door pages are held by a test.
 - `make help` — optional task shortcuts, all delegate to package scripts.
 
 **Hermetic environment.** Bun loads the repository's `.env` into `bun test`, so the
