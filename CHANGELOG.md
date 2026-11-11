@@ -748,6 +748,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Kalshi without combo markets), results are ranked by 24-hour volume, prices come from the
   current fields (unknown shows `—`, never a made-up 50¢), and times under two days show in hours.
 
+- **Shell snippets in the docs paste into a shell as a whole block.** Copying the getting-started
+  "from any folder" block failed: zsh (the macOS default) passes a trailing `# comment` to the
+  command as arguments, and `marina init` read the lines pasted after it as its answers. Shell
+  blocks in the README, the site and every guide now carry no comments, end on any command that
+  reads the terminal or keeps running, and split alternatives into their own blocks. A test holds
+  the front-door pages (README, getting started, the site overview and home page) to it;
+  `bun run check:paste-safe` reports the other guides without failing CI.
 - **A memory-assistance worker is no longer told about its own work.** Each claim and each read
   a worker made on a job sent that worker a "Memory assistance …: running; N operations remain"
   message, so a worker agent was steered once per operation, mid-run, about its own action.
@@ -1226,7 +1233,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coding conversation alone, with the World cut down to one line showing the latest message
   addressed to you (a tell, or a message naming you). `operate` puts a live board beside the
   World: Attention, Agents, Spend and Status, the dashboard's own data, scrolled with
-  Shift+PageUp/PageDown. The composer starts in the World. Switch with F3, `/mode <name>`, or
+  Shift+PageUp/PageDown. The composer starts in the World. `coordinate` shows who is working on
+  what: participant sessions (Streams, the ones asking you or failing first) and the task board
+  (tasks waiting for your review first). Both cards are also `/live streams` and `/live tasks`,
+  and they are polled only while shown. `memory` is for curating what the world knows. It
+  shows dreams, with proposals waiting for you first, and memory health as counts:
+  contradictions, stale and duplicate records, provenance and open jobs (`/live dreams`,
+  `/live memory`). `investigate` is for after the fact. It shows execution traces, with failed
+  runs and failed checks first (operator read), and the activity feed (`/live traces`,
+  `/live feed`). `forecast` shows your newest predictions and research, running first, then
+  answers and resolved scores, with Spend below (`/live forecasts`). Switch with F3, `/mode <name>`, or
   `--mode <name>` on `marina`, `marina attach` and `bun run code`. A mode only arranges the
   screen; the coding session keeps running. Coding no longer splits the World beside it at 110
   columns on its own; `/layout split` still does, from 80.

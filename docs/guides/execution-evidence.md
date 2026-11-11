@@ -39,8 +39,9 @@ Recover missing attribution on an already imported run:
 ```bash
 DB_PATH=ledger.db bun run benchmark:import --attach-to imported-run-id \
   --source-db original-world.db --source-run original-run-id --dry-run
-# Review the matched item count; omit --dry-run to attach the evidence.
 ```
+
+Review the matched item count; omit `--dry-run` to attach the evidence.
 
 The source opens read-only, in one snapshot, without migrations. A recovery requires exact matches
 for the benchmark and every item ID, outcome, score and request trace ID. Conflicting participant

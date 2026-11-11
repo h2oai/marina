@@ -187,6 +187,7 @@ export class CodeConsole {
       session.name,
     );
     this.liveStatus.onChange(() => this.terminal?.refreshStatus());
+    this.liveStatus.want(MODES[this.terminal?.currentMode ?? "coding"].parts ?? []);
     this.liveStatus.start();
   }
 
@@ -529,7 +530,10 @@ export class CodeConsole {
         location: `${this.options.connected ? "Server" : "Local"} workspace · ${this.options.root}`,
         statusLine: () => this.liveStatusLine(),
         ...(this.options.mode ? { mode: this.options.mode } : {}),
-        modeChanged: () => void this.liveStatus?.refresh(true),
+        modeChanged: (mode) => {
+          this.liveStatus?.want(MODES[mode].parts ?? []);
+          void this.liveStatus?.refresh(true);
+        },
         board: (mode, width) => this.board(mode, width),
         status: this.idlePhase(),
         line: (text) => {

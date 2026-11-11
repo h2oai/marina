@@ -524,9 +524,10 @@ command you intend to save or share:
 
 ```bash
 export ANTHROPIC_API_KEY="your-key-here"
-# Automatic model selection also supports OPENAI_API_KEY, GEMINI_API_KEY,
-# GROQ_API_KEY, and OPENROUTER_API_KEY.
 ```
+
+Automatic model selection also supports `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, and
+`OPENROUTER_API_KEY`.
 
 For another provider or a local model, also export an explicit routable model such as
 `MARINA_DEFAULT_MODEL=provider/model-id`; see [Configuration](configuration.md). A key previously
@@ -632,12 +633,22 @@ project. Keep the task bounded and name the checks that define completion.
 ## TL;DR — just talk to it (like Codex / Claude Code / Cursor)
 
 **Zero-config, in any folder** — boots a folder-scoped Marina and drops
-you straight into agentic Code Mode (needs an LLM provider key in your env):
+you straight into agentic Code Mode (needs an LLM provider key in your env). In the current
+directory:
 
 ```bash
-bun run code            # the current directory
-bun run code ~/projects/acme   # …or any directory
-# It evaluates the directory, then you say what you want, in plain English:
+bun run code
+```
+
+…or in any directory:
+
+```bash
+bun run code ~/projects/acme
+```
+
+It evaluates the directory, then you say what you want, in plain English:
+
+```text
 ❯ fix the off-by-one in the tokenizer and add a regression test
 ```
 
@@ -711,19 +722,33 @@ always the process's own.
 
 ```bash
 marina -p "fix the off-by-one in the tokenizer and add a regression test" ~/projects/acme
-echo $?   # 0 verified · 3 completed, not verified · 1 failed · 2 timed out
+echo $?
+```
+
+The exit code is `0` verified · `3` completed, not verified · `1` failed · `2` timed out. To read
+the status from the JSON object instead:
+
+```bash
 marina -p "…" ~/projects/acme --json | tail -1 | jq .status
 ```
 
-Or inside an already-running Marina:
+Or inside an already-running Marina. Start the server:
 
 ```bash
 bun run start
-bun run scripts/connect.ts coder
+```
 
-# Enter Code Mode — it evaluates the current directory and waits for a task:
+Then, from another terminal, connect:
+
+```bash
+bun run scripts/connect.ts coder
+```
+
+Enter Code Mode with `code` — it evaluates the current directory and waits for a task. Then say
+what you want, in plain English:
+
+```text
 code
-# Then say what you want, in plain English:
 fix the off-by-one in the tokenizer and add a regression test
 ```
 
@@ -945,7 +970,7 @@ multi-agent / multi-backend as it grows.
 ### The manual loop is still there
 Every step the agent takes is a command you can drive yourself:
 
-```bash
+```text
 code start Fix the parser     # open a coding session
 code doctor                   # check the workspace is ready
 code files                    # look around
@@ -1301,10 +1326,10 @@ Full reference any time: **`code help`**.
 
 ## Point it at the right workspace
 
-By default a session uses the server's working directory. For real projects, configure roots:
+By default a session uses the server's working directory. For real projects, configure roots in
+the environment (for example in docker-compose or your shell):
 
-```bash
-# env (e.g. in docker-compose or your shell)
+```dotenv
 MARINA_CODE_ROOTS=/srv/repos/acme,/srv/repos/widgets
 MARINA_CODE_DEFAULT_ROOT=/srv/repos/acme
 ```
@@ -1444,8 +1469,10 @@ With several providers configured, name one (`use <id>`, or `provider:<id>` on a
   MARINA_OPENSHELL_CA=/path/to/ca.crt
   MARINA_OPENSHELL_CERT=/path/to/client/tls.crt
   MARINA_OPENSHELL_KEY=/path/to/client/tls.key
-  MARINA_OPENSHELL_IMAGE=docker.io/library/python:3.13-slim   # optional
+  MARINA_OPENSHELL_IMAGE=docker.io/library/python:3.13-slim
   ```
+
+  `MARINA_OPENSHELL_IMAGE` is optional.
 
   OpenShell enforces network rules per program inside each sandbox. When it holds a request, Marina
   turns it into a challenge for a person; approving it approves that rule in OpenShell, and the

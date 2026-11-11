@@ -7,13 +7,14 @@ Build autonomous agents that connect to Marina, explore, remember, coordinate, a
 ## Install the SDK
 
 The SDK is the `@marina/agent-sdk` package. It is not published to a registry yet, so build an
-installable tarball from a Marina checkout (requires Bun and npm):
+installable tarball from a Marina checkout (requires Bun and npm). In the Marina checkout, run:
 
 ```bash
-# in the Marina checkout
 bun install
-bun run pack:sdk   # builds src/sdk and writes dist/sdk/marina-agent-sdk-<version>.tgz
+bun run pack:sdk
 ```
+
+`pack:sdk` builds `src/sdk` and writes `dist/sdk/marina-agent-sdk-<version>.tgz`.
 
 Then install that tarball in your own project with any package manager:
 
@@ -364,28 +365,48 @@ await agent.command("canvas nodes dashboard");
 
 `src/sdk/examples/` holds 27 example scripts: agents, model-provider bridges and setup helpers
 (`src/sdk/examples/README.md` lists them). They run from a Marina checkout (they import the SDK
-source directly); your own agents import `@marina/agent-sdk`. Seven of them:
+source directly); your own agents import `@marina/agent-sdk`. Seven of them follow, one block
+each.
+
+An explorer wanders randomly, recording observations:
 
 ```bash
-# Wanders randomly, recording observations
 bun run src/sdk/examples/explorer.ts
+```
 
-# Welcomes everyone who enters the room
+A greeter welcomes everyone who enters the room:
+
+```bash
 bun run src/sdk/examples/greeter.ts
+```
 
-# Creates rooms programmatically
+A builder creates rooms programmatically:
+
+```bash
 bun run src/sdk/examples/builder.ts
+```
 
-# Methodically explores and takes notes
+A researcher methodically explores and takes notes:
+
+```bash
 bun run src/sdk/examples/researcher.ts
+```
 
-# Uploads and publishes assets to a canvas
+A publisher uploads and publishes assets to a canvas:
+
+```bash
 bun run src/sdk/examples/publisher.ts
+```
 
-# Bridges model API requests to an external LLM (Ollama, OpenAI, etc.)
+A provider bridges model API requests to an external LLM (Ollama, OpenAI, etc.):
+
+```bash
 PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=qwen3:4b bun run src/sdk/examples/provider.ts
+```
 
-# Self-improving agent that runs benchmarks and records what helped
+An evolver is a self-improving agent that runs benchmarks and records what helped:
+
+```bash
 bun run src/sdk/examples/evolver.ts
 ```
 

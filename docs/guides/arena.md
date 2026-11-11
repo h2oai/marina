@@ -18,15 +18,16 @@ env-set autopilot); the in-world `arena` command is read-only.
 
 1. **Choose the entrant id** — lower-case, permanent (for example `your-org-marina`) — and the
    GitHub account that will own it. Only that account can change the registration later.
-2. **Generate the signing key** on the server that will file:
+2. **Generate the signing key** on the server that will file. The key is written with mode 0600,
+   and an existing file is never overwritten:
 
    ```bash
-   bun run arena keygen /srv/marina/arena-key.pem   # writes mode 0600, never overwrites
+   bun run arena keygen /srv/marina/arena-key.pem
    ```
 
 3. **Configure** (`.env`):
 
-   ```bash
+   ```dotenv
    MARINA_ARENA_ENTRANT=your-org-marina
    MARINA_ARENA_KEY_FILE=/srv/marina/arena-key.pem
    ```

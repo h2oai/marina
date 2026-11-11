@@ -5,11 +5,28 @@ each benchmark, files every run into a benchmark ledger, and prints a pooled, pa
 between arms. This page covers mechanics only. Run it yourself to see the numbers on your own
 models.
 
+See what you have, and the exact fix for what you don't:
+
 ```bash
-bun run repro doctor                    # what you have, and the exact fix for what you don't
-bun run repro list                      # setups, arms, smoke and full sizes
-bun run repro hle-verified --dry-run    # the plan and estimated spend, no model calls
-bun run repro hle-verified              # smoke size, 2 replicates per arm, $10 budget
+bun run repro doctor
+```
+
+List setups, arms, smoke and full sizes:
+
+```bash
+bun run repro list
+```
+
+Print the plan and estimated spend, with no model calls:
+
+```bash
+bun run repro hle-verified --dry-run
+```
+
+Run it at smoke size, 2 replicates per arm, with a $10 budget:
+
+```bash
+bun run repro hle-verified
 ```
 
 ## Setups

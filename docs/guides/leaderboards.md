@@ -58,14 +58,35 @@ The snapshot covers:
 - **Benchmark ledger** — `benchmark leaderboard` for the competitive in-world benchmarks
   (HLE-Verified, AIME, GPQA), with score, N, and the recorded run confidence interval.
 
-For a single competition, the adapter's own status command is the precise view:
+For a single competition, the adapter's own status command is the precise view. Rounds filed and
+local filing status:
 
 ```bash
-bun run arena status          # rounds filed and local filing status
-bun run futurex status         # FutureX submissions recorded
-bun run metaculus status       # filed and resolved forecasts
-bun run forecastbench status   # sets written and uploaded
-benchmark leaderboard hle-verified-gold   # in-world, top runs
+bun run arena status
+```
+
+FutureX submissions recorded:
+
+```bash
+bun run futurex status
+```
+
+Filed and resolved forecasts:
+
+```bash
+bun run metaculus status
+```
+
+Sets written and uploaded:
+
+```bash
+bun run forecastbench status
+```
+
+Top runs, in-world:
+
+```text
+benchmark leaderboard hle-verified-gold
 ```
 
 ## Claiming a placement

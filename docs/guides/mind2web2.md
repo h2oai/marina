@@ -11,9 +11,12 @@ sent anywhere.
 
 ## Commands
 
+`OFFICIAL` is a checkout of github.com/OSU-NLP-Group/Mind2Web-2; `OUT` holds answers, caches and
+results (outside the repository).
+
 ```bash
-OFFICIAL=~/src/Mind2Web-2       # a checkout of github.com/OSU-NLP-Group/Mind2Web-2
-OUT=~/m2w2                      # answers, caches, results (outside the repository)
+OFFICIAL=~/src/Mind2Web-2
+OUT=~/m2w2
 
 bun run mind2web2 run   --official $OFFICIAL --out $OUT --arm single --split tune --cap-usd 10
 bun run mind2web2 cache --official $OFFICIAL --out $OUT --arm single

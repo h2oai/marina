@@ -9,7 +9,7 @@ server's base URL, lists the models it serves, and writes the settings below to
 `~/.marina/.env`. To set them by hand, put the base URL (and the model id it serves) in that
 file or the instance's `.env`:
 
-```bash
+```dotenv
 # Ollama (keyless)
 OLLAMA_BASE_URL=http://localhost:11434/v1
 MARINA_DEFAULT_OLLAMA_MODEL=qwen3:4b

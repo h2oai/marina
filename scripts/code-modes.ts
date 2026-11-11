@@ -8,15 +8,31 @@
  *
  * - `coding`: the coding conversation alone. The World is reduced to the
  *   messages addressed to you, shown on one line above the composer.
- * - `operate`: a live board (health, attention, agents, spend, readiness)
- *   beside the World conversation, where approvals and world commands go.
+ * - `operate`: a live board (attention, agents, spend, status) beside the
+ *   World conversation, where approvals and world commands go.
+ * - `coordinate`: who is working on what — participant sessions (Streams)
+ *   and the task board — beside the World, where you steer them.
+ * - `memory`: curating what the world knows — dream proposals waiting for
+ *   you and memory health — beside the World, where `memory …` runs.
+ * - `investigate`: after the fact — execution traces (failures first) and
+ *   the activity feed — beside the World, where `trace …` drills in.
+ * - `forecast`: your predictions and research — running first, then
+ *   answers and resolutions — beside the World, where `inquiry …` asks.
  */
 
 import { isAddressedTo } from "../src/agent/social";
 import type { Perception } from "../src/sdk/client";
 import type { ConversationView } from "./code-views";
+import type { Part } from "./term-status";
 
-export const WORKSPACE_MODES = ["coding", "operate"] as const;
+export const WORKSPACE_MODES = [
+  "coding",
+  "operate",
+  "coordinate",
+  "memory",
+  "investigate",
+  "forecast",
+] as const;
 export type WorkspaceMode = (typeof WORKSPACE_MODES)[number];
 
 export interface ModeDef {
@@ -29,6 +45,8 @@ export interface ModeDef {
   board: readonly string[];
   /** The first line the mode prints: what to type here. */
   hint: string;
+  /** On-demand snapshot parts its board reads; polled only while the mode is shown. */
+  parts?: readonly Part[];
 }
 
 export const MODES: Record<WorkspaceMode, ModeDef> = {
@@ -48,6 +66,43 @@ export const MODES: Record<WorkspaceMode, ModeDef> = {
     // What needs a person first; readiness detail stays one `/live readiness` away.
     board: ["alerts", "agents", "spend", "status"],
     hint: "World commands go here: challenge approve <token>, agent stop <name>, readiness. Shift+PageUp/PageDown scroll the board; F3 returns to Coding.",
+  },
+  coordinate: {
+    name: "coordinate",
+    label: "Coordinate",
+    describe: "participant sessions and the task board beside the World",
+    composer: "world",
+    // Who needs you first (asking, failing), then the board's reviews and claims.
+    board: ["streams", "tasks"],
+    parts: ["streams", "tasks"],
+    hint: "World commands go here: tell <name> <message>, task show <id>, task approve <id> <claimant>. /agents and /use reach native sessions. F3 cycles modes.",
+  },
+  memory: {
+    name: "memory",
+    label: "Memory",
+    describe: "dream proposals waiting for you and memory health beside the World",
+    composer: "world",
+    board: ["dreams", "memory"],
+    parts: ["dreams", "memory"],
+    hint: "World commands go here: memory recall <query>, memory dream proposals, memory dream adopt <id>, note conflicts. F3 cycles modes.",
+  },
+  investigate: {
+    name: "investigate",
+    label: "Investigate",
+    describe: "execution traces, failures first, and the activity feed beside the World",
+    composer: "world",
+    board: ["traces", "feed"],
+    parts: ["traces", "feed"],
+    hint: "World commands go here: trace show <id>, trace find status=failed, trace eval <id>, feed list since:2h. F3 cycles modes.",
+  },
+  forecast: {
+    name: "forecast",
+    label: "Forecast",
+    describe: "your predictions and research, running first, beside the World",
+    composer: "world",
+    board: ["forecasts", "spend"],
+    parts: ["forecasts"],
+    hint: "World commands go here: inquiry predict -- <question>, inquiry show <case-id>, inquiry why <case-id>, forecast <question>. Every prediction costs model calls; Spend is below. F3 cycles modes.",
   },
 };
 

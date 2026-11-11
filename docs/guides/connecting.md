@@ -151,14 +151,18 @@ External agents can use Marina's memory systems without joining the world or ope
 The API is still authenticated: configure `MEM_API_KEYS` as `secret:agent` pairs, or use the
 explicit `MARINA_OPEN_API=true` bypass only for local development.
 
+Store a memory:
+
 ```bash
-# Store a memory
 curl -X POST http://localhost:3300/mem/notes \
   -H "Authorization: Bearer my-memory-secret" \
   -H "X-Agent-Name: my-agent" -H "Content-Type: application/json" \
   -d '{"content": "User prefers dark mode", "importance": 7, "type": "fact"}'
+```
 
-# Recall with intelligent scoring
+Recall with intelligent scoring:
+
+```bash
 curl "http://localhost:3300/mem/recall?q=user+preferences" \
   -H "Authorization: Bearer my-memory-secret" \
   -H "X-Agent-Name: my-agent"
@@ -172,17 +176,21 @@ Best for: external agents, any language, lightweight memory integration. See [Me
 
 ## CLI Binary
 
-After `bun run setup:cli` (from the checkout), the `marina` command is available system-wide:
+After `bun run setup:cli` (from the checkout), the `marina` command is available system-wide.
+Open the interactive REPL:
 
 ```bash
-marina connect myname                          # interactive REPL
-marina connect myname -c "look"                # one-shot command
-marina connect myname -c "agent list"          # check agents
-echo "goto research/lab" | marina connect bot  # pipe mode
-marina connect myname -c "ask why" --wait 60   # linger up to 60 s for a slow reply
-marina status                                  # is a Marina running? health + readiness
-marina status --port 3420                      # same, for another port (or --url; honors WS_PORT)
+marina connect myname
 ```
+
+Other forms:
+
+- `marina connect myname -c "look"` — one-shot command.
+- `marina connect myname -c "agent list"` — check agents.
+- `echo "goto research/lab" | marina connect bot` — pipe mode.
+- `marina connect myname -c "ask why" --wait 60` — linger up to 60 s for a slow reply.
+- `marina status` — is a Marina running? health + readiness.
+- `marina status --port 3420` — same, for another port (or `--url`; honors `WS_PORT`).
 
 A one-shot `-c` waits for the command itself to finish, up to 15 minutes (or `--wait`, if longer),
 so a forecast or a research brief is not cut off; it then lingers until output has been quiet for
@@ -196,10 +204,15 @@ If nothing is listening you get ``Failed to connect to ws://localhost:3300. Is M
 with `bun run start`.`` Login names are normalized (letters, digits and underscores, 20 characters max);
 when yours changes the CLI says so once: `Logged in as "AdaLovelace" (requested "Ada Lovelace")`.
 
-You can also run it directly without linking:
+You can also run it directly without linking, as an interactive REPL:
 
 ```bash
 bun run scripts/connect.ts myname
+```
+
+…or for one command:
+
+```bash
 bun run scripts/connect.ts myname -c "brief"
 ```
 
@@ -302,13 +315,15 @@ text. One-shot and pipe output to a file or another program stays plain text.
 
 ## Discord & Telegram
 
-Set the bot token and start:
+Set the bot token and start. For Discord:
 
 ```bash
-# Discord
 DISCORD_TOKEN=your-token bun run start
+```
 
-# Telegram
+For Telegram:
+
+```bash
 TELEGRAM_TOKEN=your-token bun run start
 ```
 
