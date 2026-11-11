@@ -572,7 +572,7 @@ it("operate mode sits a live board beside the World, sized to its pane, and poin
   f.screen.send("\x1bOR");
   await until(() => f.terminal.currentMode === "coordinate");
   await until(() => f.screen.text().includes("board-coordinate"));
-  f.screen.send("\x1bOR");
+  f.screen.send("\x1b[200~/mode coding\x1b[201~\r");
   await until(() => f.terminal.currentMode === "coding");
   expect(modes).toEqual(["operate", "coordinate", "coding"]);
   f.screen.send("fix it\r");
@@ -635,7 +635,8 @@ it("addresses a person by tell or by name, never by their own receipts", () => {
   expect(parseMode("Operate")).toBe("operate");
   expect(parseMode("nope")).toBeUndefined();
   expect(nextMode("operate")).toBe("coordinate");
-  expect(nextMode("coordinate")).toBe("coding");
+  expect(nextMode("coordinate")).toBe("memory");
+  expect(nextMode("memory")).toBe("coding");
 });
 
 it("--mode picks the first mode and implies --tui", () => {

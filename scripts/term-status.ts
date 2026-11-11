@@ -79,6 +79,10 @@ export interface WorldSnapshot {
   streams?: { total: number; items: StreamRow[] };
   /** The shared task board, newest first. */
   tasks?: { total: number; items: TaskSummary[] };
+  /** The dream pass in your scope: ids and counts, never note text. */
+  dreams?: { mode: string; guarded: string[]; items: DreamSummary[] };
+  /** Memory health in your scope (counts from the memory overview). */
+  memory?: MemoryHealth;
   /** When each part was last read successfully. */
   at: Partial<Record<Part, number>>;
   /** Parts this session may not read (the server answered 401/403). */
@@ -110,6 +114,33 @@ export interface TaskSummary {
   submitted: number;
 }
 
+export interface DreamSummary {
+  id: number;
+  entity: string;
+  pool: boolean;
+  state: string;
+  createdAt: number;
+  applied: number;
+  rejected: number;
+  pending: number;
+}
+
+/** A ratio's numerator over its denominator (`value` null when nothing to measure). */
+export interface Count {
+  n: number;
+  of: number;
+}
+
+export interface MemoryHealth {
+  scope: string;
+  unresolved: Count;
+  stale: Count;
+  duplicates: Count;
+  provenance: Count;
+  openJobs: number;
+  resolutions: number;
+}
+
 export interface HeldAction {
   token: string;
   kind: string;
@@ -132,7 +163,9 @@ export type Part =
   | "readiness"
   | "challenges"
   | "streams"
-  | "tasks";
+  | "tasks"
+  | "dreams"
+  | "memory";
 
 const EVERY: Record<Part, number> = {
   health: 5_000,
@@ -145,10 +178,12 @@ const EVERY: Record<Part, number> = {
   challenges: 10_000,
   streams: 5_000,
   tasks: 10_000,
+  dreams: 30_000,
+  memory: 30_000,
 };
 
 /** Read only while something on screen wants them (a mode's board, a `/live` card). */
-const ON_DEMAND = new Set<Part>(["streams", "tasks"]);
+const ON_DEMAND = new Set<Part>(["streams", "tasks", "dreams", "memory"]);
 
 /** A part the server refused is asked again only this often (access can change). */
 const DENIED_EVERY = 300_000;
@@ -355,6 +390,43 @@ export class WorldStatus {
           s.tasks = { total: Number(t.total ?? items.length), items };
           break;
         }
+        case "dreams": {
+          const d = (await this.get("/api/memory/dreams?limit=10")) as Json;
+          s.dreams = {
+            mode: String(d.mode ?? ""),
+            guarded: Array.isArray(d.guarded) ? d.guarded.map(String) : [],
+            items: (Array.isArray(d.dreams) ? d.dreams : []).map(
+              (row: Json): DreamSummary => ({
+                id: Number(row.id ?? 0),
+                entity: String(row.entity ?? ""),
+                pool: row.pool === true,
+                state: String(row.state ?? ""),
+                createdAt: Number(row.createdAt ?? 0),
+                applied: Number(row.ops?.applied ?? 0),
+                rejected: Number(row.ops?.rejected ?? 0),
+                pending: Number(row.ops?.pendingProposals ?? 0),
+              }),
+            ),
+          };
+          break;
+        }
+        case "memory": {
+          const m = (await this.get("/api/memory/overview")) as Json;
+          const count = (ratio: Json | undefined): Count => ({
+            n: Number(ratio?.numerator ?? 0),
+            of: Number(ratio?.denominator ?? 0),
+          });
+          s.memory = {
+            scope: String(m.ratios?.scope ?? ""),
+            unresolved: count(m.ratios?.unresolvedContradictionRate),
+            stale: count(m.ratios?.stalenessRatio),
+            duplicates: count(m.ratios?.redundancy),
+            provenance: count(m.ratios?.provenanceCoverage),
+            openJobs: Number(m.jobs?.open ?? 0),
+            resolutions: Array.isArray(m.resolutions) ? m.resolutions.length : 0,
+          };
+          break;
+        }
         case "readiness": {
           const r = (await this.get("/api/readiness")) as Json;
           s.readiness = {
@@ -376,6 +448,8 @@ export class WorldStatus {
         if (part === "alerts") this.snapshot.alerts = undefined;
         if (part === "streams") this.snapshot.streams = undefined;
         if (part === "tasks") this.snapshot.tasks = undefined;
+        if (part === "dreams") this.snapshot.dreams = undefined;
+        if (part === "memory") this.snapshot.memory = undefined;
         return first;
       }
       return false;

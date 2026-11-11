@@ -220,4 +220,60 @@ describe("live world status for the CLI", () => {
       .join("\n");
     expect(out).toContain("signed-in world account");
   });
+
+  test("memory mode reads dreams and memory health as counts, proposals first", async () => {
+    const now = Date.now();
+    const { fetcher } = server({
+      "/api/memory/dreams": () =>
+        json({
+          mode: "observe",
+          guarded: ["Fern"],
+          dreams: [
+            {
+              id: 7,
+              entity: "Rowan",
+              state: "observed",
+              createdAt: now - 60_000,
+              ops: { applied: 0, rejected: 1, pendingProposals: 0 },
+            },
+            {
+              id: 6,
+              entity: "Rowan",
+              state: "applied",
+              createdAt: now - 120_000,
+              ops: { applied: 3, rejected: 0, pendingProposals: 2 },
+            },
+          ],
+        }),
+      "/api/memory/overview": () =>
+        json({
+          ratios: {
+            scope: "own",
+            unresolvedContradictionRate: { value: 0.5, numerator: 1, denominator: 2 },
+            stalenessRatio: { value: 0, numerator: 0, denominator: 40 },
+            redundancy: { value: null, numerator: 0, denominator: 0 },
+            provenanceCoverage: { value: 0.25, numerator: 10, denominator: 40 },
+          },
+          jobs: { open: 2 },
+          resolutions: [{}],
+        }),
+    });
+    const status = new WorldStatus("http://x", () => "t", "Rowan", fetcher);
+    status.want(["dreams", "memory"]);
+    await status.refresh(true);
+    const theme = createTheme(termCaps({ isTTY: true, columns: 100 }, { NO_COLOR: "1" }));
+    const context = { theme, name: "Rowan", connected: true, snapshot: status.snapshot, queued: 0 };
+    const dreams = findPanel("dreams")!.render(context).join("\n");
+    expect(dreams.indexOf("#6")).toBeLessThan(dreams.indexOf("#7"));
+    expect(dreams).toContain("2 to adopt");
+    expect(dreams).toContain("memory dream adopt|dismiss");
+    expect(dreams).toContain("guard tripped: Fern");
+    expect(dreams).toContain("1 waiting · dreaming observe");
+    const memory = findPanel("memory")!.render(context).join("\n");
+    expect(memory).toContain("1 of 2");
+    expect(memory).toContain("note conflicts");
+    expect(memory).toContain("10 of 40");
+    expect(memory).toContain("2 open");
+    expect(memory).toContain("yours");
+  });
 });

@@ -12,6 +12,8 @@
  *   World conversation, where approvals and world commands go.
  * - `coordinate`: who is working on what — participant sessions (Streams)
  *   and the task board — beside the World, where you steer them.
+ * - `memory`: curating what the world knows — dream proposals waiting for
+ *   you and memory health — beside the World, where `memory …` runs.
  */
 
 import { isAddressedTo } from "../src/agent/social";
@@ -19,7 +21,7 @@ import type { Perception } from "../src/sdk/client";
 import type { ConversationView } from "./code-views";
 import type { Part } from "./term-status";
 
-export const WORKSPACE_MODES = ["coding", "operate", "coordinate"] as const;
+export const WORKSPACE_MODES = ["coding", "operate", "coordinate", "memory"] as const;
 export type WorkspaceMode = (typeof WORKSPACE_MODES)[number];
 
 export interface ModeDef {
@@ -63,6 +65,15 @@ export const MODES: Record<WorkspaceMode, ModeDef> = {
     board: ["streams", "tasks"],
     parts: ["streams", "tasks"],
     hint: "World commands go here: tell <name> <message>, task show <id>, task approve <id> <claimant>. /agents and /use reach native sessions. F3 cycles modes.",
+  },
+  memory: {
+    name: "memory",
+    label: "Memory",
+    describe: "dream proposals waiting for you and memory health beside the World",
+    composer: "world",
+    board: ["dreams", "memory"],
+    parts: ["dreams", "memory"],
+    hint: "World commands go here: memory recall <query>, memory dream proposals, memory dream adopt <id>, note conflicts. F3 cycles modes.",
   },
 };
 
