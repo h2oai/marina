@@ -332,4 +332,52 @@ describe("live world status for the CLI", () => {
         .join("\n"),
     ).toContain("traces need operator read");
   });
+
+  test("forecast opens only the newest cases, running first, with answers and scores", async () => {
+    const now = Date.now();
+    const cases = Array.from({ length: 7 }, (_, i) => ({
+      id: `c${i}`,
+      kind: i === 2 ? "research" : "prediction",
+      question: `question ${i}`,
+      updatedAt: now - i * 60_000,
+    }));
+    const snapshots: Record<string, unknown> = {
+      c0: {
+        attempt: {
+          state: "completed",
+          result: { estimate: { type: "binary", probability: 0.63 } },
+        },
+      },
+      c1: { attempt: { state: "running" } },
+      c2: { attempt: { state: "failed" } },
+      c3: {
+        attempt: { state: "completed", result: { estimate: { type: "binary", probability: 0.2 } } },
+        resolution: { at: 1, value: false, loss: 0.04 },
+      },
+      c4: { attempt: { state: "queued" } },
+    };
+    const calls: string[] = [];
+    const fetcher = async (url: string) => {
+      const path = new URL(url).pathname;
+      calls.push(path);
+      if (path === "/api/investigations") return json({ cases });
+      const id = path.split("/").pop()!;
+      return snapshots[id] ? json(snapshots[id]) : json({}, 404);
+    };
+    const status = new WorldStatus("http://x", () => "t", "Rowan", fetcher);
+    status.want(["forecasts"]);
+    await status.refresh(true, ["forecasts"]);
+    // One list and the five newest cases, never the rest.
+    expect(calls.filter((c) => c.startsWith("/api/investigations/"))).toHaveLength(5);
+    const theme = createTheme(termCaps({ isTTY: true, columns: 100 }, { NO_COLOR: "1" }));
+    const out = findPanel("forecasts")!
+      .render({ theme, name: "Rowan", connected: true, snapshot: status.snapshot, queued: 0 })
+      .join("\n");
+    expect(out.indexOf("question 1")).toBeLessThan(out.indexOf("question 0"));
+    expect(out.indexOf("question 4")).toBeLessThan(out.indexOf("question 0"));
+    expect(out).toContain("63% chance");
+    expect(out).toContain("resolved · loss 0.040");
+    expect(out).toContain("7 · 2 running");
+    expect(out).not.toContain("question 6");
+  });
 });

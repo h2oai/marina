@@ -637,7 +637,8 @@ it("addresses a person by tell or by name, never by their own receipts", () => {
   expect(nextMode("operate")).toBe("coordinate");
   expect(nextMode("coordinate")).toBe("memory");
   expect(nextMode("memory")).toBe("investigate");
-  expect(nextMode("investigate")).toBe("coding");
+  expect(nextMode("investigate")).toBe("forecast");
+  expect(nextMode("forecast")).toBe("coding");
 });
 
 it("--mode picks the first mode and implies --tui", () => {

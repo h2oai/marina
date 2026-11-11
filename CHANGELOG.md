@@ -1229,7 +1229,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contradictions, stale and duplicate records, provenance and open jobs (`/live dreams`,
   `/live memory`). `investigate` is for after the fact. It shows execution traces, with failed
   runs and failed checks first (operator read), and the activity feed (`/live traces`,
-  `/live feed`). Switch with F3, `/mode <name>`, or
+  `/live feed`). `forecast` shows your newest predictions and research, running first, then
+  answers and resolved scores, with Spend below (`/live forecasts`). Switch with F3, `/mode <name>`, or
   `--mode <name>` on `marina`, `marina attach` and `bun run code`. A mode only arranges the
   screen; the coding session keeps running. Coding no longer splits the World beside it at 110
   columns on its own; `/layout split` still does, from 80.

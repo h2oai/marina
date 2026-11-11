@@ -10,6 +10,8 @@
  * REPL never stops.
  */
 
+import { investigationEstimate } from "../src/sdk/investigation-text";
+
 export interface WorldSnapshot {
   health?: {
     status: string;
@@ -87,6 +89,8 @@ export interface WorldSnapshot {
   traces?: TraceSummary[];
   /** The public activity feed, newest first. */
   feed?: FeedItem[];
+  /** Your newest predictions and research (investigations), with their state and answer. */
+  forecasts?: { total: number; items: ForecastSummary[] };
   /** When each part was last read successfully. */
   at: Partial<Record<Part, number>>;
   /** Parts this session may not read (the server answered 401/403). */
@@ -164,6 +168,19 @@ export interface FeedItem {
   at: number;
 }
 
+export interface ForecastSummary {
+  id: string;
+  kind: string;
+  question: string;
+  state: string;
+  /** The answer in one phrase (`63%`, `4.2 °C ± 0.5`, `B (55%)`), when there is one. */
+  answer: string;
+  resolved: boolean;
+  /** Scoring loss once resolved. */
+  loss: number | null;
+  updatedAt: number;
+}
+
 export interface HeldAction {
   token: string;
   kind: string;
@@ -190,7 +207,8 @@ export type Part =
   | "dreams"
   | "memory"
   | "traces"
-  | "feed";
+  | "feed"
+  | "forecasts";
 
 const EVERY: Record<Part, number> = {
   health: 5_000,
@@ -207,10 +225,22 @@ const EVERY: Record<Part, number> = {
   memory: 30_000,
   traces: 15_000,
   feed: 10_000,
+  forecasts: 20_000,
 };
 
 /** Read only while something on screen wants them (a mode's board, a `/live` card). */
-const ON_DEMAND = new Set<Part>(["streams", "tasks", "dreams", "memory", "traces", "feed"]);
+const ON_DEMAND = new Set<Part>([
+  "streams",
+  "tasks",
+  "dreams",
+  "memory",
+  "traces",
+  "feed",
+  "forecasts",
+]);
+
+/** The case list carries no attempt state; only this many newest cases are opened. */
+const FORECAST_DETAIL = 5;
 
 /** A part the server refused is asked again only this often (access can change). */
 const DENIED_EVERY = 300_000;
@@ -490,6 +520,38 @@ export class WorldStatus {
           );
           break;
         }
+        case "forecasts": {
+          const list = (await this.get("/api/investigations")) as Json;
+          const cases: Json[] = Array.isArray(list.cases) ? list.cases : [];
+          const items = await Promise.all(
+            cases.slice(0, FORECAST_DETAIL).map(async (row): Promise<ForecastSummary> => {
+              const id = String(row.id ?? "");
+              const base = {
+                id,
+                kind: String(row.kind ?? ""),
+                question: String(row.question ?? ""),
+                updatedAt: Number(row.updatedAt ?? 0),
+              };
+              try {
+                const snap = (await this.get(
+                  `/api/investigations/${encodeURIComponent(id)}`,
+                )) as Json;
+                const attempt = (snap.attempt ?? {}) as Json;
+                return {
+                  ...base,
+                  state: String(attempt.state ?? ""),
+                  answer: investigationEstimate(attempt.result?.estimate) ?? "",
+                  resolved: !!snap.resolution,
+                  loss: typeof snap.resolution?.loss === "number" ? snap.resolution.loss : null,
+                };
+              } catch {
+                return { ...base, state: "", answer: "", resolved: false, loss: null };
+              }
+            }),
+          );
+          s.forecasts = { total: cases.length, items };
+          break;
+        }
         case "readiness": {
           const r = (await this.get("/api/readiness")) as Json;
           s.readiness = {
@@ -515,6 +577,7 @@ export class WorldStatus {
         if (part === "memory") this.snapshot.memory = undefined;
         if (part === "traces") this.snapshot.traces = undefined;
         if (part === "feed") this.snapshot.feed = undefined;
+        if (part === "forecasts") this.snapshot.forecasts = undefined;
         return first;
       }
       return false;
