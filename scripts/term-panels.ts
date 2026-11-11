@@ -368,6 +368,76 @@ export const PANELS: Panel[] = [
     },
   },
   {
+    name: "traces",
+    describe: "recent execution traces: failed runs and failed checks first",
+    needs: ["traces"],
+    render: (c) => {
+      const t = c.theme;
+      if (c.snapshot.denied?.traces)
+        return card(t, "Traces", [
+          t.fg("faint")(
+            "traces need operator read — trace find status=failed still searches yours",
+          ),
+        ]);
+      const traces = c.snapshot.traces;
+      if (!traces) return card(t, "Traces", waiting(c, "execution traces"));
+      if (!traces.length)
+        return card(t, "Traces", [
+          t.fg("faint")("no traces yet — they appear as models are called"),
+        ]);
+      const bad = (r: (typeof traces)[number]) =>
+        r.status === "failed" || r.failedChecks.length > 0;
+      const rows = [...traces].sort(
+        (a, b) => Number(bad(b)) - Number(bad(a)) || b.startedAt - a.startedAt,
+      );
+      const body = columns(
+        rows.map((r) => {
+          const tone: Token = bad(r) ? "error" : r.status === "running" ? "warning" : "success";
+          return [
+            t.fg("faint")(clean(t, r.id)),
+            t.fg(tone)(r.status),
+            t.fg("code")(clean(t, r.model || "—")),
+            t.fg("muted")(r.durationMs === null ? "…" : `${(r.durationMs / 1000).toFixed(1)}s`),
+            t.fg("muted")(`${r.spans} spans`),
+            r.failedChecks.length
+              ? t.fg("error")(clean(t, r.failedChecks.join(", ")))
+              : t.fg("faint")(fmtDuration(Date.now() - r.startedAt)),
+          ];
+        }),
+      );
+      const failed = rows.filter(bad).length;
+      return card(
+        t,
+        "Traces",
+        [...body, t.fg("muted")("trace show <id> · trace find status=failed")],
+        failed ? `${failed} failed of ${rows.length}` : `${rows.length}`,
+      );
+    },
+  },
+  {
+    name: "feed",
+    aliases: ["activity"],
+    describe: "the activity feed: what happened in the world, newest first",
+    needs: ["feed"],
+    render: (c) => {
+      const t = c.theme;
+      const feed = c.snapshot.feed;
+      if (!feed) return card(t, "Feed", waiting(c, "the activity feed"));
+      if (!feed.length) return card(t, "Feed", [t.fg("faint")("nothing has happened yet")]);
+      const body = columns(
+        [...feed]
+          .sort((a, b) => b.at - a.at)
+          .map((r) => [
+            t.fg("faint")(fmtDuration(Date.now() - r.at)),
+            t.fg("muted")(clean(t, r.kind)),
+            r.entity ? t.identity(r.entity)(clean(t, r.entity)) : t.fg("faint")("—"),
+            clean(t, r.summary),
+          ]),
+      );
+      return card(t, "Feed", [...body, t.fg("muted")("feed list kind:<k> entity:<name> since:2h")]);
+    },
+  },
+  {
     name: "spend",
     aliases: ["cost", "$"],
     describe: "upstream spend today by scope, against the daily cap",

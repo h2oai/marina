@@ -276,4 +276,60 @@ describe("live world status for the CLI", () => {
     expect(memory).toContain("2 open");
     expect(memory).toContain("yours");
   });
+
+  test("investigate reads traces failures first, and says why when it may not", async () => {
+    const now = Date.now();
+    const { fetcher } = server({
+      "/api/traces": () =>
+        json({
+          traces: [
+            {
+              traceId: "t-ok",
+              status: "completed",
+              startedAt: now - 5_000,
+              durationMs: 1200,
+              spans: [{ attributes: { model: "claude-opus-5-5" } }],
+              evaluation: { checks: [{ id: "terminal_outcome", result: "passed" }] },
+            },
+            {
+              traceId: "t-bad",
+              status: "completed",
+              startedAt: now - 60_000,
+              durationMs: 800,
+              spans: [{ attributes: {} }, { attributes: {} }],
+              evaluation: { checks: [{ id: "tool_results", result: "failed" }] },
+            },
+          ],
+        }),
+      "/api/feed": () =>
+        json([
+          {
+            kind: "task_created",
+            entity: "Ada",
+            summary: "Fix the parser",
+            timestamp: now - 1_000,
+          },
+        ]),
+    });
+    const status = new WorldStatus("http://x", () => "t", "Rowan", fetcher);
+    status.want(["traces", "feed"]);
+    await status.refresh(true);
+    const theme = createTheme(termCaps({ isTTY: true, columns: 100 }, { NO_COLOR: "1" }));
+    const context = { theme, name: "Rowan", connected: true, snapshot: status.snapshot, queued: 0 };
+    const traces = findPanel("traces")!.render(context).join("\n");
+    expect(traces.indexOf("t-bad")).toBeLessThan(traces.indexOf("t-ok"));
+    expect(traces).toContain("tool_results");
+    expect(traces).toContain("claude-opus-5-5");
+    expect(traces).toContain("1 failed of 2");
+    expect(findPanel("feed")!.render(context).join("\n")).toContain("Fix the parser");
+
+    const denied = server({ "/api/traces": () => json({}, 403) });
+    const resident = new WorldStatus("http://x", () => "t", "Rowan", denied.fetcher);
+    await resident.refresh(true, ["traces"]);
+    expect(
+      findPanel("traces")!
+        .render({ ...context, snapshot: resident.snapshot })
+        .join("\n"),
+    ).toContain("traces need operator read");
+  });
 });
