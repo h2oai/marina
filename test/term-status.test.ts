@@ -1,7 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, test } from "bun:test";
+import { termCaps } from "../scripts/term-caps";
+import { findPanel } from "../scripts/term-panels";
 import { httpBase, WorldStatus } from "../scripts/term-status";
+import { createTheme } from "../scripts/term-theme";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -142,5 +145,79 @@ describe("live world status for the CLI", () => {
     status.onChange(() => heard++);
     await status.refresh(true, ["health"]);
     expect(heard).toBe(1);
+  });
+
+  test("streams and tasks are read only while something on screen wants them", async () => {
+    const { calls, fetcher } = server({
+      "/api/routing/overview": () =>
+        json({
+          total: 3,
+          items: [
+            {
+              session: { id: "s1", label: "idle-pi", kind: "pi", lastSeenAt: 3 },
+              runtime: { status: "idle", adapter: "pi" },
+              owned: true,
+            },
+            {
+              session: { id: "s2", label: "claude-1", kind: "claude", lastSeenAt: 1 },
+              runtime: { status: "waiting", adapter: "claude", request: { id: "q" } },
+              owned: true,
+            },
+            {
+              session: { id: "s3", label: "codex-1", kind: "codex", lastSeenAt: 2 },
+              runtime: { status: "failed", adapter: "codex", error: "exit 1" },
+              owned: false,
+            },
+          ],
+        }),
+      "/api/coordination/tasks": () =>
+        json({
+          total: 3,
+          items: [
+            { id: 1, title: "open one", status: "open", creator_name: "Ada" },
+            { id: 2, title: "review me", status: "open", creator_name: "Ada", submitted: 1 },
+            { id: 3, title: "finished", status: "completed", creator_name: "Ada" },
+          ],
+        }),
+    });
+    const status = new WorldStatus("http://x", () => "t", "Rowan", fetcher);
+    await status.refresh(true);
+    expect(calls.some((c) => c.path.startsWith("/api/routing"))).toBe(false);
+    expect(calls.some((c) => c.path.startsWith("/api/coordination"))).toBe(false);
+    status.want(["streams", "tasks"]);
+    await status.refresh(true);
+    expect(status.snapshot.streams?.items.map((r) => r.asking)).toEqual([false, true, false]);
+    expect(status.snapshot.tasks?.total).toBe(3);
+
+    const theme = createTheme(termCaps({ isTTY: true, columns: 100 }, { NO_COLOR: "1" }));
+    const context = { theme, name: "Rowan", connected: true, snapshot: status.snapshot, queued: 0 };
+    const streams = findPanel("streams")!.render(context).join("\n");
+    // Whoever needs you comes first: asking, then failing, then the rest.
+    expect(streams.indexOf("claude-1")).toBeLessThan(streams.indexOf("codex-1"));
+    expect(streams.indexOf("codex-1")).toBeLessThan(streams.indexOf("idle-pi"));
+    expect(streams).toContain("asking you");
+    expect(streams).toContain("exit 1");
+    expect(streams).toContain("3 · 1 asking");
+    const tasks = findPanel("tasks")!.render(context).join("\n");
+    expect(tasks.indexOf("review me")).toBeLessThan(tasks.indexOf("open one"));
+    expect(tasks).not.toContain("finished");
+    expect(tasks).toContain("2 open · 1 to review");
+
+    // Wanting nothing stops the polling.
+    status.want([]);
+    const before = calls.length;
+    await status.refresh(true);
+    expect(calls.slice(before).some((c) => c.path.startsWith("/api/routing"))).toBe(false);
+  });
+
+  test("a session without a world account is told why Streams is empty", async () => {
+    const { fetcher } = server({ "/api/routing/overview": () => json({}, 403) });
+    const status = new WorldStatus("http://x", () => "t", "Rowan", fetcher);
+    await status.refresh(true, ["streams"]);
+    const theme = createTheme(termCaps({ isTTY: true, columns: 100 }, { NO_COLOR: "1" }));
+    const out = findPanel("streams")!
+      .render({ theme, name: "Rowan", connected: true, snapshot: status.snapshot, queued: 0 })
+      .join("\n");
+    expect(out).toContain("signed-in world account");
   });
 });

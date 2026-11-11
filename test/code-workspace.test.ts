@@ -568,10 +568,13 @@ it("operate mode sits a live board beside the World, sized to its pane, and poin
   // The composer starts in the World: plain text is a world command.
   f.screen.send("challenge list\r");
   expect(f.lines).toEqual(["/world challenge list"]);
-  // F3 cycles back to coding: the board is gone and the composer is Coding's again.
+  // F3 cycles to coordinate, and on to coding: the board is gone and the composer is Coding's again.
+  f.screen.send("\x1bOR");
+  await until(() => f.terminal.currentMode === "coordinate");
+  await until(() => f.screen.text().includes("board-coordinate"));
   f.screen.send("\x1bOR");
   await until(() => f.terminal.currentMode === "coding");
-  expect(modes).toEqual(["operate", "coding"]);
+  expect(modes).toEqual(["operate", "coordinate", "coding"]);
   f.screen.send("fix it\r");
   expect(f.lines.at(-1)).toBe("fix it");
   // Below 80 columns the World stands alone.
@@ -631,7 +634,8 @@ it("addresses a person by tell or by name, never by their own receipts", () => {
   ).toBeUndefined();
   expect(parseMode("Operate")).toBe("operate");
   expect(parseMode("nope")).toBeUndefined();
-  expect(nextMode("operate")).toBe("coding");
+  expect(nextMode("operate")).toBe("coordinate");
+  expect(nextMode("coordinate")).toBe("coding");
 });
 
 it("--mode picks the first mode and implies --tui", () => {
