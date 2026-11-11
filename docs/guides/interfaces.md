@@ -47,21 +47,34 @@ It is the coding view of the dashboard, not all of it; see [what it does not sho
 ### Start it
 
 Install the `marina` command once from the checkout (`bun install`, then `bun run setup:cli`).
-Then run one of these:
+Then run one of these. Start a local Marina for this folder and open the workspace:
 
 ```bash
-# Start a local Marina for this folder and open the workspace.
 cd /path/to/project
 marina --tui
+```
 
-# The same, from the Marina checkout.
+The same, from the Marina checkout:
+
+```bash
 bun run code /path/to/project --tui
+```
 
-# Attach to a world that is already running. Missing values are prompted for.
+Attach to a world that is already running (missing values are prompted for):
+
+```bash
 marina attach --tui
-marina attach ws://localhost:3300/ws --name Builder --session <id> --tui
+```
 
-# Open straight into a use-case mode (implies --tui).
+Or name the world, the participant and the session:
+
+```bash
+marina attach ws://localhost:3300/ws --name Builder --session <id> --tui
+```
+
+Open straight into a use-case mode (implies `--tui`):
+
+```bash
 marina --mode operate
 ```
 
