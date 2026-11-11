@@ -413,10 +413,86 @@ function buildMarketFeatureRow(db: MarinaDB, m: MarketRow, label?: string | null
 
 // ─── Live feed rendering ─────────────────────────────────────────────────────
 
+const HOUR_MS = 3_600_000;
+
+/** "19h" under two days, else "3d". */
+function closesIn(ms: number): string {
+  const h = Math.max(0, ms) / HOUR_MS;
+  return h < 48 ? `${Math.max(1, Math.round(h))}h` : `${Math.round(h / 24)}d`;
+}
+
+/** A 0–1 price as whole cents, or "—" when unknown. */
+function cents(price: number): string {
+  return Number.isFinite(price) ? `${Math.round(price * 100)}¢` : "—";
+}
+
+/**
+ * Kalshi markets closing inside (now, cutoff], combos (parlays) left out,
+ * most traded in the last 24 h first. The venue filters too; this keeps the
+ * window and the combo rule even when it ignores a parameter.
+ */
+export function selectKalshiLive(
+  markets: readonly kalshi.KalshiMarket[],
+  now: number,
+  cutoffMs: number,
+  limit: number,
+): kalshi.KalshiMarket[] {
+  const volume = (m: kalshi.KalshiMarket) => {
+    const v = Number(m.volume_24h_fp);
+    return Number.isFinite(v) ? v : 0;
+  };
+  return markets
+    .filter((m) => {
+      if (m.mve_collection_ticker || m.ticker.startsWith("KXMVE")) return false;
+      const close = Date.parse(m.close_time);
+      return Number.isFinite(close) && close > now && close <= cutoffMs;
+    })
+    .sort((a, b) => volume(b) - volume(a) || Date.parse(a.close_time) - Date.parse(b.close_time))
+    .slice(0, limit);
+}
+
+/**
+ * Polymarket events ending inside (now, cutoff], most traded in the last 24 h
+ * first, each with its open markets most traded first.
+ */
+export function selectPolymarketLive(
+  events: readonly polymarket.PolymarketEvent[],
+  now: number,
+  cutoffMs: number,
+  limit: number,
+): polymarket.PolymarketEvent[] {
+  const marketVolume = (m: polymarket.PolymarketMarket) => m.volume24hr ?? (Number(m.volume) || 0);
+  return events
+    .filter((e) => {
+      const end = Date.parse(e.endDate ?? "");
+      return Number.isFinite(end) && end > now && end <= cutoffMs;
+    })
+    .map((e) => ({
+      ...e,
+      markets: (e.markets ?? [])
+        .filter((m) => !m.closed)
+        .sort((a, b) => marketVolume(b) - marketVolume(a)),
+    }))
+    .filter((e) => e.markets.length > 0)
+    .sort((a, b) => (b.volume24hr ?? 0) - (a.volume24hr ?? 0))
+    .slice(0, limit);
+}
+
+/** The yes price of a Polymarket market, 0–1, or NaN when it cannot be read. */
+function polymarketYes(m: polymarket.PolymarketMarket): number {
+  try {
+    const prices = JSON.parse(m.outcomePrices ?? "[]");
+    const yes = Number.parseFloat(prices[0]);
+    return Number.isFinite(yes) ? yes : Number.NaN;
+  } catch {
+    return Number.NaN;
+  }
+}
+
 /**
  * Pull live markets from a venue (Kalshi or Polymarket) and render those
- * resolving within the window. Voice-friendly format. Used by the bettor
- * agent to find candidate markets in the resolution window.
+ * resolving within the window, most traded first. Used by forecasters and
+ * the bettor agent to find candidate markets that resolve soon.
  *
  * No auth required — both venues' read endpoints are public. Falls back
  * gracefully when the venue is unreachable.
@@ -428,34 +504,36 @@ async function renderLiveFeed(
   cutoffMs: number,
   limit: number,
 ): Promise<void> {
-  const windowDays = Math.round((cutoffMs - Date.now()) / DAY_MS);
+  const now = Date.now();
+  const window = closesIn(cutoffMs - now);
   if (venue === "kalshi") {
-    const res = await kalshi.getMarkets({ status: "open", limit: Math.min(limit * 4, 200) });
+    const res = await kalshi.getMarkets({
+      status: "open",
+      limit: 200,
+      minCloseTs: Math.floor(now / 1000),
+      maxCloseTs: Math.floor(cutoffMs / 1000),
+      excludeMultivariate: true,
+    });
     if (!res.ok) {
       ctx.send(eid, `Kalshi unreachable: ${res.error}`);
       return;
     }
-    const filtered = res.response.markets
-      .filter((m) => {
-        const close = Date.parse(m.close_time);
-        return Number.isFinite(close) && close > Date.now() && close <= cutoffMs;
-      })
-      .sort((a, b) => Date.parse(a.close_time) - Date.parse(b.close_time))
-      .slice(0, limit);
+    const filtered = selectKalshiLive(res.response.markets, now, cutoffMs, limit);
     if (filtered.length === 0) {
       ctx.send(
         eid,
-        `${header(`Kalshi — markets resolving within ${windowDays}d`)}\n${separator(80)}\n${dim("None found in window.")}`,
+        `${header(`Kalshi — markets resolving within ${window}`)}\n${separator(80)}\n${dim("None found in window.")}`,
       );
       return;
     }
     const lines = filtered.map((m) => {
-      const closeIn = Math.max(0, Math.round((Date.parse(m.close_time) - Date.now()) / DAY_MS));
-      return `  ${bold(m.ticker.padEnd(28))} ${String(m.yes_ask).padStart(3)}¢  ${String(closeIn).padStart(3)}d  ${m.title.slice(0, 60)}`;
+      const yes = cents(kalshi.kalshiPrice(m.yes_ask_dollars, m.yes_ask));
+      const close = closesIn(Date.parse(m.close_time) - now);
+      return `  ${bold(m.ticker.padEnd(28))} ${yes.padStart(4)}  ${close.padStart(4)}  ${m.title.slice(0, 60)}`;
     });
     ctx.send(
       eid,
-      `${header(`Kalshi — ${filtered.length} markets resolving within ${windowDays}d`)}\n${separator(80)}\n  ${dim("TICKER".padEnd(28))} ${dim("YES")}  ${dim("RESOLVES")}  ${dim("QUESTION")}\n${lines.join("\n")}`,
+      `${header(`Kalshi — ${filtered.length} markets resolving within ${window}, most traded first`)}\n${separator(80)}\n  ${dim("TICKER".padEnd(28))} ${dim(" YES")}  ${dim("CLOSE")} ${dim("QUESTION")}\n${lines.join("\n")}`,
     );
     return;
   }
@@ -464,39 +542,33 @@ async function renderLiveFeed(
   const res = await polymarket.getEvents({
     active: true,
     closed: false,
-    limit: Math.min(limit * 4, 200),
+    limit: 100,
+    endDateMin: new Date(now).toISOString(),
+    endDateMax: new Date(cutoffMs).toISOString(),
+    order: "volume24hr",
   });
   if (!res.ok) {
     ctx.send(eid, `Polymarket unreachable: ${res.error}`);
     return;
   }
-  // Polymarket events don't have a uniform close_time on the gamma response;
-  // for now we render all active events and rely on the ranking +
-  // limit. The bettor agent reads the descriptions to assess timing.
-  const top = res.response.slice(0, limit);
+  const top = selectPolymarketLive(res.response, now, cutoffMs, limit);
   if (top.length === 0) {
     ctx.send(
       eid,
-      `${header("Polymarket — active events")}\n${separator(80)}\n${dim("No active events.")}`,
+      `${header(`Polymarket — events resolving within ${window}`)}\n${separator(80)}\n${dim("None found in window.")}`,
     );
     return;
   }
   const lines = top.flatMap((evt) => {
-    const head = `  ${bold(evt.id.slice(0, 14).padEnd(14))} ${evt.title.slice(0, 70)}`;
-    const sub = (evt.markets ?? []).slice(0, 2).map((m) => {
-      let yesPrice = 50;
-      try {
-        const prices = JSON.parse(m.outcomePrices ?? "[]");
-        if (prices[0]) yesPrice = Math.round(Number.parseFloat(prices[0]) * 100);
-      } catch {
-        /* ignore */
-      }
-      return `    ${dim(m.id.slice(0, 12).padEnd(12))} ${String(yesPrice).padStart(3)}¢  ${m.question.slice(0, 60)}`;
+    const close = closesIn(Date.parse(evt.endDate ?? "") - now);
+    const head = `  ${bold(evt.id.slice(0, 14).padEnd(14))} ${close.padStart(4)}  ${evt.title.slice(0, 64)}`;
+    const sub = evt.markets.slice(0, 2).map((m) => {
+      return `    ${dim(m.id.slice(0, 12).padEnd(12))} ${cents(polymarketYes(m)).padStart(4)}  ${m.question.slice(0, 60)}`;
     });
     return [head, ...sub];
   });
   ctx.send(
     eid,
-    `${header(`Polymarket — ${top.length} active events (window ${windowDays}d, ranking-based)`)}\n${separator(80)}\n${lines.join("\n")}`,
+    `${header(`Polymarket — ${top.length} events resolving within ${window}, most traded first`)}\n${separator(80)}\n${lines.join("\n")}`,
   );
 }

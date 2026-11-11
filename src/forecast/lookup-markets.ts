@@ -19,6 +19,7 @@ import {
   type KalshiEvent,
   type KalshiMarket,
   getEvents as kalshiEvents,
+  kalshiPrice,
 } from "../net/clients/kalshi-client";
 import {
   type PolymarketEvent,
@@ -275,14 +276,6 @@ export function kalshiLookup(
       return out;
     },
   };
-}
-
-/** A Kalshi price as 0–1: a dollar string (current API) wins over cents (older responses). */
-function kalshiPrice(dollars: string | null | undefined, cents: number | null | undefined) {
-  const d = dollars == null ? Number.NaN : Number(dollars);
-  if (Number.isFinite(d)) return d;
-  const c = cents == null ? Number.NaN : Number(cents);
-  return Number.isFinite(c) ? c / 100 : Number.NaN;
 }
 
 /** Midpoint of a bid and ask, 0–1; undefined for an empty or crossed book (a zero bid is a valid long shot). */

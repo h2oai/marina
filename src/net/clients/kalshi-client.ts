@@ -40,6 +40,10 @@ export interface KalshiMarket {
   no_ask: number;
   no_bid: number;
   volume: number;
+  /** Current API: contracts traded in the last 24 h, as a decimal string. */
+  volume_24h_fp?: string;
+  /** Set on a multivariate (combo) market; such markets are parlays of other markets. */
+  mve_collection_ticker?: string;
   /** Lifecycle: "initialized" | "active" | "closed" | "settled" | "determined".
    *  Resolved markets are "settled" (or sometimes "determined"). */
   status: string;
@@ -130,8 +134,28 @@ export function isPaperMode(opts: KalshiClientOpts = {}): boolean {
  * List markets. In paper mode, returns the public read-only list (no auth
  * required for the public endpoint). In live mode, includes private fields.
  */
+/** A Kalshi price as 0–1: a dollar string (current API) wins over cents (older responses). */
+export function kalshiPrice(
+  dollars: string | null | undefined,
+  cents: number | null | undefined,
+): number {
+  const d = dollars == null ? Number.NaN : Number(dollars);
+  if (Number.isFinite(d)) return d;
+  const c = cents == null ? Number.NaN : Number(cents);
+  return Number.isFinite(c) ? c / 100 : Number.NaN;
+}
+
 export async function getMarkets(
-  filter: { status?: string; series?: string; limit?: number } = {},
+  filter: {
+    status?: string;
+    series?: string;
+    limit?: number;
+    /** Close time window, unix seconds (`min_close_ts` / `max_close_ts`). */
+    minCloseTs?: number;
+    maxCloseTs?: number;
+    /** Leave out multivariate (combo) markets (`mve_filter=exclude`). */
+    excludeMultivariate?: boolean;
+  } = {},
   opts: KalshiClientOpts = {},
 ): Promise<KalshiResult<{ markets: KalshiMarket[]; cursor?: string }>> {
   const base = opts.base ?? process.env.KALSHI_BASE ?? DEFAULT_BASE;
@@ -139,6 +163,9 @@ export async function getMarkets(
   if (filter.status) params.set("status", filter.status);
   if (filter.series) params.set("series_ticker", filter.series);
   if (filter.limit) params.set("limit", String(filter.limit));
+  if (filter.minCloseTs !== undefined) params.set("min_close_ts", String(filter.minCloseTs));
+  if (filter.maxCloseTs !== undefined) params.set("max_close_ts", String(filter.maxCloseTs));
+  if (filter.excludeMultivariate) params.set("mve_filter", "exclude");
   const url = `${base}/markets${params.toString() ? `?${params}` : ""}`;
 
   return await jsonGet<{ markets: KalshiMarket[]; cursor?: string }>(url, opts);
