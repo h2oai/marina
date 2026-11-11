@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { inputGuidance, terminalCompletionFor } from "./code-completion";
 import type { CodeEditor, CodeEditorOptions, CodeEditorState } from "./code-editor";
+import { MODES } from "./code-modes";
 import { CodePanelForm } from "./code-panel-form";
 import { terminalText } from "./code-presentation";
 import { themeFor } from "./code-style";
@@ -119,6 +120,15 @@ export class WorkspaceCodeEditor implements CodeEditor {
           visible: () => this.diff.active,
         },
         {
+          component: line(() => `${palette.fg("accent")("@")} ${this.state?.mention ?? ""}`),
+          basis: 1,
+          visible: ({ height }) =>
+            !!this.state?.mention &&
+            (this.state.mode ?? "coding") === "coding" &&
+            this.focusView === "coding" &&
+            (height ?? 0) >= 8,
+        },
+        {
           component: line(() => this.notice),
           basis: 1,
           visible: ({ height }) => !!this.notice && (height ?? 0) >= 8,
@@ -153,7 +163,8 @@ export class WorkspaceCodeEditor implements CodeEditor {
         { component: input, basis: "auto", minSize: 3, maxSize: 10, shrink: 1 },
         {
           component: line(
-            () => "F1 help · F2 layout · F6 Coding/World · F7 requests · F8 panel · Ctrl+D exit",
+            () =>
+              `F1 help · F2 layout · F3 mode: ${MODES[this.state?.mode ?? "coding"].label} · F6 Coding/World · F7 requests · F8 panel · Ctrl+D exit`,
           ),
           basis: 1,
           visible: ({ height }) => (height ?? 0) >= 10,
@@ -187,6 +198,18 @@ export class WorkspaceCodeEditor implements CodeEditor {
       }
       if (matchesKey(data, "f2")) {
         options.line("/layout");
+        return { consume: true };
+      }
+      if (matchesKey(data, "f3")) {
+        options.line("/mode");
+        return { consume: true };
+      }
+      if (
+        (matchesKey(data, "shift+pageUp") || matchesKey(data, "shift+pageDown")) &&
+        this.state?.board
+      ) {
+        this.panes.scrollBoard(matchesKey(data, "shift+pageUp") ? -10 : 10);
+        this.tui.requestRender();
         return { consume: true };
       }
       const view = matchesKey(data, "f6")
@@ -253,6 +276,14 @@ export class WorkspaceCodeEditor implements CodeEditor {
     this.editors[view] = this.makeEditor(view);
     if (view === this.focusView) this.tui.setFocus(this.editors[view]);
     this.tui.requestRender();
+  }
+
+  boardColumns(): number | undefined {
+    return this.panes.boardColumns();
+  }
+
+  paneColumns(view: TerminalView): number | undefined {
+    return this.panes.columns(view);
   }
 
   follow() {

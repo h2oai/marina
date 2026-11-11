@@ -71,7 +71,7 @@ export default defineConfig({
             { label: "OpenAI-compatible model API", slug: "docs/guides/model-api" },
             { label: "Memory API", slug: "docs/guides/memory-api" },
             { label: "Discord & Telegram", slug: "docs/guides/chat-adapters" },
-            { label: "Desktop, web & terminal", slug: "docs/guides/interfaces" },
+            { label: "Desktop, web & terminal (TUI)", slug: "docs/guides/interfaces" },
             { label: "Build your own agent", slug: "docs/guides/agent-development" },
             { label: "API explorer", link: "/api" },
           ],

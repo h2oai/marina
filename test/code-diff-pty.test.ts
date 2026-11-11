@@ -96,7 +96,7 @@ test.skipIf(process.platform === "win32")(
       await until(() => terminalText(output).includes("file 1/2"));
       output = "";
       tty.write("q");
-      await until(() => terminalText(output).includes("recent local history"));
+      await until(() => terminalText(output).includes("Coding · input here"));
       // Back in the composer: typed text is a draft again, not a diff key.
       tty.write("next please\r");
       await until(() => received("command", "next please"));

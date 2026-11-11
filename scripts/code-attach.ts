@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { IS_COMPILED } from "../src/runtime-paths";
 import type { ActiveCodingSession, ConnectedCodeOptions } from "./code-connected";
+import type { WorkspaceMode } from "./code-modes";
 import {
   type CachedParticipant,
   cachedParticipantToken,
@@ -21,7 +22,8 @@ import {
   participantUrl,
 } from "./session-cache";
 
-export const ATTACH_USAGE = "marina attach [url] [--name <account>] [--session <id>] [--tui]";
+export const ATTACH_USAGE =
+  "marina attach [url] [--name <account>] [--session <id>] [--tui] [--mode <name>]";
 
 const ACCOUNT_NAME = /^[a-zA-Z0-9_]{1,20}$/;
 
@@ -38,6 +40,7 @@ export interface AttachOptions {
   name?: string;
   session?: string;
   tui?: boolean;
+  mode?: WorkspaceMode;
 }
 
 /** URL: the argument, then MARINA_URL, then the URL of the only cached identity's server. */
@@ -192,6 +195,7 @@ export async function resolveAttach(
     ...(token ? { token } : {}),
     ...(deps.cacheDirectory ? { cacheDirectory: deps.cacheDirectory } : {}),
     ...(options.tui ? { tui: true } : {}),
+    ...(options.mode ? { mode: options.mode } : {}),
     chooseSession: (sessions) => chooseAttachSession(sessions, { name, url }, deps.io),
   };
 }
