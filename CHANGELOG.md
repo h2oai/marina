@@ -133,6 +133,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The dashboard builds itself.** A source checkout used to need `bun run dashboard:build`, which
+  the `marina` CLI setup never ran, so a coding session's dashboard link opened a "not built yet"
+  page. The server now builds `dist/dashboard` in the background at boot when it is missing or
+  older than its sources (about a second, swapped in only when complete, one build at a time), and
+  the `marina` welcome card always shows the session's dashboard URL.
+  `MARINA_DASHBOARD_AUTOBUILD=off` turns it off.
+
 - **The work pulse no longer stalls on one stuck task.** It kept one pulse task open at a time, and
   the reviewer had claimed and submitted its own task, which it never reviewed, so no new work
   opened for four days. The pulse now runs every 6 hours and keeps up to `MARINA_WORK_PULSE_OPEN`
