@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { experimentalHelp } from "../../config/feature-status";
+import { selectKalshiLive } from "../../forecast/live-market";
 import { bold, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import * as kalshi from "../../net/clients/kalshi-client";
 import * as polymarket from "../../net/clients/polymarket-client";
@@ -11,6 +12,8 @@ import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { refuseCommand } from "../command-response";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
 import { parseDuration } from "./format-duration";
+
+export { selectKalshiLive } from "../../forecast/live-market";
 
 const HELP =
   "Prediction market discovery and leaderboards.\nUsage: market list [open|resolved] | market search <query> | market show <id> (also view/info) | market live <venue> [duration] [limit] | market leaderboard | market score [entity] | market forecast <id>\n\nExamples:\n  market list\n  market list resolved\n  market search inflation\n  market show market:tech\n  market live kalshi 7d 25\n  market live polymarket 1mo\n  market leaderboard\n  market score Alice\n  market forecast market:tech";
@@ -424,31 +427,6 @@ function closesIn(ms: number): string {
 /** A 0–1 price as whole cents, or "—" when unknown. */
 function cents(price: number): string {
   return Number.isFinite(price) ? `${Math.round(price * 100)}¢` : "—";
-}
-
-/**
- * Kalshi markets closing inside (now, cutoff], combos (parlays) left out,
- * most traded in the last 24 h first. The venue filters too; this keeps the
- * window and the combo rule even when it ignores a parameter.
- */
-export function selectKalshiLive(
-  markets: readonly kalshi.KalshiMarket[],
-  now: number,
-  cutoffMs: number,
-  limit: number,
-): kalshi.KalshiMarket[] {
-  const volume = (m: kalshi.KalshiMarket) => {
-    const v = Number(m.volume_24h_fp);
-    return Number.isFinite(v) ? v : 0;
-  };
-  return markets
-    .filter((m) => {
-      if (m.mve_collection_ticker || m.ticker.startsWith("KXMVE")) return false;
-      const close = Date.parse(m.close_time);
-      return Number.isFinite(close) && close > now && close <= cutoffMs;
-    })
-    .sort((a, b) => volume(b) - volume(a) || Date.parse(a.close_time) - Date.parse(b.close_time))
-    .slice(0, limit);
 }
 
 /**

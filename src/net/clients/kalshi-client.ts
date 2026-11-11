@@ -49,6 +49,10 @@ export interface KalshiMarket {
   status: string;
   close_time: string;
   category: string;
+  /** The event this market belongs to (several markets can share one event). */
+  event_ticker?: string;
+  /** The venue's exact resolution rule, e.g. "If X wins …, then the market resolves to Yes." */
+  rules_primary?: string;
   /** Final outcome once the market resolves: "yes" | "no". Absent on
    *  unresolved markets. Set together with status="settled". */
   result?: "yes" | "no";

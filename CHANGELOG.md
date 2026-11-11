@@ -1206,6 +1206,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`forecast market:live` forecasts a real market that settles soon.** It picks the most traded
+  open Kalshi market closing within the window (`window:`, default 48 h) that is still undecided
+  (5–95¢) and new to you, and forecasts it in the market's own resolution words, filed against
+  that market so the answer is scored when it settles. Nothing runs on its own; `schedule add
+  daily-forecast daily:14:00 -- forecast market:live` makes it a daily duty. See the forecasting
+  guide, "A forecast a day on a live market".
+
 - **References in dashboard messages open what they name.** Hovering or focusing a reference in a
   message shows a card: a task (title, state, who holds it), a channel (latest post), a board
   (recent posts), one channel post or one tell (the message whole), or a person for an `@name`.
