@@ -96,10 +96,15 @@ supported remote-connector UI for a reachable server with a compatible authentic
 or launch `marina mcp-stdio`, a stdio bridge that forwards every message to a running world's
 `/mcp` (the full world tool surface). Desktop apps start servers with a minimal `PATH`, where
 `marina` and the `bun` it runs on are often missing, so let Marina write the entry with absolute
-paths:
+paths. For the local server on `MCP_PORT` (default 3301):
 
 ```bash
-marina mcp-stdio --print-config            # local server on MCP_PORT (default 3301)
+marina mcp-stdio --print-config
+```
+
+For another server, name its URL and token:
+
+```bash
 marina mcp-stdio --print-config --url http://127.0.0.1:3301/mcp --token <token>
 ```
 

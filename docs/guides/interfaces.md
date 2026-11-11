@@ -24,7 +24,11 @@ Build the browser bundle from the same checkout as the server:
 ```bash
 bun run dashboard:build
 bun run start
-# In another terminal, after bun run setup:cli:
+```
+
+In another terminal, after `bun run setup:cli`:
+
+```bash
 marina connect TerminalResident
 ```
 
@@ -43,21 +47,34 @@ It is the coding view of the dashboard, not all of it; see [what it does not sho
 ### Start it
 
 Install the `marina` command once from the checkout (`bun install`, then `bun run setup:cli`).
-Then run one of these:
+Then run one of these. Start a local Marina for this folder and open the workspace:
 
 ```bash
-# Start a local Marina for this folder and open the workspace.
 cd /path/to/project
 marina --tui
+```
 
-# The same, from the Marina checkout.
+The same, from the Marina checkout:
+
+```bash
 bun run code /path/to/project --tui
+```
 
-# Attach to a world that is already running. Missing values are prompted for.
+Attach to a world that is already running (missing values are prompted for):
+
+```bash
 marina attach --tui
-marina attach ws://localhost:3300/ws --name Builder --session <id> --tui
+```
 
-# Open straight into a use-case mode (implies --tui).
+Or name the world, the participant and the session:
+
+```bash
+marina attach ws://localhost:3300/ws --name Builder --session <id> --tui
+```
+
+Open straight into a use-case mode (implies `--tui`):
+
+```bash
 marina --mode operate
 ```
 
@@ -91,10 +108,13 @@ to cycle, type `/mode <name>`, or start with `--mode <name>`.
 |---|---|---|
 | `coding` (default) | The coding conversation alone. The World is cut down to one line above the composer: the latest message addressed to you (a tell, or a message naming you), with a count. F6 opens the full World and clears it | Coding |
 | `operate` | A live board beside the World: Attention (requests to answer, held actions, alerts), Agents, Spend and Status. It shows the same data as the dashboard, refreshed every few seconds. Shift+PageUp / Shift+PageDown scroll the board | World, for commands such as `challenge approve <token>` or `agent stop <name>` |
+| `coordinate` | Who is working on what, beside the World. **Streams** lists participant sessions (Claude, Codex, pi …) with the ones asking you or failing first. **Tasks** lists open and claimed tasks with the ones waiting for your review first. Streams needs a signed-in world account | World, for `tell <name> <message>` and `task approve <id> <claimant>`; `/agents` and `/use` reach native sessions |
+| `memory` | Curating what the world knows. **Dreams** lists recent dreams with the proposals waiting for you first. **Memory** shows counts only: unresolved contradictions, stale and duplicate records, records with sources, open memory jobs. Both are scoped to what you may see | World, for `memory recall <query>`, `memory dream adopt <id>` and `note conflicts` |
+| `investigate` | After the fact. **Traces** lists recent execution traces, with failed runs and failed checks first; it needs operator read, and otherwise says so. **Feed** shows the activity feed, newest first | World, for `trace show <id>`, `trace find status=failed` and `feed list since:2h` |
+| `forecast` | Your newest predictions and research (the dashboard's Predict and Research pages). Running ones come first, then answers and resolved scores, with today's **Spend** below, because every prediction costs model calls. Needs a signed-in world account | World, for `inquiry predict -- <question>`, `inquiry show <case-id>` and `forecast <question>` |
 
 In `coding`, `/layout split` (or F2) still puts the whole World beside Coding when you want it.
-In `operate` the board sits beside the World from 80 columns; narrower, the World is shown alone.
-More modes for other kinds of work are planned.
+In every mode but `coding` the board sits beside the World from 80 columns; narrower, the World is shown alone.
 
 ### Keys
 
@@ -102,7 +122,7 @@ More modes for other kinds of work are planned.
 |---|---|
 | F1 | Help |
 | F2 | Cycle layouts: auto, focus, split (`/layout auto\|focus\|split`) |
-| F3 | Cycle modes (`/mode coding\|operate`) |
+| F3 | Cycle modes (`/mode coding\|operate\|coordinate\|memory\|investigate\|forecast`) |
 | Shift+PageUp / Shift+PageDown | Scroll a mode's board |
 | F6 | Switch the composer between Coding and World |
 | F7 | Open pending requests |
@@ -147,10 +167,11 @@ Some dashboard views have no pane yet. You can still reach most of their data as
 
 | Dashboard view | In the terminal |
 |---|---|
-| Participant Streams | Native agents through `/agents` and `/use`; other participants' messages in World |
-| Memory workspace, dreams | `/memory`, `/world memory dream log` |
-| Traces, logs, activity feed | `/world trace …`, `/world feed list …` |
+| Participant Streams | `coordinate` mode, or `/live streams`; `/agents` and `/use` for native agents |
+| Memory workspace, dreams | `memory` mode, or `/live dreams`, `/live memory`; `/memory`, `/world memory dream log` |
+| Traces, logs, activity feed | `investigate` mode, or `/live traces`, `/live feed`; `/world trace …`, `/world feed list …`. Logs stay in the browser |
 | Ops, health, spend | `operate` mode, or `/live status`, `/live readiness`, `/live alerts`, `/cost` |
+| Predict and Research pages | `forecast` mode, or `/live forecasts`; `marina inquiry tui` is the full-screen case browser |
 | Canvas, media, Admin settings | Browser dashboard only |
 
 `marina connect` is the world REPL. It uses the scrollback screen and has no fullscreen mode.

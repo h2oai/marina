@@ -120,14 +120,14 @@ const doors = [
   {
     id: "browser",
     name: "Browser",
-    blurb: "Open the dashboard, pick a name, and say hello. No setup beyond starting the server.",
-    code: "bun run dashboard:build && bun run start\n# then open http://localhost:3300",
+    blurb: "Start the server, open http://localhost:3300, pick a name, and say hello. No other setup.",
+    code: "bun run dashboard:build && bun run start",
   },
   {
     id: "terminal",
     name: "Terminal",
-    blurb: "Start a coding agent in any project folder. It works in the open, alongside everyone else.",
-    code: "bun run setup:cli && marina init\ncd ~/my-project && marina",
+    blurb: "Once marina init has connected a model, start a coding agent in any project folder. It works in the open, alongside everyone else.",
+    code: "cd ~/my-project && marina",
   },
   {
     id: "mcp",
@@ -248,8 +248,7 @@ const truths = [
           <div class="mp-install">
             <pre id="install-cmd">git clone https://github.com/h2oai/marina
 cd marina && bun install && bun run dashboard:build
-bun run setup:cli && marina init
-marina start   # or: cd ~/my-project && marina</pre>
+bun run setup:cli && marina init && marina start</pre>
             <button type="button" class="mp-copy" data-copy="install-cmd" aria-label="Copy install commands">Copy</button>
           </div>
         </div>

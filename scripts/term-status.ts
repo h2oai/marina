@@ -10,6 +10,8 @@
  * REPL never stops.
  */
 
+import { investigationEstimate } from "../src/sdk/investigation-text";
+
 export interface WorldSnapshot {
   health?: {
     status: string;
@@ -75,10 +77,108 @@ export interface WorldSnapshot {
   };
   /** Held actions: waiting on your answer, and the ones you asked for. */
   challenges?: { answerable: HeldAction[]; raised: HeldAction[] };
+  /** Participant sessions you own or share a group with (dashboard Streams). */
+  streams?: { total: number; items: StreamRow[] };
+  /** The shared task board, newest first. */
+  tasks?: { total: number; items: TaskSummary[] };
+  /** The dream pass in your scope: ids and counts, never note text. */
+  dreams?: { mode: string; guarded: string[]; items: DreamSummary[] };
+  /** Memory health in your scope (counts from the memory overview). */
+  memory?: MemoryHealth;
+  /** Recent execution traces (operator read). */
+  traces?: TraceSummary[];
+  /** The public activity feed, newest first. */
+  feed?: FeedItem[];
+  /** Your newest predictions and research (investigations), with their state and answer. */
+  forecasts?: { total: number; items: ForecastSummary[] };
   /** When each part was last read successfully. */
   at: Partial<Record<Part, number>>;
   /** Parts this session may not read (the server answered 401/403). */
   denied?: Partial<Record<Part, true>>;
+}
+
+export interface StreamRow {
+  label: string;
+  kind: string;
+  owned: boolean;
+  /** Runtime status (`running`, `waiting`, `failed` …), or `left`/`active` with no runtime. */
+  status: string;
+  adapter: string;
+  model: string;
+  /** The session is asking you something (an open runtime request). */
+  asking: boolean;
+  error: string;
+  deliveryError: boolean;
+  lastSeenAt: number;
+}
+
+export interface TaskSummary {
+  id: number;
+  title: string;
+  status: string;
+  creator: string;
+  priority: number;
+  claimed: number;
+  submitted: number;
+}
+
+export interface DreamSummary {
+  id: number;
+  entity: string;
+  pool: boolean;
+  state: string;
+  createdAt: number;
+  applied: number;
+  rejected: number;
+  pending: number;
+}
+
+/** A ratio's numerator over its denominator (`value` null when nothing to measure). */
+export interface Count {
+  n: number;
+  of: number;
+}
+
+export interface MemoryHealth {
+  scope: string;
+  unresolved: Count;
+  stale: Count;
+  duplicates: Count;
+  provenance: Count;
+  openJobs: number;
+  resolutions: number;
+}
+
+export interface TraceSummary {
+  /** The id `trace show` takes. */
+  id: string;
+  status: string;
+  startedAt: number;
+  durationMs: number | null;
+  spans: number;
+  model: string;
+  /** Names of the evaluation checks that failed. */
+  failedChecks: string[];
+}
+
+export interface FeedItem {
+  kind: string;
+  entity: string;
+  summary: string;
+  at: number;
+}
+
+export interface ForecastSummary {
+  id: string;
+  kind: string;
+  question: string;
+  state: string;
+  /** The answer in one phrase (`63%`, `4.2 °C ± 0.5`, `B (55%)`), when there is one. */
+  answer: string;
+  resolved: boolean;
+  /** Scoring loss once resolved. */
+  loss: number | null;
+  updatedAt: number;
 }
 
 export interface HeldAction {
@@ -101,7 +201,14 @@ export type Part =
   | "ops"
   | "alerts"
   | "readiness"
-  | "challenges";
+  | "challenges"
+  | "streams"
+  | "tasks"
+  | "dreams"
+  | "memory"
+  | "traces"
+  | "feed"
+  | "forecasts";
 
 const EVERY: Record<Part, number> = {
   health: 5_000,
@@ -112,7 +219,28 @@ const EVERY: Record<Part, number> = {
   alerts: 15_000,
   readiness: 60_000,
   challenges: 10_000,
+  streams: 5_000,
+  tasks: 10_000,
+  dreams: 30_000,
+  memory: 30_000,
+  traces: 15_000,
+  feed: 10_000,
+  forecasts: 20_000,
 };
+
+/** Read only while something on screen wants them (a mode's board, a `/live` card). */
+const ON_DEMAND = new Set<Part>([
+  "streams",
+  "tasks",
+  "dreams",
+  "memory",
+  "traces",
+  "feed",
+  "forecasts",
+]);
+
+/** The case list carries no attempt state; only this many newest cases are opened. */
+const FORECAST_DETAIL = 5;
 
 /** A part the server refused is asked again only this often (access can change). */
 const DENIED_EVERY = 300_000;
@@ -135,6 +263,7 @@ export class WorldStatus {
   private timer?: ReturnType<typeof setInterval>;
   private inflight = new Set<Part>();
   private listeners: (() => void)[] = [];
+  private wanted = new Set<Part>();
 
   constructor(
     private base: string,
@@ -157,12 +286,17 @@ export class WorldStatus {
     if (this.timer) clearInterval(this.timer);
   }
 
+  /** The on-demand parts to keep polling (replaces the previous set). */
+  want(parts: readonly Part[]): void {
+    this.wanted = new Set(parts.filter((part) => ON_DEMAND.has(part)));
+  }
+
   /** Read every part that is due (or all of them when `force`). */
   async refresh(force: boolean, only?: Part[]): Promise<void> {
     const now = Date.now();
     const due = (Object.keys(EVERY) as Part[]).filter(
       (part) =>
-        (!only || only.includes(part)) &&
+        (only ? only.includes(part) : !ON_DEMAND.has(part) || this.wanted.has(part)) &&
         !this.inflight.has(part) &&
         (force ||
           now - (this.snapshot.at[part] ?? 0) >=
@@ -276,6 +410,148 @@ export class WorldStatus {
           s.challenges = { answerable: held(c.answerable), raised: held(c.raised) };
           break;
         }
+        case "streams": {
+          const o = (await this.get("/api/routing/overview?limit=50")) as Json;
+          const items = (Array.isArray(o.items) ? o.items : []).map((row: Json): StreamRow => {
+            const runtime = (row.runtime ?? {}) as Json;
+            const session = (row.session ?? {}) as Json;
+            return {
+              label: String(session.label ?? session.id ?? ""),
+              kind: String(session.kind ?? ""),
+              owned: row.owned === true,
+              status: String(runtime.status ?? session.state ?? "active"),
+              adapter: String(runtime.adapter ?? ""),
+              model: String(runtime.model ?? ""),
+              asking: !!runtime.request && typeof runtime.request === "object",
+              error: String(runtime.error ?? ""),
+              deliveryError: row.lastDelivery?.kind === "delivery.error",
+              lastSeenAt: Number(session.lastSeenAt ?? 0),
+            };
+          });
+          s.streams = { total: Number(o.total ?? items.length), items };
+          break;
+        }
+        case "tasks": {
+          const t = (await this.get("/api/coordination/tasks?paged=1&limit=20")) as Json;
+          const items = (Array.isArray(t.items) ? t.items : []).map(
+            (row: Json): TaskSummary => ({
+              id: Number(row.id ?? 0),
+              title: String(row.title ?? ""),
+              status: String(row.status ?? ""),
+              creator: String(row.creator_name ?? ""),
+              priority: Number(row.priority ?? 0),
+              claimed: Number(row.claimed ?? 0),
+              submitted: Number(row.submitted ?? 0),
+            }),
+          );
+          s.tasks = { total: Number(t.total ?? items.length), items };
+          break;
+        }
+        case "dreams": {
+          const d = (await this.get("/api/memory/dreams?limit=10")) as Json;
+          s.dreams = {
+            mode: String(d.mode ?? ""),
+            guarded: Array.isArray(d.guarded) ? d.guarded.map(String) : [],
+            items: (Array.isArray(d.dreams) ? d.dreams : []).map(
+              (row: Json): DreamSummary => ({
+                id: Number(row.id ?? 0),
+                entity: String(row.entity ?? ""),
+                pool: row.pool === true,
+                state: String(row.state ?? ""),
+                createdAt: Number(row.createdAt ?? 0),
+                applied: Number(row.ops?.applied ?? 0),
+                rejected: Number(row.ops?.rejected ?? 0),
+                pending: Number(row.ops?.pendingProposals ?? 0),
+              }),
+            ),
+          };
+          break;
+        }
+        case "memory": {
+          const m = (await this.get("/api/memory/overview")) as Json;
+          const count = (ratio: Json | undefined): Count => ({
+            n: Number(ratio?.numerator ?? 0),
+            of: Number(ratio?.denominator ?? 0),
+          });
+          s.memory = {
+            scope: String(m.ratios?.scope ?? ""),
+            unresolved: count(m.ratios?.unresolvedContradictionRate),
+            stale: count(m.ratios?.stalenessRatio),
+            duplicates: count(m.ratios?.redundancy),
+            provenance: count(m.ratios?.provenanceCoverage),
+            openJobs: Number(m.jobs?.open ?? 0),
+            resolutions: Array.isArray(m.resolutions) ? m.resolutions.length : 0,
+          };
+          break;
+        }
+        case "traces": {
+          const t = (await this.get("/api/traces?limit=12")) as Json;
+          s.traces = (Array.isArray(t.traces) ? t.traces : []).map((row: Json): TraceSummary => {
+            const spans: Json[] = Array.isArray(row.spans) ? row.spans : [];
+            const model = spans
+              .map((span) => span.attributes?.model)
+              .find((value) => typeof value === "string");
+            const checks: Json[] = Array.isArray(row.evaluation?.checks)
+              ? row.evaluation.checks
+              : [];
+            return {
+              id: String(row.traceId ?? ""),
+              status: String(row.status ?? ""),
+              startedAt: Number(row.startedAt ?? 0),
+              durationMs: typeof row.durationMs === "number" ? row.durationMs : null,
+              spans: spans.length,
+              model: typeof model === "string" ? model : "",
+              failedChecks: checks
+                .filter((check) => check.result === "failed")
+                .map((check) => String(check.id ?? "")),
+            };
+          });
+          break;
+        }
+        case "feed": {
+          const f = (await this.get("/api/feed?limit=15")) as Json[];
+          s.feed = (Array.isArray(f) ? f : []).map(
+            (row: Json): FeedItem => ({
+              kind: String(row.kind ?? ""),
+              entity: String(row.entity ?? ""),
+              summary: String(row.summary ?? ""),
+              at: Number(row.timestamp ?? 0),
+            }),
+          );
+          break;
+        }
+        case "forecasts": {
+          const list = (await this.get("/api/investigations")) as Json;
+          const cases: Json[] = Array.isArray(list.cases) ? list.cases : [];
+          const items = await Promise.all(
+            cases.slice(0, FORECAST_DETAIL).map(async (row): Promise<ForecastSummary> => {
+              const id = String(row.id ?? "");
+              const base = {
+                id,
+                kind: String(row.kind ?? ""),
+                question: String(row.question ?? ""),
+                updatedAt: Number(row.updatedAt ?? 0),
+              };
+              try {
+                const snap = (await this.get(
+                  `/api/investigations/${encodeURIComponent(id)}`,
+                )) as Json;
+                const attempt = (snap.attempt ?? {}) as Json;
+                return {
+                  ...base,
+                  state: String(attempt.state ?? ""),
+                  answer: investigationEstimate(attempt.result?.estimate) ?? "",
+                  resolved: !!snap.resolution,
+                  loss: typeof snap.resolution?.loss === "number" ? snap.resolution.loss : null,
+                };
+              } catch {
+                return { ...base, state: "", answer: "", resolved: false, loss: null };
+              }
+            }),
+          );
+          s.forecasts = { total: cases.length, items };
+          break;
+        }
         case "readiness": {
           const r = (await this.get("/api/readiness")) as Json;
           s.readiness = {
@@ -295,6 +571,13 @@ export class WorldStatus {
         // Back off, and drop what an earlier session could see.
         this.snapshot.at[part] = Date.now();
         if (part === "alerts") this.snapshot.alerts = undefined;
+        if (part === "streams") this.snapshot.streams = undefined;
+        if (part === "tasks") this.snapshot.tasks = undefined;
+        if (part === "dreams") this.snapshot.dreams = undefined;
+        if (part === "memory") this.snapshot.memory = undefined;
+        if (part === "traces") this.snapshot.traces = undefined;
+        if (part === "feed") this.snapshot.feed = undefined;
+        if (part === "forecasts") this.snapshot.forecasts = undefined;
         return first;
       }
       return false;

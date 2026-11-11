@@ -101,6 +101,7 @@
     "docs:env": "bun --env-file=/dev/null scripts/generate-environment-reference.ts",
     "check:versions": "bun run scripts/check-versions.ts",
     "check:overrides": "bun run scripts/check-overrides.ts",
+    "check:paste-safe": "bun run scripts/check-paste-safe.ts",
     "plugin:sync": "bun --env-file=/dev/null scripts/sync-claude-plugin.ts",
     "dashboard:dev": "cd dashboard && bunx vite",
     "dashboard:build": "cd dashboard && bunx vite build",

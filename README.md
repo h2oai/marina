@@ -63,15 +63,22 @@ You need [Bun](https://bun.sh) 1.4.4 or newer.
 ```bash
 git clone https://github.com/h2oai/marina.git
 cd marina && bun install && bun run dashboard:build
-bun run setup:cli    # puts `marina` on your PATH
-marina init          # connect a model: paste a provider key, or pick a local one
+bun run setup:cli
+marina init
 ```
 
-Then work wherever you are. Every way in reaches the same world:
+`setup:cli` puts `marina` on your PATH; `marina init` connects a model (paste a provider key, or
+pick a local one). Then work wherever you are. Every way in reaches the same world. Code in a
+folder, like Claude Code or Codex:
 
 ```bash
-cd ~/your-project && marina   # code in this folder, like Claude Code or Codex
-marina start                  # or run the server and open http://localhost:3300
+cd ~/your-project && marina
+```
+
+Or run the server and open http://localhost:3300:
+
+```bash
+marina start
 ```
 
 `marina init` asks for the model first: Anthropic, OpenAI, Google, OpenRouter (one key for every
@@ -81,8 +88,13 @@ in every folder; run anywhere else, it writes `~/.marina/.env`. Your project's o
 never read. You can also paste a key in the dashboard under **Admin → Keys**, or set one when starting:
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-... marina start                 # or OPENAI_, GEMINI_, OPENROUTER_ …
-OLLAMA_BASE_URL=http://localhost:11434/v1 marina start    # or one local model
+ANTHROPIC_API_KEY=sk-ant-... marina start
+```
+
+(or `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` …), or point it at one local model:
+
+```bash
+OLLAMA_BASE_URL=http://localhost:11434/v1 marina start
 ```
 
 You can look around without any model. A daily spend cap ($50 by default) keeps an eager agent
@@ -203,13 +215,15 @@ Chronicle entry.
 
 ## Different worlds for different jobs
 
-The default world is a small four-room **Workbench**. Others are one variable away:
+The default world is a small four-room **Workbench**. Others are one variable away. For
+example, the full 25-room tour:
 
 ```bash
-MARINA_WORLD=showcase bun run start        # the full 25-room tour
-MARINA_WORLD=deep-research bun run start   # produce one evidence-backed brief
-MARINA_WORLD=markets bun run start         # prediction-market rooms (paper trading)
+MARINA_WORLD=showcase bun run start
 ```
+
+Use `deep-research` to produce one evidence-backed brief, or `markets` for prediction-market rooms
+(paper trading).
 
 See [example worlds](docs/guides/example-worlds.md), or [build your own](docs/guides/building-worlds.md):
 a world is one TypeScript file, and rooms are programs, not just places.
@@ -221,9 +235,16 @@ Silicon macOS, Windows x64 and Linux x64. Open it, enter a name, click **Start H
 **Connect an AI provider**. Building from source: `bun install && marina-desktop/scripts/build.sh`
 ([details](marina-desktop/README.md)).
 
+Copy the starter settings and uncomment one provider key in `.env`:
+
 ```bash
-cp .env.example .env            # uncomment one provider key
-docker compose up -d --build    # http://localhost:3300
+cp .env.example .env
+```
+
+Then start it and open http://localhost:3300:
+
+```bash
+docker compose up -d --build
 ```
 
 Your world lives in the `marina-data` volume. Before exposing Marina beyond your machine, read

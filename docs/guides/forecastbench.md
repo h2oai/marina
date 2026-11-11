@@ -21,10 +21,13 @@ organization and agent name you give: `--org <your-org> --agent <your-agent>`, o
 `MARINA_FILING_ORG` / `MARINA_FILING_AGENT` once in the environment. Without both (or with a docs placeholder such as `your-org`), `run`, `write` and
 `upload` refuse; `run` refuses before it spends anything.
 
+`fetch` saves the set (`data/forecastbench/<due>/`), `estimate` reports questions, forecasts and
+estimated cost, and `run` forecasts everything, then writes the file:
+
 ```bash
-bun run forecastbench fetch --due 2026-10-11         # save the set (data/forecastbench/<due>/)
-bun run forecastbench estimate --due 2026-10-11      # questions, forecasts, estimated cost
-bun run forecastbench run --due 2026-10-11 --set 1   # forecast everything, then write the file
+bun run forecastbench fetch --due 2026-10-11
+bun run forecastbench estimate --due 2026-10-11
+bun run forecastbench run --due 2026-10-11 --set 1
 ```
 
 Dataset questions are mostly statistics, so each one also gets a **statistical prior** before the
@@ -81,20 +84,22 @@ configurations by a held-out backtest on past resolved rounds and writes the top
   ledger.
 - It is excluded when its measured cost per question is over `--live-per-question`.
 
-Set N files with pick N:
+Set N files with pick N. `select` writes `data/forecastbench/selection.json`; then set 1 files
+pick 1 and set 2 files pick 2:
 
 ```bash
-bun run forecastbench select --select-budget 15                        # → data/forecastbench/selection.json
-bun run forecastbench run --due 2026-10-11 --set 1                     # pick 1
-bun run forecastbench run --due 2026-10-11 --set 2 --concurrency 8     # pick 2
+bun run forecastbench select --select-budget 15
+bun run forecastbench run --due 2026-10-11 --set 1
+bun run forecastbench run --due 2026-10-11 --set 2 --concurrency 8
 ```
 
 The candidates always include `prior-only` (no model: market prices and statistical priors) and
 the cheap ensemble pooled toward the prior (`ensemble:cheap+pool`). `baseline` scores the
-model-free priors per source on resolved rounds, at no cost:
+model-free priors per source on resolved rounds, at no cost, comparing the prior with 0.5 per
+source:
 
 ```bash
-bun run forecastbench baseline --rounds 2026-08-16,2026-08-30   # prior vs 0.5, per source
+bun run forecastbench baseline --rounds 2026-08-16,2026-08-30
 ```
 
 See [Metaculus](metaculus.md#choosing-the-configuration) for the candidate set and the leakage

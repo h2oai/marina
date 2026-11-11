@@ -49,9 +49,16 @@ from those records) and at the world's `MARINA_DAILY_SPEND_CAP_USD`.
 
 ## Dry run
 
+Live questions, nothing posted (needs the token):
+
 ```bash
-bun run metaculus pass --dry-run --tournament test     # live questions, nothing posted (needs the token)
-bun run metaculus pass --fixture posts.json            # saved questions, offline
+bun run metaculus pass --dry-run --tournament test
+```
+
+Saved questions, offline:
+
+```bash
+bun run metaculus pass --fixture posts.json
 ```
 
 A dry run writes each would-be payload and comment to `data/metaculus/dry-run/<question>.json`
@@ -91,12 +98,13 @@ bun run metaculus select --backtest-tournament <resolved tournament> --budget 15
 ## Running on a timer
 
 ```bash
-bun run metaculus timer        # writes ~/.local/share/marina-metaculus/systemd/marina-metaculus.{service,timer}
+bun run metaculus timer
 ```
 
-The units run one pass every 20 minutes, reading credentials from
-`~/.config/marina-metaculus/env` (create it with mode 0600). They are written, never enabled; the
-command prints the two `systemctl --user` lines to enable them after review.
+It writes `~/.local/share/marina-metaculus/systemd/marina-metaculus.{service,timer}`. The units
+run one pass every 20 minutes, reading credentials from `~/.config/marina-metaculus/env` (create
+it with mode 0600). They are written, never enabled; the command prints the two `systemctl --user`
+lines to enable them after review.
 
 ## Tournaments
 
