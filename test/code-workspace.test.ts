@@ -3,7 +3,7 @@
 
 import { expect, it } from "bun:test";
 import { PassThrough } from "node:stream";
-import { StdinBuffer, type Terminal } from "@earendil-works/pi-tui";
+import { StdinBuffer, type Terminal, visibleWidth } from "@earendil-works/pi-tui";
 import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 import {
   inputGuidance,
@@ -11,9 +11,11 @@ import {
   terminalCompletionFor,
 } from "../scripts/code-completion";
 import type { PanelInput, TerminalPanelState } from "../scripts/code-panel-form";
+import { themeFor } from "../scripts/code-style";
 import { CodeTerminal, terminalText } from "../scripts/code-terminal";
 import { WorkspacePanes } from "../scripts/code-workspace-panes";
 import { parseDispatch } from "../scripts/marina";
+import { card } from "../scripts/term-panels";
 import { until } from "./helpers";
 
 class Screen implements Terminal {
@@ -487,4 +489,46 @@ it("completes only observed structured files and artifacts from the selected ses
   expect(discovery.suggestions("one")).toHaveLength(200);
   discovery.observe({ kind: "auth_error", timestamp: 1, data: {} }, "one");
   expect(discovery.suggestions("one")).toEqual([]);
+});
+
+it("sizes locally drawn cards to the focused pane and sends them to that pane only", async () => {
+  using f = workspace();
+  f.screen.columns = 140;
+  f.screen.rows = 36;
+  f.screen.resize();
+  f.terminal.write("first", "coding");
+  await until(() => f.screen.text().includes("first"));
+  const coding = f.terminal.cardTarget();
+  expect(coding.view).toBe("coding");
+  expect(coding.columns).toBeLessThan(140);
+  f.screen.send("\x1b[17~");
+  await until(() => f.terminal.cardTarget().view === "world");
+  const world = f.terminal.cardTarget();
+  expect(world.columns).toBeLessThan(coding.columns!);
+  // A card drawn at the pane's width never wraps its border inside the pane.
+  const theme = themeFor({ isTTY: true, columns: world.columns });
+  for (const line of card(theme, "Attention", ["x".repeat(200)]))
+    expect(visibleWidth(line)).toBeLessThanOrEqual(world.columns!);
+});
+
+it("reports no pane width outside the fullscreen workspace", () => {
+  const input = Object.assign(new PassThrough(), { isTTY: true });
+  const output = Object.assign(new PassThrough(), { isTTY: true });
+  const terminal = new CodeTerminal({
+    input,
+    output,
+    screen: new Screen(),
+    tui: false,
+    views: true,
+    line() {},
+    close() {},
+    interrupt() {},
+  });
+  try {
+    expect(terminal.cardTarget()).toEqual({ view: "coding" });
+  } finally {
+    terminal.close();
+    input.destroy();
+    output.destroy();
+  }
 });

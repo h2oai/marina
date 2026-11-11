@@ -8,6 +8,7 @@ import type { PanelInput, TerminalPanelState } from "./code-panel-form";
 import { terminalText } from "./code-presentation";
 import { ReadlineCodeEditor } from "./code-readline";
 import {
+  type ConversationView,
   type EntryFormat,
   type TerminalView,
   TerminalViews,
@@ -311,6 +312,13 @@ export class CodeTerminal {
       }
     }
     this.print(text, format);
+  }
+
+  /** The conversation a locally drawn card belongs in, and that pane's width (--tui only). */
+  cardTarget(): { view: ConversationView; columns?: number } {
+    const view: ConversationView = this.views?.focus === "world" ? "world" : "coding";
+    const columns = this.workspace ? this.editor.paneColumns?.(view) : undefined;
+    return columns === undefined ? { view } : { view, columns };
   }
 
   /** Opens the fullscreen diff view (--tui only). Scrollback output is unchanged. */

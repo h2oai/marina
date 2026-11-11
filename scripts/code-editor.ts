@@ -45,5 +45,7 @@ export interface CodeEditor {
   print(text: string, format?: EntryFormat): void;
   /** Fullscreen renderers open a navigable diff view; scrollback renderers return false. */
   showDiff?(text: string): boolean;
+  /** Fullscreen renderers report a pane's drawn width so local cards fit it. */
+  paneColumns?(view: TerminalView): number | undefined;
   close(): void;
 }

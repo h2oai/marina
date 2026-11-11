@@ -230,8 +230,18 @@ export class CodeConsole {
       isTTY?: boolean;
       columns?: number;
     };
-    const theme = themeFor(out.isTTY ? out : undefined);
-    this.write(panel.render(this.liveContext(theme)).join("\n"), "all", false, "styled");
+    // In the fullscreen workspace the card goes to the focused pane only, drawn at that
+    // pane's width; a terminal-wide card would wrap its borders inside a narrow pane.
+    const target = this.terminal?.cardTarget();
+    const sized =
+      target?.columns === undefined ? out : { isTTY: out.isTTY, columns: target.columns };
+    const theme = themeFor(sized.isTTY ? sized : undefined);
+    this.write(
+      panel.render(this.liveContext(theme)).join("\n"),
+      target?.view ?? "all",
+      false,
+      "styled",
+    );
   }
 
   private redact(text: string) {

@@ -725,6 +725,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`/live` cards fit the terminal workspace pane they are drawn in.** In `marina --tui`'s split
+  layout a `/live` card went to both panes at the full terminal width, so in the narrower World
+  pane its borders wrapped into broken lines. The card now goes to the focused pane only, drawn at
+  that pane's width. The scrollback terminal is unchanged.
+- **The terminal workspace has its own guide.** `marina --tui` was mentioned in five guides but
+  explained in none. [Dashboard, desktop and terminal](docs/guides/interfaces.md#terminal-workspace-tui)
+  now covers starting it (local folder, checkout, `marina attach`), the panes, every key and slash
+  command, and which dashboard views it does not show yet. The other guides link to it.
 - **`market live` lists markets that actually resolve soon.** It took the first 200 open markets
   in the venue's own order and filtered them afterwards. On Kalshi those were multi-leg parlays,
   priced `undefined¢` because the API now quotes dollar strings. On Polymarket it never filtered

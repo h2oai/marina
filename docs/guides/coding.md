@@ -39,7 +39,9 @@ For the fullscreen workspace, run **`marina --tui`** (or add `--tui` to `marina 
 or a connected `--url … --name … --session …` invocation). It keeps the project location, active
 conversation, task status and unread counts visible around the transcript and composer.
 Coding remains a single session; World messages and independent agents continue alongside it.
-Omit `--tui` to use the scrollback terminal described below.
+Omit `--tui` to use the scrollback terminal described below. The
+[terminal workspace guide](interfaces.md#terminal-workspace-tui) has the full layout, keys and
+slash commands in one place.
 
 At 110 columns or wider, **Coding and World appear side by side**. F6 changes which
 conversation receives your input; the marked pane header and composer label identify the

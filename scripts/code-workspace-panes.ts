@@ -28,6 +28,8 @@ export class WorkspacePanes {
   readonly component: HStack;
   private focus: TerminalView = "coding";
   private layout: WorkspaceLayout = "auto";
+  /** Last width each pane was drawn at; locally drawn cards are sized to it. */
+  private widths: Partial<Record<TerminalView, number>> = {};
   private panes = Object.fromEntries(
     Object.keys(LABELS).map((view) => {
       const text = new Text("", 0, 0);
@@ -50,13 +52,16 @@ export class WorkspacePanes {
         {
           component: {
             invalidate() {},
-            render: (width: number) => [
-              truncateToWidth(
-                `${view === this.focus ? "● " : "  "}${LABELS[view]}${view === this.focus ? " · input here" : view === "world" ? " · F6 to reply" : ""}`,
-                width,
-                "…",
-              ),
-            ],
+            render: (width: number) => {
+              this.widths[view] = width;
+              return [
+                truncateToWidth(
+                  `${view === this.focus ? "● " : "  "}${LABELS[view]}${view === this.focus ? " · input here" : view === "world" ? " · F6 to reply" : ""}`,
+                  width,
+                  "…",
+                ),
+              ];
+            },
           },
           basis: 1,
         },
@@ -109,6 +114,12 @@ export class WorkspacePanes {
       pane.content = content;
       if (view === "approvals") pane.scroll.scrollToStart();
     }
+  }
+
+  /** Columns the pane was last drawn with (minus its scrollbar), or undefined before the first draw. */
+  columns(view: TerminalView): number | undefined {
+    const width = this.widths[view];
+    return width === undefined ? undefined : Math.max(20, width - 1);
   }
 
   follow() {
