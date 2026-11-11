@@ -389,7 +389,7 @@ Disconnect that terminal with Ctrl+D, then attach the coding terminal:
 marina attach ws://localhost:3300
 ```
 
-`marina attach [url] [--name <account>] [--session <id>] [--tui]` fills in what you leave
+`marina attach [url] [--name <account>] [--session <id>] [--tui] [--mode <name>]` fills in what you leave
 out:
 
 | Piece | Resolution |
