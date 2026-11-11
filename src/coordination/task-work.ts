@@ -164,9 +164,20 @@ export class TaskWork {
 
   private task(taskId: number, actor: WorkActor): TaskRow {
     const task = this.db.getTask(taskId);
-    if (!task || (task.group_id && !this.db.getGroupMember(task.group_id, actor.id)))
+    if (!task || (task.group_id && !this.inGroupOrOnTask(task, actor)))
       throw new Error("Task not found or not accessible.");
     return task;
+  }
+
+  /** A group task's work is open to its members, its creator and whoever claimed it:
+   *  `task claim`/`submit` admit anyone, so the claimant must reach the work it submitted
+   *  (seeded project groups have no members at all). */
+  private inGroupOrOnTask(task: TaskRow, actor: WorkActor): boolean {
+    return (
+      !!this.db.getGroupMember(task.group_id!, actor.id) ||
+      task.creator_id === actor.id ||
+      !!this.db.getTaskClaim(task.id, actor.id)
+    );
   }
 
   private canEdit(task: TaskRow, actor: WorkActor): boolean {

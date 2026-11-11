@@ -16,7 +16,7 @@ function recorder() {
   const lines: { level: string; message: string }[] = [];
   const at = (level: string) => (_category: string, message: string) =>
     lines.push({ level, message });
-  const logger = { error: at("error"), warn: at("warn"), info: at("info") };
+  const logger = { error: at("error"), warn: at("warn"), info: at("info"), debug: at("debug") };
   return { lines, logger: logger as unknown as Logger };
 }
 
@@ -50,5 +50,27 @@ describe("model-request failure logging", () => {
     log.log(failed({ target: "anthropic/claude" }));
     log.log(failed({ errorKind: "provider" }));
     expect(lines.map((l) => l.level)).toEqual(["error", "error"]);
+  });
+
+  it("a request its caller abandoned is a debug line, never an ERROR", () => {
+    // Marina's own second opinions stop waiting after their deadline; a client
+    // may disconnect. Neither is a provider failure.
+    const { lines, logger } = recorder();
+    const log = new EventLog(logger);
+    log.log(failed({ target: "anthropic/claude-opus-5-5", errorKind: "cancelled" }));
+    expect(lines).toEqual([{ level: "debug", message: "Model request cancelled by its caller" }]);
+  });
+
+  it("an agent's refused tool call is recorded at info, not raised as a warning", () => {
+    const { lines, logger } = recorder();
+    const log = new EventLog(logger);
+    log.log({
+      type: "agent_tool_result",
+      name: "Critic",
+      toolName: "marina_command",
+      isError: true,
+      timestamp: Date.now(),
+    } as unknown as EngineEvent);
+    expect(lines.map((l) => l.level)).toEqual(["info"]);
   });
 });

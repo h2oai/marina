@@ -725,6 +725,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A first run no longer looks broken in the log.** A fresh `marina start` printed about 20
+  WARN and 8 ERROR lines in its first two minutes from a working install. The ERRORs were Marina's
+  own second-opinion model calls, cancelled at their deadline and logged as provider failures; a
+  request its caller abandons is now logged as cancelled (debug). An agent reaching its per-run
+  cap, an agent's refused tool call, and the local-profile notice are info, not warnings. The
+  starter tasks' evidence check refused the agent that had claimed them (seeded project groups
+  have no members); a group task's work is now open to its creator and claimants as well as its
+  members. The same run now prints no WARN or ERROR.
+
 - **`market live` lists markets that actually resolve soon.** It took the first 200 open markets
   in the venue's own order and filtered them afterwards. On Kalshi those were multi-leg parlays,
   priced `undefined¢` because the API now quotes dollar strings. On Polymarket it never filtered
