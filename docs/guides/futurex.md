@@ -14,26 +14,29 @@ organization and agent name you give: `--org <your-org> --agent <your-agent>`, o
 `MARINA_FILING_ORG` / `MARINA_FILING_AGENT` once in the environment. Without both (or with a docs placeholder such as `your-org`), `run` and a forecasting
 `watch` refuse before they spend anything.
 
-```bash
-bun run futurex fetch                 # the current batch, at its Hugging Face commit sha
-bun run futurex fetch --past          # the resolved-questions dataset (for backtests)
-bun run futurex run                   # forecast every row with the earned live configuration
-bun run futurex run --variant cheap   # a fixed configuration instead (the override for experiments)
-bun run futurex run --variant cheap --variant frontier   # several variants, one file each
-bun run futurex backtest --limit 40   # resolved rows: forecast with an early cutoff, score, record
-bun run futurex backtest --clean --isolation closed-book --variant cheap --limit 160 --replicates 2 --lessons on
-                                      # a non-leaking backtest (see Clean backtests)
-bun run futurex watch --once --run earned   # poll for a new batch; on one, fetch and run
-bun run futurex watch --once --run earned --daily --learn
-                                      # …and re-forecast open rows daily (see Standing answers)
-bun run futurex watch --once --run earned --daily --daily-rows stale --near-end-hours 48
-                                      # …daily runs touch only stale rows (see Standing answers)
-bun run futurex watch --once --run earned --answer late --final-lead-hours 6
-                                      # …answer each row once, close to its cutoff (see Late answering)
-bun run futurex schedule --run earned  # PRINT a systemd service + hourly timer for the late watcher
-bun run futurex learn                 # resolved rows of filed batches → outcome lessons
-bun run futurex status                # every submission recorded so far
-```
+Each command below is a separate alternative:
+
+- `bun run futurex fetch` — the current batch, at its Hugging Face commit sha.
+- `bun run futurex fetch --past` — the resolved-questions dataset (for backtests).
+- `bun run futurex run` — forecast every row with the earned live configuration.
+- `bun run futurex run --variant cheap` — a fixed configuration instead (the override for
+  experiments).
+- `bun run futurex run --variant cheap --variant frontier` — several variants, one file each.
+- `bun run futurex backtest --limit 40` — resolved rows: forecast with an early cutoff, score,
+  record.
+- `bun run futurex backtest --clean --isolation closed-book --variant cheap --limit 160
+  --replicates 2 --lessons on` — a non-leaking backtest (see Clean backtests).
+- `bun run futurex watch --once --run earned` — poll for a new batch; on one, fetch and run.
+- `bun run futurex watch --once --run earned --daily --learn` — …and re-forecast open rows daily
+  (see Standing answers).
+- `bun run futurex watch --once --run earned --daily --daily-rows stale --near-end-hours 48` —
+  …daily runs touch only stale rows (see Standing answers).
+- `bun run futurex watch --once --run earned --answer late --final-lead-hours 6` — …answer each
+  row once, close to its cutoff (see Late answering).
+- `bun run futurex schedule --run earned` — PRINT a systemd service + hourly timer for the late
+  watcher.
+- `bun run futurex learn` — resolved rows of filed batches → outcome lessons.
+- `bun run futurex status` — every submission recorded so far.
 
 Files go to `data/futurex/` (ignored by git; `--dir` to change). Benchmark questions are never
 committed. `DB_PATH` chooses the ledger (default `marina.db`). The forecaster's own settings
@@ -132,7 +135,12 @@ never calls `systemctl`. The operator decides whether to activate it:
 ```bash
 bun run futurex schedule --run earned --dir ~/futurex-data --env-file .env --scope-cap 25 --out /tmp/units
 cp /tmp/units/marina-futurex-late.* ~/.config/systemd/user/ && systemctl --user daemon-reload
-systemctl --user enable --now marina-futurex-late.timer     # only when you mean it
+```
+
+Only when you mean it, enable the timer:
+
+```bash
+systemctl --user enable --now marina-futurex-late.timer
 ```
 
 Options: `--answer early|late`, `--final-lead-hours N` (default 6 here), `--run <variants>` (default `earned`),

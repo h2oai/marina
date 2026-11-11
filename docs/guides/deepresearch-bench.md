@@ -63,15 +63,19 @@ The adapter keeps the benchmark data at arm's length:
   which publish reference articles and other systems' reports for these exact prompts.
 
 ```bash
-bun run deepresearch select                      # seeded dev / held-out ids → <out>/selection.json
+bun run deepresearch select
 bun run deepresearch run --board drb1 --label A --lead openrouter/anthropic/claude-opus-5.5 \
     --split heldout --max-usd 20
 bun run deepresearch check --board drb1 --from A --label B --checker openrouter/openai/gpt-6.1-sol
-bun run deepresearch score --board drb1 --label A --max-usd 10   # official evaluator, your key, capped
-bun run deepresearch compare --board drb1 --a A --b B            # paired difference, bootstrap CI
-bun run deepresearch file --board drb1 --label A                 # ledger + judged lessons (DB_PATH)
-bun run deepresearch export --board drb1 --label A               # submission layout
+bun run deepresearch score --board drb1 --label A --max-usd 10
+bun run deepresearch compare --board drb1 --a A --b B
+bun run deepresearch file --board drb1 --label A
+bun run deepresearch export --board drb1 --label A
 ```
+
+`select` writes seeded dev / held-out ids to `<out>/selection.json`. `score` runs the official
+evaluator with your key, capped. `compare` reports the paired difference with a bootstrap CI.
+`file` writes the ledger and judged lessons (`DB_PATH`). `export` writes the submission layout.
 
 ### Running a batch
 

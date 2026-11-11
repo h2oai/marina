@@ -140,11 +140,15 @@ deployments never get a generated key — configure `MODEL_API_KEYS` there.
 The provider agent bridges requests to an external LLM. This is an alternative to direct upstream
 proxying with configured provider keys.
 
-```bash
-# Using a local Ollama instance
-PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=qwen3:4b bun run src/sdk/examples/provider.ts
+Using a local Ollama instance:
 
-# Using OpenAI
+```bash
+PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=qwen3:4b bun run src/sdk/examples/provider.ts
+```
+
+Using OpenAI:
+
+```bash
 PROVIDER_URL=https://api.openai.com/v1 PROVIDER_KEY=sk-your-key PROVIDER_MODEL=gpt-6-luna bun run src/sdk/examples/provider.ts
 ```
 
@@ -293,17 +297,19 @@ switch the endpoint to passthru.
 
 ## Multi-Turn Conversations
 
-Use the `X-Conversation-Id` header to maintain context across requests:
+Use the `X-Conversation-Id` header to maintain context across requests. The first message:
 
 ```bash
-# First message
 curl http://localhost:3300/v1/chat/completions \
   -H "Authorization: Bearer $MARINA_MODEL_KEY" \
   -H "Content-Type: application/json" \
   -H "X-Conversation-Id: my-session-1" \
   -d '{"model":"marina","messages":[{"role":"user","content":"What is Marina?"}]}'
+```
 
-# Follow-up — the agent remembers the previous exchange
+A follow-up with the same id; the agent remembers the previous exchange:
+
+```bash
 curl http://localhost:3300/v1/chat/completions \
   -H "Authorization: Bearer $MARINA_MODEL_KEY" \
   -H "Content-Type: application/json" \
@@ -326,10 +332,10 @@ The `model` field controls which agents handle the request. Different model IDs 
 | `marina:code` | `model-code` | Coding specialist agents |
 | `marina:<name>` | `model-<name>` | Any custom specialist |
 
-To set this up, have your provider agent join the right channel:
+To set this up, have your provider agent join the right channel. This agent handles
+`marina:scholar` requests:
 
 ```bash
-# This agent handles "marina:scholar" requests
 AGENT_NAME=Scholar MODEL_CHANNEL=model-scholar bun run src/sdk/examples/provider.ts
 ```
 
@@ -583,8 +589,13 @@ returns the chosen answer with a trace of every stage:
 curl -s http://localhost:3300/v1/patterns/run \
   -H "Authorization: Bearer $MARINA_MODEL_KEY" -H "Content-Type: application/json" \
   -d '{"pattern":"debate","task":"Should we shard the events table?","members":["openrouter/openai/gpt-6.1-sol","openrouter/anthropic/claude-opus-5.5"],"budgetUsd":0.5}'
-# → {"message":"…","success":true,"pattern":"debate",
-#    "trace":{"steps":[{"stage":"opening:advocate-1","member":"…","status":"ok","text":"…","costUsd":0.01},…],"costUsd":0.05}}
+```
+
+The response:
+
+```text
+{"message":"…","success":true,"pattern":"debate",
+ "trace":{"steps":[{"stage":"opening:advocate-1","member":"…","status":"ok","text":"…","costUsd":0.01},…],"costUsd":0.05}}
 ```
 
 Runnable patterns (`src/orchestration/text-patterns.ts`): `ensemble` (parallel drafts, a checker

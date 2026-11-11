@@ -366,12 +366,12 @@ truncation. `answer_sufficiency:"not_assessed"` explicitly leaves answer evaluat
 Evidence, vocabulary or access changes make the plan stale and require replanning.
 Checkpoint-only writes preserve new plans carrying `retrieval_generation`.
 
-To ask Marina's existing model router to generate the read plan, configure the memory server:
+To ask Marina's existing model router to generate the read plan, configure the memory server.
+Set `MARINA_MEMORY_PLANNER_TOKEN` to an authorized model-router credential when required.
 
 ```bash
 export MARINA_MEMORY_PLANNER_URL=http://127.0.0.1:3300/v1
 export MARINA_MEMORY_PLANNER_MODEL=marina
-# Set MARINA_MEMORY_PLANNER_TOKEN to an authorized model-router credential when required.
 bun run memory serve --db data/memory.db --embeddings none
 ```
 

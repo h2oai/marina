@@ -68,20 +68,22 @@ reference for file layout and rules is `test/README.md`.
 
 ## Commands
 
-```bash
-bun run test:fast              # pre-commit subset, ~10 s (parallel)
-bun run test                   # full backend suite, four workers, progress + stall/stuck-process/15-minute watchdog
-bun run test --parallel=2      # reduce contention on a small/shared machine
-bun run test:serial            # full suite in one process (debugging order-dependent failures)
-bun run test:shard 0 3         # one of three time-balanced CI buckets
-bun run test:coverage          # full suite + coverage (text + coverage/lcov.info)
-bun run check:coverage         # per-directory report from coverage/lcov.info
-bun run typecheck && bun run lint
-bun run test:ui                # frontend (Vitest on Node)
-bun run test:browser           # build + every Playwright journey in dashboard/e2e
-bun run docs:api --check       # generated builtin API reference matches current definitions
-make help                     # optional task shortcuts, all delegate to package scripts
-```
+- `bun run test:fast` — pre-commit subset, ~10 s (parallel).
+- `bun run test` — full backend suite, four workers, progress + stall/stuck-process/15-minute
+  watchdog.
+- `bun run test --parallel=2` — reduce contention on a small/shared machine.
+- `bun run test:serial` — full suite in one process (debugging order-dependent failures).
+- `bun run test:shard 0 3` — one of three time-balanced CI buckets.
+- `bun run test:coverage` — full suite + coverage (text + `coverage/lcov.info`).
+- `bun run check:coverage` — per-directory report from `coverage/lcov.info`.
+- `bun run typecheck && bun run lint`
+- `bun run test:ui` — frontend (Vitest on Node).
+- `bun run test:browser` — build + every Playwright journey in `dashboard/e2e`.
+- `bun run docs:api --check` — generated builtin API reference matches current definitions.
+- `bun run check:paste-safe` — shell examples in the guides that break when pasted as a whole
+  block (comments, or lines after `marina init`); advisory, exits 0 (`--strict` exits 1). Only
+  the front-door pages are held by a test.
+- `make help` — optional task shortcuts, all delegate to package scripts.
 
 **Hermetic environment.** Bun loads the repository's `.env` into `bun test`, so the
 test preload (`test/preload.ts` → `test/hermetic-env.ts`) removes leaked configuration
@@ -213,10 +215,11 @@ cheap (≤ 1.5 s measured) and self-contained (no engine boot, no listening
 server). It is the loop to run before every commit; the full suite and the
 shards run in CI.
 
-Refresh the list whenever tests are added, split or renamed:
+Refresh the list whenever tests are added, split or renamed. This prints a drift report and a
+ready-to-paste array:
 
 ```bash
-bun run scripts/test-fast.ts --check   # drift report + ready-to-paste array
+bun run scripts/test-fast.ts --check
 ```
 
 ## Sharding in CI
@@ -241,9 +244,12 @@ PR CI matrix measures or gates on it. The point is to notice a large regression,
 not to chase a number.
 
 ```bash
-bun run test:coverage     # full suite with --coverage; writes coverage/lcov.info
-bun run check:coverage    # per-directory line coverage from that lcov
+bun run test:coverage
+bun run check:coverage
 ```
+
+The first runs the full suite with `--coverage` and writes `coverage/lcov.info`; the second
+prints per-directory line coverage from that lcov.
 
 `bunfig.toml` holds the settings: `coverageSkipTestFiles` (coverage of a test
 file measures the test, not the code under test), the `text` + `lcov` reporters,
@@ -288,12 +294,10 @@ healthy repo-wide average (`src/net/model-api/`, `src/net/dashboard-api/`,
 `src/persistence/interfaces/`, `src/persistence/db-*.ts`, `src/agent/tools/`),
 and the ten least-covered files of 40+ lines.
 
-```bash
-bun run check:coverage                       # report only, always exits 0
-bun run check:coverage -- --strict           # exit 1 below the floor
-MARINA_COVERAGE_MIN_LINES=80 bun run check:coverage -- --strict
-bun run scripts/check-coverage.ts other/lcov.info --min 70 --strict
-```
+- `bun run check:coverage` — report only, always exits 0.
+- `bun run check:coverage -- --strict` — exit 1 below the floor.
+- `MARINA_COVERAGE_MIN_LINES=80 bun run check:coverage -- --strict`
+- `bun run scripts/check-coverage.ts other/lcov.info --min 70 --strict`
 
 The nightly workflow runs `test:coverage` + `check:coverage` in a
 `continue-on-error: true` job and uploads `coverage/lcov.info` as an artifact.
@@ -558,11 +562,10 @@ Two runners read the one list:
   world in an in-process engine under the `local` profile, on every test run.
 - `bun run playbook` runs the rest against real servers:
 
-```sh
-bun run playbook --free                                   # no keys: model-free + network steps
-bun run playbook --env-file ~/.marina/.env --only forecast,research
-bun run playbook --env-file ~/.marina/.env --long --cap 20 # + schedules, comparison, analyst teams
-```
+  - `bun run playbook --free` — no keys: model-free + network steps.
+  - `bun run playbook --env-file ~/.marina/.env --only forecast,research`
+  - `bun run playbook --env-file ~/.marina/.env --long --cap 20` — + schedules, comparison,
+    analyst teams.
 
 Each world gets a fresh isolated server (its own port from `--port`, database under the output
 folder, `local` profile, no room agents, daily spend cap `--cap`). A step's cost is the world's

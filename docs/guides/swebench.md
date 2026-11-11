@@ -58,11 +58,16 @@ workspace is built so that none of these routes exists:
 
 ## Commands
 
-```bash
-# Solver-visible fields only, written outside the repository:
-python benchmarks/swebench/export.py ~/.local/share/marina-swebench/data/verified.jsonl
+Export the solver-visible fields only, written outside the repository:
 
-bun run swebench subset --n 50 --seed 7                    # seeded ids, mixed across repositories
+```bash
+python benchmarks/swebench/export.py ~/.local/share/marina-swebench/data/verified.jsonl
+```
+
+Then draw seeded ids, mixed across repositories, and run, score and file the arms:
+
+```bash
+bun run swebench subset --n 50 --seed 7
 bun run swebench run --arm single --model <model> --replicate 1
 bun run swebench run --arm verify --model <model> --review-model <model2> --replicate 1
 SWEBENCH_PYTHON=<venv>/bin/python bun run swebench score --arm single --replicate 1

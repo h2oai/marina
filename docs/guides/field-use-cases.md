@@ -58,12 +58,24 @@ three larger projects need some design work. For how the pieces fit, see
 An engineer installs Marina in about five minutes on any Mac, Linux or Windows machine with Git
 and Bun 1.4.4 or newer. After that, everything happens in a web page.
 
+Download and build, and put the `marina` command on your PATH:
+
 ```bash
 git clone https://github.com/h2oai/marina.git && cd marina
 bun install
-bun run setup:cli        # puts the marina command on your PATH
-marina init              # connect an AI provider: paste a key, or pick a local model
-bun run start            # open http://localhost:3300
+bun run setup:cli
+```
+
+Connect an AI provider: paste a key, or pick a local model.
+
+```bash
+marina init
+```
+
+Start the server, then open http://localhost:3300.
+
+```bash
+bun run start
 ```
 
 The dashboard has three columns. On the left, **Web Chat** is where you type commands and read
@@ -242,11 +254,11 @@ names, an admin opens **Workspace → Admin → Endpoint** and picks **Passthru*
 ![Admin, Endpoint tab: four modes, Passthru selected](../assets/field-endpoint.png)
 
 **Step 2: point an app at it.** A standard OpenAI-style request came back in 1.3 seconds with its
-cost and a record number attached:
+cost and a record number attached (the key file is created at first start):
 
 ```bash
 export OPENAI_BASE_URL=http://localhost:3300/v1
-export OPENAI_API_KEY="$(cat marina.db.local-api-key)"   # created at first start
+export OPENAI_API_KEY="$(cat marina.db.local-api-key)"
 curl -s $OPENAI_BASE_URL/chat/completions -i \
   -H "Authorization: Bearer $OPENAI_API_KEY" -H 'Content-Type: application/json' \
   -d '{"model":"anthropic/claude-sonnet-5-5","messages":[{"role":"user","content":"What is a refund policy?"}]}'

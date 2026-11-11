@@ -52,13 +52,30 @@ models and formation. See [ForecastBench](forecastbench.md).
 
 ## Running
 
+Install the Prophet client and run the offline mapping checks:
+
 ```bash
 pip install prophet-arena
 cd benchmarks/prophet
-python3 -m unittest test_marina_agent.py                            # offline mapping checks
-prophet eval marina_agent.py --dataset prophet-arena-subset-100     # local, leaderboard-grade scoring
-prophet run marina_agent.py --dry-run --once                        # what it would submit
-prophet submit your-entrant && prophet run marina_agent.py          # live (an operator act; your name)
+python3 -m unittest test_marina_agent.py
+```
+
+Score locally, at leaderboard grade:
+
+```bash
+prophet eval marina_agent.py --dataset prophet-arena-subset-100
+```
+
+See what it would submit:
+
+```bash
+prophet run marina_agent.py --dry-run --once
+```
+
+Run live (an operator act, under your name):
+
+```bash
+prophet submit your-entrant && prophet run marina_agent.py
 ```
 
 A typed forecast takes minutes. The agent waits up to 15 minutes per event.
@@ -70,10 +87,15 @@ The agent appends each answer it gets to a journal: `data/answers.jsonl` under i
 directory, or the path in `PROPHET_ANSWER_JOURNAL` (`off` disables it). A wide event asked in parts
 gets one line per part. The journal is local, and the agent never fails a forecast because of it.
 
+File the journal's answers on the world database (each answer once):
+
 ```bash
-# File the journal's answers on the world database (each answer once).
 bun run benchmarks/prophet/writeback.ts file --journal benchmarks/prophet/data/answers.jsonl --db marina.db
-# When events resolve: score every filed answer of each resolved event.
+```
+
+When events resolve, score every filed answer of each resolved event:
+
+```bash
 bun run benchmarks/prophet/writeback.ts resolve --resolutions resolved.json --db marina.db
 ```
 

@@ -11,7 +11,11 @@ executable's absolute path. CI pins both the scanner version and the installer a
 
 ```sh
 bun run sbom
-# Optional destination outside the checkout:
+```
+
+To write to an optional destination outside the checkout instead:
+
+```sh
 bun run sbom /tmp/marina-source.cdx.json
 ```
 
