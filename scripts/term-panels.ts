@@ -282,6 +282,162 @@ export const PANELS: Panel[] = [
     },
   },
   {
+    name: "dreams",
+    describe: "the dream pass: proposals waiting for you, then what recent dreams did",
+    needs: ["dreams"],
+    render: (c) => {
+      const t = c.theme;
+      const d = c.snapshot.dreams;
+      if (!d) return card(t, "Dreams", waiting(c, "dream records"));
+      const right = `dreaming ${d.mode || "?"}`;
+      if (!d.items.length)
+        return card(
+          t,
+          "Dreams",
+          [t.fg("faint")("no dreams yet — memory dream why says what each gate is waiting on")],
+          right,
+        );
+      // Waiting for you first: pending proposals take `memory dream adopt|dismiss`.
+      const rows = [...d.items].sort(
+        (a, b) => Number(b.pending > 0) - Number(a.pending > 0) || b.createdAt - a.createdAt,
+      );
+      const body = columns(
+        rows.map((r) => {
+          const tone: Token = r.pending
+            ? "warning"
+            : r.state === "applied"
+              ? "success"
+              : r.state === "rolled_back"
+                ? "faint"
+                : "muted";
+          return [
+            t.fg("faint")(`#${r.id}`),
+            t.identity(r.entity)(clean(t, r.pool ? `pool:${r.entity}` : r.entity)),
+            t.fg(tone)(r.pending ? `${r.pending} to adopt` : r.state.replace("_", " ")),
+            t.fg("muted")(`${r.applied} applied · ${r.rejected} rejected`),
+            t.fg("faint")(fmtDuration(Date.now() - r.createdAt)),
+          ];
+        }),
+      );
+      const pending = rows.filter((r) => r.pending).length;
+      const lines = [
+        ...body,
+        ...(pending
+          ? [t.fg("muted")("memory dream proposals · memory dream adopt|dismiss <id> [n]")]
+          : []),
+        ...(d.guarded.length
+          ? [t.fg("warning")(`guard tripped: ${d.guarded.map((n) => clean(t, n)).join(", ")}`)]
+          : []),
+      ];
+      return card(t, "Dreams", lines, pending ? `${pending} waiting · ${right}` : right);
+    },
+  },
+  {
+    name: "memory",
+    aliases: ["mem"],
+    describe: "memory health: contradictions, stale and duplicate records, provenance, open jobs",
+    needs: ["memory"],
+    render: (c) => {
+      const t = c.theme;
+      const m = c.snapshot.memory;
+      if (!m) return card(t, "Memory", waiting(c, "memory health"));
+      const of = (x: { n: number; of: number }, bad: boolean) => {
+        const tone: Token = !x.of ? "faint" : bad && x.n ? "warning" : "muted";
+        return t.fg(tone)(x.of ? `${x.n} of ${x.of}` : "—");
+      };
+      const body = kv(t, [
+        [
+          "contradictions",
+          `${of(m.unresolved, true)}${m.unresolved.n ? t.fg("muted")("  · note conflicts") : ""}`,
+        ],
+        ["stale", of(m.stale, true)],
+        ["duplicates", of(m.duplicates, true)],
+        ["with sources", of(m.provenance, false)],
+        [
+          "memory jobs",
+          m.openJobs ? t.fg("warning")(`${m.openJobs} open`) : t.fg("muted")("none open"),
+        ],
+        ["resolutions", t.fg("muted")(String(m.resolutions))],
+      ]);
+      return card(
+        t,
+        "Memory",
+        body,
+        m.scope === "own" ? "yours" : m.scope === "all" ? "whole world" : m.scope,
+      );
+    },
+  },
+  {
+    name: "traces",
+    describe: "recent execution traces: failed runs and failed checks first",
+    needs: ["traces"],
+    render: (c) => {
+      const t = c.theme;
+      if (c.snapshot.denied?.traces)
+        return card(t, "Traces", [
+          t.fg("faint")(
+            "traces need operator read — trace find status=failed still searches yours",
+          ),
+        ]);
+      const traces = c.snapshot.traces;
+      if (!traces) return card(t, "Traces", waiting(c, "execution traces"));
+      if (!traces.length)
+        return card(t, "Traces", [
+          t.fg("faint")("no traces yet — they appear as models are called"),
+        ]);
+      const bad = (r: (typeof traces)[number]) =>
+        r.status === "failed" || r.failedChecks.length > 0;
+      const rows = [...traces].sort(
+        (a, b) => Number(bad(b)) - Number(bad(a)) || b.startedAt - a.startedAt,
+      );
+      const body = columns(
+        rows.map((r) => {
+          const tone: Token = bad(r) ? "error" : r.status === "running" ? "warning" : "success";
+          return [
+            t.fg("faint")(clean(t, r.id)),
+            t.fg(tone)(r.status),
+            t.fg("code")(clean(t, r.model || "—")),
+            t.fg("muted")(r.durationMs === null ? "…" : `${(r.durationMs / 1000).toFixed(1)}s`),
+            t.fg("muted")(`${r.spans} spans`),
+            r.failedChecks.length
+              ? t.fg("error")(clean(t, r.failedChecks.join(", ")))
+              : t.fg("faint")(fmtDuration(Date.now() - r.startedAt)),
+          ];
+        }),
+      );
+      const failed = rows.filter(bad).length;
+      return card(
+        t,
+        "Traces",
+        [...body, t.fg("muted")("trace show <id> · trace find status=failed")],
+        failed ? `${failed} failed of ${rows.length}` : `${rows.length}`,
+      );
+    },
+  },
+  {
+    name: "feed",
+    aliases: ["activity"],
+    describe: "the activity feed: what happened in the world, newest first",
+    needs: ["feed"],
+    render: (c) => {
+      const t = c.theme;
+      const feed = c.snapshot.feed;
+      if (!feed) return card(t, "Feed", waiting(c, "the activity feed"));
+      if (!feed.length) return card(t, "Feed", [t.fg("faint")("nothing has happened yet")]);
+      const body = columns(
+        [...feed]
+          .sort((a, b) => b.at - a.at)
+          .map((r) => [
+            t.fg("faint")(fmtDuration(Date.now() - r.at)),
+            t.fg("muted")(clean(t, r.kind)),
+            r.entity ? t.identity(r.entity)(clean(t, r.entity)) : t.fg("faint")("—"),
+            clean(t, r.summary),
+          ]),
+      );
+      return card(t, "Feed", [...body, t.fg("muted")("feed list kind:<k> entity:<name> since:2h")]);
+    },
+  },
+  {
     name: "spend",
     aliases: ["cost", "$"],
     describe: "upstream spend today by scope, against the daily cap",

@@ -220,4 +220,116 @@ describe("live world status for the CLI", () => {
       .join("\n");
     expect(out).toContain("signed-in world account");
   });
+
+  test("memory mode reads dreams and memory health as counts, proposals first", async () => {
+    const now = Date.now();
+    const { fetcher } = server({
+      "/api/memory/dreams": () =>
+        json({
+          mode: "observe",
+          guarded: ["Fern"],
+          dreams: [
+            {
+              id: 7,
+              entity: "Rowan",
+              state: "observed",
+              createdAt: now - 60_000,
+              ops: { applied: 0, rejected: 1, pendingProposals: 0 },
+            },
+            {
+              id: 6,
+              entity: "Rowan",
+              state: "applied",
+              createdAt: now - 120_000,
+              ops: { applied: 3, rejected: 0, pendingProposals: 2 },
+            },
+          ],
+        }),
+      "/api/memory/overview": () =>
+        json({
+          ratios: {
+            scope: "own",
+            unresolvedContradictionRate: { value: 0.5, numerator: 1, denominator: 2 },
+            stalenessRatio: { value: 0, numerator: 0, denominator: 40 },
+            redundancy: { value: null, numerator: 0, denominator: 0 },
+            provenanceCoverage: { value: 0.25, numerator: 10, denominator: 40 },
+          },
+          jobs: { open: 2 },
+          resolutions: [{}],
+        }),
+    });
+    const status = new WorldStatus("http://x", () => "t", "Rowan", fetcher);
+    status.want(["dreams", "memory"]);
+    await status.refresh(true);
+    const theme = createTheme(termCaps({ isTTY: true, columns: 100 }, { NO_COLOR: "1" }));
+    const context = { theme, name: "Rowan", connected: true, snapshot: status.snapshot, queued: 0 };
+    const dreams = findPanel("dreams")!.render(context).join("\n");
+    expect(dreams.indexOf("#6")).toBeLessThan(dreams.indexOf("#7"));
+    expect(dreams).toContain("2 to adopt");
+    expect(dreams).toContain("memory dream adopt|dismiss");
+    expect(dreams).toContain("guard tripped: Fern");
+    expect(dreams).toContain("1 waiting · dreaming observe");
+    const memory = findPanel("memory")!.render(context).join("\n");
+    expect(memory).toContain("1 of 2");
+    expect(memory).toContain("note conflicts");
+    expect(memory).toContain("10 of 40");
+    expect(memory).toContain("2 open");
+    expect(memory).toContain("yours");
+  });
+
+  test("investigate reads traces failures first, and says why when it may not", async () => {
+    const now = Date.now();
+    const { fetcher } = server({
+      "/api/traces": () =>
+        json({
+          traces: [
+            {
+              traceId: "t-ok",
+              status: "completed",
+              startedAt: now - 5_000,
+              durationMs: 1200,
+              spans: [{ attributes: { model: "claude-opus-5-5" } }],
+              evaluation: { checks: [{ id: "terminal_outcome", result: "passed" }] },
+            },
+            {
+              traceId: "t-bad",
+              status: "completed",
+              startedAt: now - 60_000,
+              durationMs: 800,
+              spans: [{ attributes: {} }, { attributes: {} }],
+              evaluation: { checks: [{ id: "tool_results", result: "failed" }] },
+            },
+          ],
+        }),
+      "/api/feed": () =>
+        json([
+          {
+            kind: "task_created",
+            entity: "Ada",
+            summary: "Fix the parser",
+            timestamp: now - 1_000,
+          },
+        ]),
+    });
+    const status = new WorldStatus("http://x", () => "t", "Rowan", fetcher);
+    status.want(["traces", "feed"]);
+    await status.refresh(true);
+    const theme = createTheme(termCaps({ isTTY: true, columns: 100 }, { NO_COLOR: "1" }));
+    const context = { theme, name: "Rowan", connected: true, snapshot: status.snapshot, queued: 0 };
+    const traces = findPanel("traces")!.render(context).join("\n");
+    expect(traces.indexOf("t-bad")).toBeLessThan(traces.indexOf("t-ok"));
+    expect(traces).toContain("tool_results");
+    expect(traces).toContain("claude-opus-5-5");
+    expect(traces).toContain("1 failed of 2");
+    expect(findPanel("feed")!.render(context).join("\n")).toContain("Fix the parser");
+
+    const denied = server({ "/api/traces": () => json({}, 403) });
+    const resident = new WorldStatus("http://x", () => "t", "Rowan", denied.fetcher);
+    await resident.refresh(true, ["traces"]);
+    expect(
+      findPanel("traces")!
+        .render({ ...context, snapshot: resident.snapshot })
+        .join("\n"),
+    ).toContain("traces need operator read");
+  });
 });
