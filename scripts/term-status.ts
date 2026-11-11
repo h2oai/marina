@@ -83,6 +83,10 @@ export interface WorldSnapshot {
   dreams?: { mode: string; guarded: string[]; items: DreamSummary[] };
   /** Memory health in your scope (counts from the memory overview). */
   memory?: MemoryHealth;
+  /** Recent execution traces (operator read). */
+  traces?: TraceSummary[];
+  /** The public activity feed, newest first. */
+  feed?: FeedItem[];
   /** When each part was last read successfully. */
   at: Partial<Record<Part, number>>;
   /** Parts this session may not read (the server answered 401/403). */
@@ -141,6 +145,25 @@ export interface MemoryHealth {
   resolutions: number;
 }
 
+export interface TraceSummary {
+  /** The id `trace show` takes. */
+  id: string;
+  status: string;
+  startedAt: number;
+  durationMs: number | null;
+  spans: number;
+  model: string;
+  /** Names of the evaluation checks that failed. */
+  failedChecks: string[];
+}
+
+export interface FeedItem {
+  kind: string;
+  entity: string;
+  summary: string;
+  at: number;
+}
+
 export interface HeldAction {
   token: string;
   kind: string;
@@ -165,7 +188,9 @@ export type Part =
   | "streams"
   | "tasks"
   | "dreams"
-  | "memory";
+  | "memory"
+  | "traces"
+  | "feed";
 
 const EVERY: Record<Part, number> = {
   health: 5_000,
@@ -180,10 +205,12 @@ const EVERY: Record<Part, number> = {
   tasks: 10_000,
   dreams: 30_000,
   memory: 30_000,
+  traces: 15_000,
+  feed: 10_000,
 };
 
 /** Read only while something on screen wants them (a mode's board, a `/live` card). */
-const ON_DEMAND = new Set<Part>(["streams", "tasks", "dreams", "memory"]);
+const ON_DEMAND = new Set<Part>(["streams", "tasks", "dreams", "memory", "traces", "feed"]);
 
 /** A part the server refused is asked again only this often (access can change). */
 const DENIED_EVERY = 300_000;
@@ -427,6 +454,42 @@ export class WorldStatus {
           };
           break;
         }
+        case "traces": {
+          const t = (await this.get("/api/traces?limit=12")) as Json;
+          s.traces = (Array.isArray(t.traces) ? t.traces : []).map((row: Json): TraceSummary => {
+            const spans: Json[] = Array.isArray(row.spans) ? row.spans : [];
+            const model = spans
+              .map((span) => span.attributes?.model)
+              .find((value) => typeof value === "string");
+            const checks: Json[] = Array.isArray(row.evaluation?.checks)
+              ? row.evaluation.checks
+              : [];
+            return {
+              id: String(row.traceId ?? ""),
+              status: String(row.status ?? ""),
+              startedAt: Number(row.startedAt ?? 0),
+              durationMs: typeof row.durationMs === "number" ? row.durationMs : null,
+              spans: spans.length,
+              model: typeof model === "string" ? model : "",
+              failedChecks: checks
+                .filter((check) => check.result === "failed")
+                .map((check) => String(check.id ?? "")),
+            };
+          });
+          break;
+        }
+        case "feed": {
+          const f = (await this.get("/api/feed?limit=15")) as Json[];
+          s.feed = (Array.isArray(f) ? f : []).map(
+            (row: Json): FeedItem => ({
+              kind: String(row.kind ?? ""),
+              entity: String(row.entity ?? ""),
+              summary: String(row.summary ?? ""),
+              at: Number(row.timestamp ?? 0),
+            }),
+          );
+          break;
+        }
         case "readiness": {
           const r = (await this.get("/api/readiness")) as Json;
           s.readiness = {
@@ -450,6 +513,8 @@ export class WorldStatus {
         if (part === "tasks") this.snapshot.tasks = undefined;
         if (part === "dreams") this.snapshot.dreams = undefined;
         if (part === "memory") this.snapshot.memory = undefined;
+        if (part === "traces") this.snapshot.traces = undefined;
+        if (part === "feed") this.snapshot.feed = undefined;
         return first;
       }
       return false;

@@ -1227,7 +1227,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and they are polled only while shown. `memory` is for curating what the world knows. It
   shows dreams, with proposals waiting for you first, and memory health as counts:
   contradictions, stale and duplicate records, provenance and open jobs (`/live dreams`,
-  `/live memory`). Switch with F3, `/mode <name>`, or
+  `/live memory`). `investigate` is for after the fact. It shows execution traces, with failed
+  runs and failed checks first (operator read), and the activity feed (`/live traces`,
+  `/live feed`). Switch with F3, `/mode <name>`, or
   `--mode <name>` on `marina`, `marina attach` and `bun run code`. A mode only arranges the
   screen; the coding session keeps running. Coding no longer splits the World beside it at 110
   columns on its own; `/layout split` still does, from 80.
