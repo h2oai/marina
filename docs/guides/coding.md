@@ -31,7 +31,13 @@ marina --agent marina --model openrouter/<model-id> --profile claude
 
 Runtime and command dialect are independent: `--agent claude` runs Claude Code's native
 tools; `--agent marina --profile claude` uses Marina's tools with its Claude-style command
-aliases. `--model` selects a model understood by the chosen runtime. Native agents keep
+aliases. `--model` selects a model understood by the chosen runtime. `--thinking <level>`
+(`off`, `minimal`, `low`, `medium`, `high`, `xhigh`) sets reasoning depth for every runtime:
+Marina's coder reads it directly, Claude Code gets the matching `effort` (`off` turns thinking
+off, `minimal` reads as `low`), Codex gets `model_reasoning_effort` (`off` is its `none`) and pi
+gets `--thinking`. Omitted, each native agent keeps its own default; a saved harness remembers
+the level with the agent and model, so the same model at the same depth can be compared across
+runtimes. Native agents keep
 their own configuration and permission systems; Marina's `--allow-exec` flags apply
 only to Marina's own Code Mode commands. There is no automatic provider failover.
 

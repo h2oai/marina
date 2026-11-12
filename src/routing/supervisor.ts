@@ -3,6 +3,7 @@
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { parseAgentThinkingLevel } from "../agent/agent-types";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { RoutingRunnerJournal } from "../persistence/db-routing-runner";
@@ -281,6 +282,8 @@ export class MarinaSupervisor {
       (typeof control.model !== "string" || control.model.length > 256)
     )
       throw new Error("Invalid model");
+    if (control.effort !== undefined && parseAgentThinkingLevel(control.effort) === undefined)
+      throw new Error("Invalid effort: use off, minimal, low, medium, high or xhigh");
     if (control.workspace && !["shared", "worktree"].includes(control.workspace))
       throw new Error("Invalid workspace mode");
     if (
@@ -320,6 +323,7 @@ export class MarinaSupervisor {
         mode: "managed",
         adapter: adapter.id,
         model: control.model,
+        ...(control.effort ? { effort: parseAgentThinkingLevel(control.effort) } : {}),
         resumeSupported: adapter.supportsResume === true,
         supervisorId: this.owner.id,
         cwd: workspace.cwd,
@@ -724,6 +728,7 @@ export class MarinaSupervisor {
     return adapter.start({
       cwd: run.state.cwd,
       model: run.state.model,
+      effort: parseAgentThinkingLevel(run.state.effort),
       resumeSessionId,
       executable: adapter.executable,
       env: this.childEnvironment(run),
