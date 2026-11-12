@@ -1,7 +1,32 @@
 # Install Marina
 
-Three ways in, from least effort to most control. All of them end at the same place: Marina
-running on your computer, open in your browser at **http://localhost:3300**.
+Four ways in, from least effort to most control. The desktop app is Marina in its own window;
+the others end with Marina running on your computer, open in your browser at
+**http://localhost:3300**.
+
+## Download the app
+
+No terminal at all: the desktop app has Marina, its dashboard and its world inside. Download the
+one for your computer, open it, enter a name, click **Start Here**, then **Connect an AI
+provider** and paste your key.
+
+| Your computer | Download | Then |
+|---|---|---|
+| Mac with Apple silicon (M1 or later) | [Marina for macOS (.dmg)](https://github.com/h2oai/marina/releases/download/desktop-v0.8.0/macos-arm64-Marina.dmg) | Open the `.dmg` and drag Marina to Applications. |
+| Windows 10 or 11 (64-bit) | [Marina for Windows (.zip)](https://github.com/h2oai/marina/releases/download/desktop-v0.8.0/win-x64-Marina-Setup.zip) | Unzip it and run `Marina-Setup.exe`. |
+| Linux (x64) | [Marina for Linux (.tar.gz)](https://github.com/h2oai/marina/releases/download/desktop-v0.8.0/linux-x64-Marina-Setup.tar.gz) | Unpack it and run `./installer`; Marina appears in your applications. |
+
+These builds are not signed, so the first launch needs one extra step:
+
+- **macOS** says *"Apple could not verify 'Marina' is free of malware"*. Click **Done**, open
+  **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to
+  Marina. You only do this once.
+- **Windows** shows *"Windows protected your PC"*. Click **More info**, then **Run anyway**.
+
+All files, with their checksums and build attestations, are on the
+[release page](https://github.com/h2oai/marina/releases/tag/desktop-v0.8.0). The app does not
+update itself yet; download a newer one from the [releases](https://github.com/h2oai/marina/releases)
+when you want it.
 
 ## Ask your AI assistant
 

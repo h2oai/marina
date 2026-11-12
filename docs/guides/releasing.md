@@ -192,6 +192,11 @@ git tag -a desktop-vX.Y.Z -m "Marina desktop X.Y.Z"
 git push origin desktop-vX.Y.Z
 ```
 
+To make it the download people get, publish the draft (it may stay unsigned) and point the
+download links at the new tag: they name `desktop-vX.Y.Z` in
+[Install Marina](install.md#download-the-app) and the README's desktop section, so a server
+release on GitHub never redirects them.
+
 macOS signing needs the `ELECTROBUN_DEVELOPER_ID` secret and certificate; notarization also needs
 `APPLE_ID`, `APPLE_TEAM_ID` and `APPLE_PASSWORD`. Without them the build is unsigned. Windows
 signing and an update feed are not configured. Check each installer on its target OS before
