@@ -149,6 +149,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against it. `protocol/http.md` is the guide, with a curl session that works as written. Where the
   SDK left a reply untyped (a finished or cancelled assistance job, the JSON store), the document
   says what the server sends.
+- **The TypeScript SDK runs coding tasks, from one front door.** `Marina.local(folder)` starts the
+  folder's server and logs in as its owner; `Marina.connect(url, { name | token })` joins a running
+  one. `marina.code.run(task, { verification, budget })` streams typed steps (edits with their
+  diffs, checks) and ends with the run's result; `code.diff()`, `code.review()` and
+  `code.onExecApproval()` follow it. The same object carries `command()` and the routing,
+  investigation, panel and memory clients, signed in. Its commands always mean what they say: Code
+  Mode never turns `look` into a coding task. Its coding types are held to `marina.wire.v1`. A
+  live test drives a whole run (a scripted model edits, checks pass, the run is handed in) and
+  checks every coding frame against the schema.
+- **`marina serve <folder> [--fresh] [--json]`: the folder's server without a terminal.** With
+  `--json` it prints one `marina.local.v1` line (where to connect, whom to log in as) and stops
+  when its stdin closes, so it never outlives the program that started it. Every SDK's
+  `Marina.local` runs it. The protocol guide documents it, and the `/` prefix a program puts on
+  its commands so Code Mode never takes one as a task.
 
 ### Changed
 

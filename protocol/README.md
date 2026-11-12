@@ -136,6 +136,19 @@ its text.
 { "type": "command", "command": "code do -- fix the off-by-one in paginate.js", "request_id": "task-1" }
 ```
 
+**From a program**, two things differ from a person at a terminal:
+
+- Start every command with `/` (the session frame says `"worldCommandProtocol": "slash-v1"`).
+  Once Code Mode is on, a line without the slash is a task for the coder, as it is for a person
+  typing. With it, `/look` is always the world's `look`.
+- Say that nobody is waiting at a keyboard, and how long the coder may take:
+  `/code do verification:checks owner:unattended budget:600s -- <the task>`. Checks then run on
+  the change before it is handed in, and at the budget the coder hands in what it has, labelled
+  `budgetForced`. `verification:candidate` lets the coder's own checks stand.
+
+The run's id comes first, as `metadata.runId` on a `code_lifecycle` event with phase `received`.
+Follow the events of that session until the end of that run (below).
+
 **Each step** is an `agent_output` event with an `activity`: what it did in plain words, and for
 an edit, the change itself.
 
@@ -225,6 +238,20 @@ Then, as commands:
 
 If the coder wants to run a command outside its allowlist, you get an `execApproval` frame.
 Answer it with `code exec-approve <token>` or `code exec-deny <token> [reason]`.
+
+## A server for a folder
+
+`marina serve <folder> --json` starts the server `marina <folder>` uses, without a terminal: the
+same saved sessions and memory (in `~/.marina/projects/`). When it is ready it prints one line on
+stdout, `marina.local.v1`:
+
+```text
+{"protocol":"marina.local.v1","url":"ws://127.0.0.1:41873","http":"http://127.0.0.1:41873","name":"coder","pid":4242,"folder":"/home/me/project"}
+```
+
+Log in at `url` as `name`, the folder's owner. The server codes in that folder. It stops on
+SIGTERM, or when its stdin closes, so it never outlives the program that started it. `--fresh`
+uses a throwaway database. An SDK's `Marina.local(folder)` is exactly this.
 
 ## Reconnect
 

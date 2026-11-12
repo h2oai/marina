@@ -445,7 +445,7 @@ export function codingTaskCompletionMatcher(sessionId?: string): (p: Perception)
   };
 }
 
-function freePort(): Promise<number> {
+export function freePort(): Promise<number> {
   return new Promise((res, rej) => {
     const srv = createServer();
     srv.once("error", rej);
@@ -710,6 +710,60 @@ export function removeEphemeralDatabase(dbPath: string): void {
   }
 }
 
+/** The name the folder's owner logs in as: an operator of the folder server. */
+export const FOLDER_OWNER = "coder";
+
+/**
+ * Boot a minimal, folder-scoped server. MARINA_ADMINS=coder makes the local
+ * user the operator (so it may launch the bound coding agent); the empty world
+ * + no room agents keep it light; the DB is per-folder (or a throwaway with
+ * --fresh). MARINA_NAME is pinned to the folder basename so instance-scoped
+ * flags (tour dismissal, seen markers) stay stable across launches.
+ * `marina <dir>` and `marina serve <dir>` both start it here.
+ */
+export function spawnFolderServer(o: {
+  dir: string;
+  port: number;
+  dbPath: string;
+  /** The compiled server's working directory. */
+  serverHome: string;
+  defaultModel?: string;
+  thinking?: string;
+}) {
+  const { dir, port, dbPath, serverHome, defaultModel } = o;
+  return Bun.spawn(
+    IS_COMPILED ? [process.execPath, "start"] : [process.execPath, "run", "src/main.ts"],
+    {
+      // Never the project folder: Bun would load its `.env`, and relative data
+      // paths would land in it. The launcher already passes every setting.
+      cwd: IS_COMPILED ? serverHome : REPO_ROOT,
+      env: {
+        ...process.env,
+        WS_PORT: String(port),
+        WS_HOST: "127.0.0.1",
+        // Port 0 disables the listener (src/main.ts) — otherwise a second Marina
+        // on the machine dies EADDRINUSE on telnet 4000 / MCP 3301 / log 3302.
+        TELNET_PORT: "0",
+        MCP_PORT: "0",
+        LOG_PORT: "0",
+        DB_PATH: dbPath,
+        MARINA_NAME: process.env.MARINA_NAME ?? (basename(dir) || "marina"),
+        MARINA_WORLD: process.env.MARINA_WORLD ?? "empty",
+        MARINA_ROOM_AGENTS: process.env.MARINA_ROOM_AGENTS ?? "false",
+        AGENT_AUTORESPAWN: process.env.AGENT_AUTORESPAWN ?? "false",
+        MARINA_CODE_DEFAULT_ROOT: dir,
+        MARINA_CODE_ROOTS: dir,
+        MARINA_ADMINS: process.env.MARINA_ADMINS ?? FOLDER_OWNER,
+        MARINA_OPEN_API: process.env.MARINA_OPEN_API ?? "true",
+        ...(defaultModel ? { MARINA_DEFAULT_MODEL: defaultModel } : {}),
+        ...(o.thinking ? { MARINA_CODE_THINKING: o.thinking } : {}),
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+    },
+  );
+}
+
 /** Boot a folder-scoped Marina and run the Code Mode REPL (or a one-shot
  *  `print` task). Never returns. */
 export async function runCodeSession(
@@ -841,42 +895,14 @@ export async function runCodeSession(
   const serverHome = fresh ? `${dbPath}.home` : projectDirectory;
   if (IS_COMPILED) mkdirSync(serverHome, { recursive: true });
 
-  // Boot a minimal, folder-scoped server. MARINA_ADMINS=coder makes the local
-  // user the operator (so it may launch the bound coding agent); the empty world
-  // + no room agents keep it light; the DB is per-folder (or a throwaway with
-  // --fresh). MARINA_NAME is pinned to the folder basename so instance-scoped
-  // flags (tour dismissal, seen markers) stay stable across launches.
-  const server = Bun.spawn(
-    IS_COMPILED ? [process.execPath, "start"] : [process.execPath, "run", "src/main.ts"],
-    {
-      // Never the project folder: Bun would load its `.env`, and relative data
-      // paths would land in it. The launcher already passes every setting.
-      cwd: IS_COMPILED ? serverHome : REPO_ROOT,
-      env: {
-        ...process.env,
-        WS_PORT: String(port),
-        WS_HOST: "127.0.0.1",
-        // Port 0 disables the listener (src/main.ts) — otherwise a second Marina
-        // on the machine dies EADDRINUSE on telnet 4000 / MCP 3301 / log 3302.
-        TELNET_PORT: "0",
-        MCP_PORT: "0",
-        LOG_PORT: "0",
-        DB_PATH: dbPath,
-        MARINA_NAME: process.env.MARINA_NAME ?? (basename(dir) || "marina"),
-        MARINA_WORLD: process.env.MARINA_WORLD ?? "empty",
-        MARINA_ROOM_AGENTS: process.env.MARINA_ROOM_AGENTS ?? "false",
-        AGENT_AUTORESPAWN: process.env.AGENT_AUTORESPAWN ?? "false",
-        MARINA_CODE_DEFAULT_ROOT: dir,
-        MARINA_CODE_ROOTS: dir,
-        MARINA_ADMINS: process.env.MARINA_ADMINS ?? "coder",
-        MARINA_OPEN_API: process.env.MARINA_OPEN_API ?? "true",
-        ...(defaultModel ? { MARINA_DEFAULT_MODEL: defaultModel } : {}),
-        ...(opts.thinking ? { MARINA_CODE_THINKING: opts.thinking } : {}),
-      },
-      stdout: "ignore",
-      stderr: "pipe",
-    },
-  );
+  const server = spawnFolderServer({
+    dir,
+    port,
+    dbPath,
+    serverHome,
+    defaultModel,
+    thinking: opts.thinking,
+  });
 
   // Rolling stderr tail so a boot failure can say why.
   const stderrTail: string[] = [];
@@ -988,7 +1014,7 @@ export async function runCodeSession(
   }
 
   try {
-    const session = await agent.connect("coder");
+    const session = await agent.connect(FOLDER_OWNER);
     if (verbose) say(`Ready as ${session.name}.`);
   } catch (err) {
     console.error(`Failed to connect: ${(err as Error).message}`);
