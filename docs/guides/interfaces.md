@@ -111,6 +111,7 @@ to cycle, type `/mode <name>`, or start with `--mode <name>`.
 | `memory` | Curating what the world knows. **Dreams** lists recent dreams with the proposals waiting for you first. **Memory** shows counts only: unresolved contradictions, stale and duplicate records, records with sources, open memory jobs. Both are scoped to what you may see | World, for `memory recall <query>`, `memory dream adopt <id>` and `note conflicts` |
 | `investigate` | After the fact. **Traces** lists recent execution traces, with failed runs and failed checks first; it needs operator read, and otherwise says so. **Feed** shows the activity feed, newest first | World, for `trace show <id>`, `trace find status=failed` and `feed list since:2h` |
 | `forecast` | Your newest predictions and research (the dashboard's Predict and Research pages). Running ones come first, then answers and resolved scores, with today's **Spend** below, because every prediction costs model calls. Needs a signed-in world account | World, for `inquiry predict -- <question>`, `inquiry show <case-id>` and `forecast <question>` |
+| `admin` | How the world is set up (the dashboard's Admin → Security, Keys and Logs). **Setup** shows sign-in, model API access, whether stored keys are encrypted, the default model, and provider keys by name and provider only — never their values; keys are shown to operators only. **Logs** lists recent errors, then warnings, newest first; it needs operator read | World, for `key list`, `key test <name>`, `admin models` and `readiness` |
 
 In `coding`, `/layout split` (or F2) still puts the whole World beside Coding when you want it.
 In every mode but `coding` the board sits beside the World from 80 columns; narrower, the World is shown alone.
@@ -121,7 +122,7 @@ In every mode but `coding` the board sits beside the World from 80 columns; narr
 |---|---|
 | F1 | Help |
 | F2 | Cycle layouts: auto, focus, split (`/layout auto\|focus\|split`) |
-| F3 | Cycle modes (`/mode coding\|operate\|coordinate\|memory\|investigate\|forecast`) |
+| F3 | Cycle modes (`/mode coding\|operate\|coordinate\|memory\|investigate\|forecast\|admin`) |
 | Shift+PageUp / Shift+PageDown | Scroll a mode's board |
 | F6 | Switch the composer between Coding and World |
 | F7 | Open pending requests |
@@ -152,7 +153,7 @@ Exiting restores your shell and does not print unsent drafts.
 | `/continue`, `/resume <name-or-id>` | Resume this folder's Marina session or a recorded native session |
 | `/model [<id>]`, `/fast`, `/harness` | Show or switch the model and runtime |
 | `/cost`, `/compact` | Today's spend against the cap; compact the context now |
-| `/live [status\|agents\|spend\|alerts\|readiness\|world\|me]` | The dashboard's live data, drawn as a card in the focused pane |
+| `/live [status\|agents\|spend\|alerts\|readiness\|world\|me]` | The dashboard's live data, drawn as a card in the focused pane. Every mode's board card works here too (`/live logs`, `/live setup` …) |
 | `/world <command>` | Run any world command, such as `task list` or `memory recall …` |
 | `/memory [save <line> \| recall <query>]` | Save to this folder's memory, or recall from it |
 | `/panel …` | Open, use and close [published panels](published-panels.md) |
@@ -168,10 +169,11 @@ Some dashboard views have no pane yet. You can still reach most of their data as
 |---|---|
 | Participant Streams | `coordinate` mode, or `/live streams`; `/agents` and `/use` for native agents |
 | Memory workspace, dreams | `memory` mode, or `/live dreams`, `/live memory`; `/memory`, `/world memory dream log` |
-| Traces, logs, activity feed | `investigate` mode, or `/live traces`, `/live feed`; `/world trace …`, `/world feed list …`. Logs stay in the browser |
+| Traces, logs, activity feed | `investigate` mode, or `/live traces`, `/live feed`; `/world trace …`, `/world feed list …`. Errors and warnings from the log: `admin` mode or `/live logs`; searching the log stays in the browser |
 | Ops, health, spend | `operate` mode, or `/live status`, `/live readiness`, `/live alerts`, `/cost` |
 | Predict and Research pages | `forecast` mode, or `/live forecasts`; `marina inquiry tui` is the full-screen case browser |
-| Canvas, media, Admin settings | Browser dashboard only |
+| Admin: security, keys, default model | `admin` mode, or `/live setup`; `/world key list`, `/world admin models`. Changing keys or settings stays in the browser or `key add` |
+| Canvas, media | Browser dashboard only: both are visual |
 
 `marina connect` is the world REPL. It uses the scrollback screen and has no fullscreen mode.
 

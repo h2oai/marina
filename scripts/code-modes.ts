@@ -18,6 +18,9 @@
  *   the activity feed — beside the World, where `trace …` drills in.
  * - `forecast`: your predictions and research — running first, then
  *   answers and resolutions — beside the World, where `inquiry …` asks.
+ * - `admin`: how the world is set up — sign-in, key storage, default model,
+ *   provider keys by name — and the server's recent errors and warnings,
+ *   beside the World, where `key …`, `admin …` and `readiness` run.
  */
 
 import { isAddressedTo } from "../src/agent/social";
@@ -32,6 +35,7 @@ export const WORKSPACE_MODES = [
   "memory",
   "investigate",
   "forecast",
+  "admin",
 ] as const;
 export type WorkspaceMode = (typeof WORKSPACE_MODES)[number];
 
@@ -103,6 +107,16 @@ export const MODES: Record<WorkspaceMode, ModeDef> = {
     board: ["forecasts", "spend"],
     parts: ["forecasts"],
     hint: "World commands go here: inquiry predict -- <question>, inquiry show <case-id>, inquiry why <case-id>, forecast <question>. Every prediction costs model calls; Spend is below. F3 cycles modes.",
+  },
+  admin: {
+    name: "admin",
+    label: "Admin",
+    describe: "the world's setup and recent server errors and warnings beside the World",
+    composer: "world",
+    // Setup first (what is misconfigured), then what the server is complaining about.
+    board: ["setup", "logs"],
+    parts: ["setup", "logs"],
+    hint: "World commands go here: key list, key test <name>, admin models, readiness, admin stats. Values of keys are never shown. F3 cycles modes.",
   },
 };
 
