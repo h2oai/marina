@@ -4,7 +4,8 @@ Marina sizes itself to the intelligence it has. Several vendors give it cross-ve
 
 ## Point Marina at a local model
 
-Any OpenAI-compatible server works. The quickest way is `marina init` → `local`: it asks for the
+Any OpenAI-compatible server works. The quickest way is `marina init`: with Ollama running, Enter at its one prompt uses
+Ollama's first model. For another server, `marina init --advanced` → `local` asks for the
 server's base URL, lists the models it serves, and writes the settings below to
 `~/.marina/.env`. To set them by hand, put the base URL (and the model id it serves) in that
 file or the instance's `.env`:

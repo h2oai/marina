@@ -242,15 +242,16 @@ const truths = [
             same commands they do.
           </p>
           <div class="mp-actions">
-            <a class="mp-btn mp-btn-primary" href={href("docs/guides/getting-started")}>Start Marina</a>
+            <a class="mp-btn mp-btn-primary" href={href("docs/guides/install")}>Start Marina</a>
             <a class="mp-btn" href={href("docs/tour")}>Take the tour</a>
           </div>
           <div class="mp-install">
-            <pre id="install-cmd">git clone https://github.com/h2oai/marina
-cd marina && bun install && bun run dashboard:build
-bun run setup:cli && marina init && marina start</pre>
+            <pre id="install-cmd">curl -fsSL https://h2oai.github.io/marina/setup.sh | bash</pre>
             <button type="button" class="mp-copy" data-copy="install-cmd" aria-label="Copy install commands">Copy</button>
           </div>
+          <p class="mp-install-note">
+            macOS or Linux. Or tell your AI assistant: <q>Install Marina from github.com/h2oai/marina</q>.
+          </p>
         </div>
         <figure class="mp-film">
           <video
@@ -425,7 +426,7 @@ bun run setup:cli && marina init && marina start</pre>
         <img src={mermaid.src} alt="" width="120" height="114" />
         <h2>Pull up a chair.</h2>
         <div class="mp-actions">
-          <a class="mp-btn mp-btn-primary" href={href("docs/guides/getting-started")}>Start Marina</a>
+          <a class="mp-btn mp-btn-primary" href={href("docs/guides/install")}>Start Marina</a>
           <a class="mp-btn" href={gh}>Star on GitHub</a>
         </div>
       </section>
@@ -549,6 +550,7 @@ bun run setup:cli && marina init && marina start</pre>
       .mp-btn-primary:hover { background: #ffb800; border-color: #ffb800; }
 
       .mp-install { display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 1.8rem; max-width: 34rem; background: var(--mp-deep); border: 1px solid var(--mp-line); border-radius: 10px; padding: 0.8rem 0.6rem 0.8rem 1rem; }
+      .mp-install-note { margin: 0.6rem 0 0; max-width: 34rem; font-size: 0.85rem; color: var(--mp-mist, inherit); opacity: 0.85; }
       .mp-install pre { flex: 1; min-width: 0; margin: 0; font-family: var(--mp-font-mono); font-size: 0.82rem; line-height: 1.7; color: var(--mp-foam); overflow-x: auto; }
       .mp-hero-copy { min-width: 0; }
       .mp-copy { font: inherit; font-size: 0.85rem; background: transparent; color: var(--mp-mist); border: 1px solid var(--mp-line-strong); border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; }

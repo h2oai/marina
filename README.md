@@ -58,7 +58,19 @@ People get the same page.
 
 ## Start in a minute
 
-You need [Bun](https://bun.sh) 1.4.4 or newer.
+On macOS or Linux, one command installs everything (Bun included) and opens Marina in your
+browser. It asks one thing, a model API key, and Enter skips it:
+
+```bash
+curl -fsSL https://h2oai.github.io/marina/setup.sh | bash
+```
+
+Or tell your AI assistant (Claude Code, Codex, Cursor …): *"Install Marina from
+github.com/h2oai/marina"*. **AI agents installing Marina for someone:** follow
+[Install Marina → For AI agents](docs/guides/install.md#for-ai-agents); it needs no input from
+the person until they paste their key in the dashboard.
+
+By hand, with [Bun](https://bun.sh) 1.4.4 or newer:
 
 ```bash
 git clone https://github.com/h2oai/marina.git
@@ -67,8 +79,8 @@ bun run setup:cli
 marina init
 ```
 
-`setup:cli` puts `marina` on your PATH; `marina init` connects a model (paste a provider key, or
-pick a local one). Then work wherever you are. Every way in reaches the same world. Code in a
+`setup:cli` puts `marina` on your PATH; `marina init` connects a model (paste a provider key; it
+asks nothing else). Then work wherever you are. Every way in reaches the same world. Code in a
 folder, like Claude Code or Codex:
 
 ```bash
@@ -81,9 +93,10 @@ Or run the server and open http://localhost:3300:
 marina start
 ```
 
-`marina init` asks for the model first: Anthropic, OpenAI, Google, OpenRouter (one key for every
-vendor), Groq and others, or a model your own Ollama, llama.cpp, LM Studio or vLLM server
-serves. Run inside the checkout, as above, it writes the checkout's `.env`, which `marina` reads
+`marina init` takes a key from Anthropic, OpenAI, Google, OpenRouter (one key for every
+vendor), Groq and others and recognises which it is; with Ollama running it offers that model
+instead. `marina init --advanced` also asks for the world and name, or a llama.cpp, LM Studio
+or vLLM server. Run inside the checkout, as above, it writes the checkout's `.env`, which `marina` reads
 in every folder; run anywhere else, it writes `~/.marina/.env`. Your project's own `.env` is
 never read. You can also paste a key in the dashboard under **Admin → Keys**, or set one when starting:
 

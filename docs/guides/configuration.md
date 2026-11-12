@@ -13,7 +13,7 @@ matches how you use Marina:
 
 | You use | Do this | It applies to |
 |---------|---------|---------------|
-| `marina` in a folder, or `marina start` | `marina init`: choose a provider and paste its key, or choose `local` and pick a model your Ollama, llama.cpp, LM Studio or vLLM server already serves | every folder and every `marina start` (it writes `~/.marina/.env`; inside a source checkout, the checkout's `.env`, which `marina` also reads in every folder) |
+| `marina` in a folder, or `marina start` | `marina init`: paste a key (the provider is recognised from it), or press Enter to use a running Ollama; `marina init --advanced` for llama.cpp, LM Studio or vLLM | every folder and every `marina start` (it writes `~/.marina/.env`; inside a source checkout, the checkout's `.env`, which `marina` also reads in every folder) |
 | The dashboard | **Admin → Keys**: paste, save, **Test** | that server's world (stored in its database, no restart) |
 | The desktop app | **Connect an AI provider** on first launch, or **Admin → Keys** | the app's world |
 | A source checkout, Docker or a service | a variable such as `ANTHROPIC_API_KEY=…` in the environment or the instance's `.env` | that process |

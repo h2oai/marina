@@ -13,8 +13,8 @@ Agents need a model. These all mean none is connected:
 - A task replies `No LLM provider configured`.
 - `/v1` answers `503 No upstream LLM providers configured`.
 
-Run `marina init` and choose a provider (paste its key) or `local` (pick a model your Ollama,
-llama.cpp, LM Studio or vLLM server serves). Then restart `marina` or `marina start`. Keys can
+Run `marina init` and paste a provider key (or `marina init --advanced` → `local` to pick a
+model your Ollama, llama.cpp, LM Studio or vLLM server serves). Then restart `marina` or `marina start`. Keys can
 also go in **Admin → Keys** on the dashboard, but that reaches only that server's world, so a
 key saved there does not reach another folder's session.
 [Connect a model](configuration.md#connect-a-model) has every option.

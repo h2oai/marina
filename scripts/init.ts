@@ -207,6 +207,38 @@ async function testKey(provider: (typeof PROVIDERS)[number], key: string): Promi
 }
 
 /**
+ * The providers a pasted key can belong to, recognised by its prefix, so setup asks for the key
+ * and never for the provider. A prefix no provider documents (Together, Nebius) returns every
+ * provider without one, to be tried in turn.
+ */
+export function providersForKey(key: string): string[] {
+  const k = key.trim();
+  if (k.startsWith("sk-ant-")) return ["anthropic"];
+  if (k.startsWith("sk-or-")) return ["openrouter"];
+  if (k.startsWith("gsk_")) return ["groq"];
+  if (k.startsWith("AIza")) return ["google"];
+  if (k.startsWith("sk-")) return ["openai"];
+  const known = new Set(["anthropic", "openrouter", "groq", "google", "openai"]);
+  return PROVIDERS.map((p) => p.name).filter((name) => !known.has(name));
+}
+
+/** A model this configuration (or the shell) already reaches: a provider key or a local runtime. */
+export function configuredModel(
+  cfg: Record<string, string>,
+  env: NodeJS.ProcessEnv = process.env,
+): { label: string; source: "settings" | "environment" } | null {
+  for (const p of PROVIDERS) {
+    if (cfg[p.env]?.trim()) return { label: p.name, source: "settings" };
+  }
+  if (cfg.OLLAMA_BASE_URL?.trim()) return { label: "ollama (local)", source: "settings" };
+  if (cfg.LLAMA_BASE_URL?.trim()) return { label: "local model", source: "settings" };
+  for (const p of PROVIDERS) {
+    if (env[p.env]?.trim()) return { label: `${p.name} (${p.env})`, source: "environment" };
+  }
+  return null;
+}
+
+/**
  * What agents may spend, said once at setup: the default world starts its
  * seeded agents on a local install once a provider key exists, bounded by the
  * daily spend cap.
@@ -266,6 +298,7 @@ export async function runInit(args: string[] = []): Promise<void> {
       yes: { type: "boolean" },
       check: { type: "boolean" },
       print: { type: "boolean" },
+      advanced: { type: "boolean" },
     },
   });
   // Default target: the checkout's own `.env` when run inside it, else the
@@ -335,17 +368,30 @@ export async function runInit(args: string[] = []): Promise<void> {
   const theme = themeFor(process.stdout.isTTY ? process.stdout : undefined);
   const ui = { ...initStyles(theme), styled: theme.level > 0 };
 
+  // Input that ends (a pipe, Ctrl+D) answers the pending question and every later one with
+  // Enter. A question still waiting when the input closes would otherwise never return.
+  let inputEnded = false;
+  const inputClosed = new Promise<string>((resolveClosed) =>
+    rl.once("close", () => {
+      inputEnded = true;
+      resolveClosed("");
+    }),
+  );
+  const question = (text: string): Promise<string> =>
+    inputEnded ? Promise.resolve("") : Promise.race([rl.question(text), inputClosed]);
+
   async function ask(prompt: string, fallback = ""): Promise<string> {
-    const answer = (await rl.question(ui.ask(prompt))).trim();
+    const answer = (await question(ui.ask(prompt))).trim();
     return answer || fallback;
   }
 
   /** Ask without echoing the typed characters (secrets). */
   async function askHidden(prompt: string): Promise<string> {
+    if (inputEnded) return "";
     process.stdout.write(prompt);
     output.muted = true;
     try {
-      const answer = (await rl.question("")).trim();
+      const answer = (await question("")).trim();
       process.stdout.write("\n");
       return answer;
     } finally {
@@ -358,6 +404,92 @@ export async function runInit(args: string[] = []): Promise<void> {
     ...existing,
   };
 
+  /**
+   * The default setup: at most one question. A key already saved or in the shell is used as it
+   * is; otherwise the one prompt takes a pasted key (its provider is recognised from the key),
+   * or Enter for a local Ollama model when one is running, else skip. The instance name, world
+   * and admin keep their defaults; `marina init --advanced` asks for each.
+   */
+  async function quickSetup(): Promise<void> {
+    const ollamaUrl = "http://localhost:11434/v1";
+    const current = configuredModel(cfg);
+    let modelLabel = current?.label;
+    if (current?.source === "environment") {
+      console.log(ui.ok(`\n✓ Using ${current.label} from your environment.`));
+    } else {
+      const ollama = current ? null : await localModels(ollamaUrl);
+      const ollamaModel = ollama && "models" in ollama ? ollama.models[0] : undefined;
+      console.log(
+        current
+          ? `\nModel: ${current.label} (already set up).`
+          : `\n${ui.section("Connect a model")}\n${ui.muted(
+              "Paste an API key from Anthropic, OpenAI, Google, OpenRouter, Groq, Together or Nebius.",
+            )}`,
+      );
+      const enter = current
+        ? "keep it"
+        : ollamaModel
+          ? `use ${ollamaModel} from Ollama on this computer`
+          : "skip for now (you can add a key later in the dashboard)";
+      for (;;) {
+        const key = await askHidden(`Paste a key, or press Enter to ${enter}: `);
+        if (!key) {
+          if (!current && ollamaModel) {
+            Object.assign(cfg, localRuntimeSettings(ollamaUrl, ollamaModel));
+            modelLabel = `${ollamaModel} (Ollama)`;
+          }
+          break;
+        }
+        process.stdout.write("Checking the key... ");
+        let connected: (typeof PROVIDERS)[number] | undefined;
+        let failure = "";
+        for (const name of providersForKey(key)) {
+          const provider = PROVIDERS.find((p) => p.name === name);
+          if (!provider) continue;
+          const err = await testKey(provider, key);
+          if (!err) {
+            connected = provider;
+            break;
+          }
+          failure = err;
+        }
+        if (connected) {
+          console.log(ui.ok(`✓ Connected to ${connected.name}.`));
+          cfg[connected.env] = key;
+          modelLabel = connected.name;
+          break;
+        }
+        const rejected = /^HTTP 40[13]\b/.test(failure);
+        console.log(
+          ui.fail(
+            rejected
+              ? "✗ The provider did not accept that key. Check it was copied whole, and try again."
+              : `✗ Could not check that key${failure ? ` (${failure.slice(0, 80)})` : ""}.`,
+          ),
+        );
+      }
+    }
+    cfg.MARINA_NAME ||= "Marina";
+    cfg.MARINA_WORLD ||= "default";
+    const problems = validateConfiguration(cfg);
+    if (problems.length) throw new Error(problems.join("\n"));
+    saveChanges(cfg);
+    console.log(`\nSaved ${ENV_PATH}.`);
+    if (modelLabel) console.log(ui.muted(spendCapNotice(cfg)));
+    else console.log("No model yet: you can look around, and add a key later in the dashboard.");
+    const port = process.env.WS_PORT?.trim() || "3300";
+    console.log(
+      [
+        "",
+        "Next:",
+        `  marina start                  open http://localhost:${port}`,
+        "  cd <your project> && marina   code in that folder",
+        "",
+        ui.muted("To choose another world, name or local model server: marina init --advanced"),
+      ].join("\n"),
+    );
+  }
+
   console.log(
     ui.styled
       ? ui.banner("setup")
@@ -366,6 +498,12 @@ export async function runInit(args: string[] = []): Promise<void> {
 ║       Marina Setup         ║
 ╚══════════════════════════════╝`,
   );
+
+  if (!values.advanced) {
+    await quickSetup();
+    rl.close();
+    return;
+  }
 
   if (fs.existsSync(ENV_PATH)) {
     const existing = fs.readFileSync(ENV_PATH, "utf-8");
@@ -559,7 +697,8 @@ export async function runInit(args: string[] = []): Promise<void> {
     );
     return;
   }
-  const start = await ask("\nStart Marina now? (Y/n): ", "y");
+  // Input that ended (a pipe) never starts a server: only a person's Enter means yes.
+  const start = inputEnded ? "n" : await ask("\nStart Marina now? (Y/n): ", "y");
   rl.close();
   if (start.toLowerCase() !== "n") {
     console.log("\nStarting Marina...\n");

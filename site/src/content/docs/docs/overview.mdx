@@ -92,6 +92,16 @@ Nothing was lost when the chat ended, because there was no chat to end.
 
 ## Start
 
+On macOS or Linux, one command installs everything and opens Marina in your browser. It asks
+for one model API key, and Enter skips it:
+
+```bash
+curl -fsSL https://h2oai.github.io/marina/setup.sh | bash
+```
+
+Or ask your AI assistant to *"Install Marina from github.com/h2oai/marina"*;
+[Install Marina](../guides/install/) has the steps it follows. By hand:
+
 ```bash
 git clone https://github.com/h2oai/marina.git
 cd marina && bun install
@@ -99,8 +109,8 @@ bun run setup:cli
 marina init
 ```
 
-`setup:cli` puts `marina` on your PATH and `marina init` connects a model (a provider key, or a
-local one). Then code in a folder; the first screen links this world's dashboard:
+`setup:cli` puts `marina` on your PATH and `marina init` connects a model (paste a key; it asks
+nothing else). Then code in a folder; the first screen links this world's dashboard:
 
 ```bash
 cd ~/my-project && marina

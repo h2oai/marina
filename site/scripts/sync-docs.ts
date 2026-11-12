@@ -105,6 +105,9 @@ for (const page of PAGES) {
   count++;
 }
 
+// The one-command installer, served at <site>/setup.sh (gitignored copy; setup.sh is the source).
+copyFileSync(join(REPO, "setup.sh"), join(import.meta.dir, "..", "public", "setup.sh"));
+
 console.log(
   `[sync-docs] wrote ${count} pages (guides + ${PAGES.length} more) → src/content/docs/docs/, ${assets.size} assets → public/assets/ (served at ${assetsBase})`,
 );
