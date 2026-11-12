@@ -36,9 +36,9 @@ public final class Marina implements AutoCloseable {
   private final Connection connection;
   private final Coding code;
   private LocalServer server;
-  private HttpApi routing;
-  private HttpApi investigations;
-  private HttpApi panels;
+  private Http.RoutingApi routing;
+  private Http.InvestigationsApi investigations;
+  private Http.PanelsApi panels;
 
   private Marina(Connection connection, LocalServer server) {
     this.connection = connection;
@@ -196,34 +196,121 @@ public final class Marina implements AutoCloseable {
     return connection.capabilities();
   }
 
+  /** The typed forms of one command ({@code say}, {@code task}, ...), from {@link #capabilities()}. */
+  public List<CommandForms.Form> forms(String command) {
+    return CommandForms.forms(capabilities(), command);
+  }
+
   /** Everything the server sends this session. Returns a handle that stops listening. */
   public Runnable onEvent(Consumer<Map<String, Object>> listener) {
     return connection.onFrame(listener);
   }
 
+  /**
+   * Called each time the SDK resumes the session on its own after a dropped socket (with the same
+   * entity and a new token). Returns a handle that stops listening.
+   */
+  public Runnable onReconnect(Consumer<Connection.Session> listener) {
+    return connection.onReconnect(listener);
+  }
+
+  /** Logged in on a live socket: false while reconnecting, and once closed. */
+  public boolean isConnected() {
+    return connection.isConnected();
+  }
+
+  // ─── Agent helpers ─────────────────────────────────────────────────────
+
+  /** Send a private message. */
+  public void tell(String target, String message) {
+    command("tell " + target + " " + message);
+  }
+
+  /** Say something to the room. */
+  public void say(String message) {
+    command("say " + message);
+  }
+
+  /** {@link #tellAndAwait(String, String, Duration, Tells.Options)} with the default options. */
+  public String tellAndAwait(String target, String message, Duration timeout) {
+    return tellAndAwait(target, message, timeout, Tells.Options.defaults());
+  }
+
+  /**
+   * Ask {@code target} and wait for the answer. The question carries a {@code [re:<id>]} tag; a
+   * reply echoing it wins at once, an untagged one is accepted after a short grace. Tells from
+   * before the question and notices ("I've spent my model-call budget", {@code [notice]} ...) are
+   * never the answer. Returns the reply without the tag.
+   *
+   * @throws MarinaException when no reply arrives in time
+   */
+  public String tellAndAwait(String target, String message, Duration timeout, Tells.Options options) {
+    return Tells.tellAndAwait(connection, target, message, timeout, options);
+  }
+
+  /** Wait for a tell from {@code from} (any sender when null); returns its text. */
+  public String waitForTell(String from, Duration timeout) {
+    return Tells.waitForTell(connection, from, timeout);
+  }
+
+  /** Look at the room. */
+  public CommandResult look() {
+    return command("look");
+  }
+
+  /** Look at someone or something. */
+  public CommandResult look(String target) {
+    return command("look " + target);
+  }
+
+  /** Who is online. */
+  public CommandResult who() {
+    return command("who");
+  }
+
+  /** Send a message to a channel. */
+  public CommandResult channel(String name, String message) {
+    return command("channel send " + name + " " + message);
+  }
+
+  /** Save a note to your own memory. */
+  public CommandResult note(String text) {
+    return command("note " + text);
+  }
+
+  /** Recall your notes about {@code query}. */
+  public CommandResult recall(String query) {
+    return command("recall " + query);
+  }
+
+  /** Task operations: {@code task("list")}, {@code task("claim", "12")}. */
+  public CommandResult task(String sub, String... args) {
+    return command(("task " + sub + " " + String.join(" ", args)).strip());
+  }
+
   // ─── HTTP ──────────────────────────────────────────────────────────────
 
   /** Participant routing ({@code /api/routing}), signed in as this session. */
-  public synchronized HttpApi routing() {
-    if (routing == null) routing = new HttpApi(httpUrl(), this::token, "routing");
+  public synchronized Http.RoutingApi routing() {
+    if (routing == null) routing = new Http.RoutingApi(httpUrl(), this::token);
     return routing;
   }
 
   /** Investigations ({@code /api/investigations}), signed in as this session. */
-  public synchronized HttpApi investigations() {
-    if (investigations == null) investigations = new HttpApi(httpUrl(), this::token, "investigations");
+  public synchronized Http.InvestigationsApi investigations() {
+    if (investigations == null) investigations = new Http.InvestigationsApi(httpUrl(), this::token);
     return investigations;
   }
 
-  /** Published panels ({@code /api/canvases}), signed in as this session. */
-  public synchronized HttpApi panels() {
-    if (panels == null) panels = new HttpApi(httpUrl(), this::token, "panels");
+  /** Published panels ({@code /api/canvases}) and their live changes, signed in as this session. */
+  public synchronized Http.PanelsApi panels() {
+    if (panels == null) panels = new Http.PanelsApi(httpUrl(), this::token);
     return panels;
   }
 
   /** Memory ({@code /v1/memory}), with a memory credential of its own (never the session token). */
-  public HttpApi memory(String credential) {
-    return new HttpApi(httpUrl(), () -> credential, "memory");
+  public Http.MemoryApi memory(String credential) {
+    return new Http.MemoryApi(httpUrl(), () -> credential);
   }
 
   /** Disconnect, and stop the server if {@link #local} started it. */

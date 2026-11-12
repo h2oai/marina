@@ -27,6 +27,11 @@ public final class SdkTest {
     test("budgets and endpoints", SdkTest::budgetsAndEndpoints);
     test("a command error states the refusal once", SdkTest::commandError);
     test("HTTP: every operation, path, query, body and key", SdkTest::http);
+    test("tells: notices, correlation tags, which reply answers", SdkTest::tells);
+    test("command forms compose with the TypeScript rules", SdkTest::forms);
+    test("memory retry: named waits, backoff, hand-back", SdkTest::retry);
+    test("reconnect and panel-stream backoff schedules", SdkTest::backoff);
+    test("typed models bind and unbind with JSON names", SdkTest::models);
     System.err.println("OK " + passed + " tests");
   }
 
@@ -257,8 +262,235 @@ public final class SdkTest {
       } catch (ApiException e) {
         same(302, e.status());
       }
+      // Typed: the same request, the record written with its JSON names, the reply bound.
+      Http.MemoryApi typed = new Http.MemoryApi(base, () -> "cred");
+      typed.remember("s", Http.MemoryRecordInput.of("x").withSourceIds(List.of("src")), "k2");
+      Seen last = seen.get(seen.size() - 1);
+      same("/v1/memory/spaces/s/records", last.path());
+      same(List.of("k2"), last.headers().get("Idempotency-key"));
+      same(mapOf("content", "x", "source_ids", List.of("src")), Json.parse(last.body()));
+      typed.get("s", "r1", 2L);
+      same("/v1/memory/spaces/s/records/r1?version=2", seen.get(seen.size() - 1).path());
+      new Http.RoutingApi(base, () -> "t").acknowledgeMessage("a", "m");
+      same("{}", seen.get(seen.size() - 1).body());
     } finally {
       server.stop(0);
     }
+  }
+
+  static Map<String, Object> tell(String sender, String text, long timestamp) {
+    Map<String, Object> data = mapOf("text", text, "message", text);
+    if (sender != null) data.put("senderName", sender);
+    return mapOf("kind", "message", "tag", "tell", "timestamp", timestamp, "data", data);
+  }
+
+  static void tells() {
+    check(Tells.isNotice("  [notice] paused"), "a [notice]");
+    check(Tells.isNotice("I've spent my model-call budget for now"), "a budget notice");
+    check(Tells.isNotice("I've hit a spend cap and paused."), "a pause notice");
+    check(Tells.isNotice("I've hit 3 consecutive upstream errors"), "an upstream notice");
+    check(!Tells.isNotice("pong"), "a reply");
+    same(" [re:abc123]", Tells.correlationTag("abc123"));
+    check(Tells.newCorrelationId().matches("[a-z0-9]{6}"), "six base-36 characters");
+    check(Tells.hasCorrelationTag("pong [re:abc123]", "abc123"), "bracketed");
+    check(Tells.hasCorrelationTag("pong re:abc123", "abc123"), "bare");
+    check(!Tells.hasCorrelationTag("pong [re:abc124]", "abc123"), "another id");
+    same("pong", Tells.stripCorrelationTag("pong [re:abc123]", "abc123"));
+
+    long sent = 1_000_000;
+    // Before our echo: an older tell from the target is stale; a newer one counts.
+    Tells.Await a = new Tells.Await("Peer", "ping", sent, Tells.Options.defaults(), "abc123");
+    same("ping [re:abc123]", a.outgoing);
+    same(null, a.accept(tell("Peer", "old answer", sent - 5)));
+    same(null, a.accept(tell("Other", "pong [re:abc123]", sent + 1)));
+    same(null, a.accept(tell("Peer", "[notice] paused", sent + 1)));
+    same("pong", a.accept(tell("peer", "pong [re:abc123]", sent + 1)));
+    // After the echo, any tell from the target is fresh; an untagged one is held as a candidate.
+    Tells.Await b = new Tells.Await("Peer", "ping", sent, Tells.Options.defaults(), "zzz999");
+    same(null, b.accept(tell(null, "You tell Peer: ping [re:zzz999]", sent - 100)));
+    same(null, b.accept(tell("Peer", "untagged", sent - 50)));
+    same("untagged", b.candidate);
+    same(null, b.accept(tell("Peer", "second untagged", sent + 1)));
+    same("untagged", b.candidate);
+    same("tagged", b.accept(tell("Peer", "tagged re:zzz999", sent + 2)));
+    // Strict: only the tagged reply; no correlation: the first fresh reply.
+    Tells.Await c = new Tells.Await("Peer", "q", sent, Tells.Options.defaults().strictCorrelation(true), "id0001");
+    same(null, c.accept(tell("Peer", "untagged", sent + 1)));
+    same(null, c.candidate);
+    Tells.Await d = new Tells.Await("Peer", "q", sent, Tells.Options.defaults().correlate(false), "id0001");
+    same("q", d.outgoing);
+    same("plain", d.accept(tell("Peer", "plain", sent + 1)));
+  }
+
+  static CommandForms.Form form(String json) {
+    return CommandForms.Form.from(Json.object(Json.parse(json)));
+  }
+
+  static void forms() {
+    Map<String, Object> capabilities =
+        frame(
+            "{\"commands\":[{\"name\":\"say\",\"forms\":[{\"syntax\":\"say <message>\",\"label\":\"say <message>\","
+                + "\"fields\":[{\"id\":\"field-0\",\"label\":\"message\",\"placeholder\":\"message\",\"kind\":\"text\","
+                + "\"multiline\":true,\"allowNewlines\":false}],\"groups\":[],\"parts\":[{\"literal\":\"say\"},{\"field\":\"field-0\"}]}]}]}");
+    CommandForms.Form say = CommandForms.forms(capabilities, "say").get(0);
+    same(Map.of("field-0", "Required"), CommandForms.compose(say, Map.of(), Map.of()).errors());
+    same("say hello there", CommandForms.compose(say, Map.of("field-0", "  hello there "), Map.of()).command());
+    same("say hi", CommandForms.compose(say, Map.of("message", "hi"), Map.of()).command());
+    same("Use a single line", CommandForms.compose(say, Map.of("field-0", "a\nb"), Map.of()).errors().get("field-0"));
+
+    CommandForms.Form task =
+        form(
+            "{\"syntax\":\"task list [limit:<n>] [status:<open|done>] [meta:<json>]\",\"label\":\"x\",\"fields\":["
+                + "{\"id\":\"field-0\",\"label\":\"limit\",\"placeholder\":\"n\",\"kind\":\"number\",\"multiline\":false,"
+                + "\"allowNewlines\":false,\"min\":1,\"max\":50,\"integer\":true},"
+                + "{\"id\":\"field-1\",\"label\":\"status\",\"placeholder\":\"open|done\",\"kind\":\"choice\","
+                + "\"choices\":[\"open\",\"done\"],\"multiline\":false,\"allowNewlines\":false},"
+                + "{\"id\":\"field-2\",\"label\":\"meta\",\"placeholder\":\"json\",\"kind\":\"json\",\"multiline\":true,"
+                + "\"allowNewlines\":false}],"
+                + "\"groups\":[{\"id\":\"option-0\",\"label\":\"limit:n\"},{\"id\":\"option-1\",\"label\":\"s\"},{\"id\":\"option-2\",\"label\":\"m\"}],"
+                + "\"parts\":[{\"literal\":\"task\"},{\"literal\":\"list\"},"
+                + "{\"group\":\"option-0\",\"children\":[{\"literal\":\"limit:\"},{\"field\":\"field-0\"}]},"
+                + "{\"group\":\"option-1\",\"children\":[{\"literal\":\"status:\"},{\"field\":\"field-1\"}]},"
+                + "{\"group\":\"option-2\",\"children\":[{\"literal\":\"meta:\"},{\"field\":\"field-2\"}]}]}");
+    same("task list", CommandForms.compose(task, Map.of(), Map.of()).command());
+    Map<String, Boolean> all = Map.of("option-0", true, "option-1", true, "option-2", true);
+    CommandForms.Composed ok =
+        CommandForms.compose(task, Map.of("field-0", "0x10", "field-1", "done", "field-2", "{ \"a\" : [1, 2] }"), all);
+    same(Map.of(), ok.errors());
+    same("task list limit:0x10 status:done meta:{\"a\":[1,2]}", ok.command());
+    Map<String, String> bad =
+        CommandForms.compose(task, Map.of("field-0", "2.5", "field-1", "maybe", "field-2", "{nope"), all).errors();
+    same("Enter an integer", bad.get("field-0"));
+    same("Choose one of the available values", bad.get("field-1"));
+    same("Enter valid JSON", bad.get("field-2"));
+    same("Enter a number between 1 and 50", CommandForms.compose(task, Map.of("field-0", "99"), all).errors().get("field-0"));
+    same("Enter a number", CommandForms.compose(task, Map.of("field-0", "ten"), all).errors().get("field-0"));
+    same("Use one value without spaces", CommandForms.compose(task, Map.of("field-0", "1 2"), all).errors().get("field-0"));
+    same(
+        Map.of("form", "Use this form's named tool, or choose a command form"),
+        CommandForms.compose(form("{\"encoding\":\"named\",\"syntax\":\"x\",\"parts\":[]}"), Map.of(), Map.of()).errors());
+    same(16.0, CommandForms.jsNumber("0x10"));
+    same(-1500.0, CommandForms.jsNumber("-1.5e3"));
+    check(Double.isNaN(CommandForms.jsNumber("12abc")), "not a number");
+  }
+
+  static ApiException limited(long ms) {
+    return new ApiException(429, "rate_limited", "slow down", ms);
+  }
+
+  static void retry() {
+    // Named rate-limit waits are exact (+5 ms) and use no attempt.
+    List<Long> slept = new ArrayList<>();
+    int[] calls = {0};
+    String value =
+        MemoryRetry.run(
+            () -> {
+              if (++calls[0] <= 6) throw limited(100);
+              return "ok";
+            },
+            1,
+            slept::add);
+    same("ok", value);
+    same(List.of(105L, 105L, 105L, 105L, 105L, 105L), slept);
+    // Other transient failures back off 250 ms doubling to 2 s, within the attempts.
+    slept.clear();
+    calls[0] = 0;
+    try {
+      MemoryRetry.run(
+          () -> {
+            calls[0]++;
+            throw new ApiException(503, "unavailable", "", null);
+          },
+          6,
+          slept::add);
+      throw new AssertionError("expected the last failure");
+    } catch (ApiException e) {
+      same(503, e.status());
+    }
+    same(6, calls[0]);
+    same(List.of(250L, 500L, 1000L, 2000L, 2000L), slept);
+    // A network error is retried; a refusal is not; a server wait over 5 s is handed back.
+    slept.clear();
+    calls[0] = 0;
+    same(
+        "back",
+        MemoryRetry.run(
+            () -> {
+              if (++calls[0] == 1) throw new MarinaException("Could not reach", new java.io.IOException("reset"));
+              return "back";
+            },
+            5,
+            slept::add));
+    same(List.of(250L), slept);
+    slept.clear();
+    for (MarinaException e :
+        List.of(new ApiException(409, "version_conflict", "", null), limited(6000), new MarinaException("no"))) {
+      try {
+        MemoryRetry.run(
+            () -> {
+              throw e;
+            },
+            5,
+            slept::add);
+        throw new AssertionError("expected " + e);
+      } catch (MarinaException thrown) {
+        same(e, thrown);
+      }
+    }
+    same(List.of(), slept);
+    // Named waits stop at 30 s in all.
+    slept.clear();
+    try {
+      MemoryRetry.run(
+          () -> {
+            throw limited(4000);
+          },
+          5,
+          slept::add);
+      throw new AssertionError("expected the cap");
+    } catch (ApiException e) {
+      same(7, slept.size());
+    }
+    same(500L, MemoryRetry.backoffMs(2, 300L));
+    same(900L, MemoryRetry.backoffMs(1, 900L));
+    throwsIllegal(() -> MemoryRetry.run(() -> "x", 0, ms -> {}));
+  }
+
+  static void backoff() {
+    List<Long> delays = new ArrayList<>();
+    for (int i = 0; i < Connection.RECONNECT_ATTEMPTS; i++) delays.add(Connection.reconnectDelayMs(i));
+    same(List.of(3000L, 6000L, 12000L, 24000L, 30000L, 30000L, 30000L, 30000L, 30000L, 30000L), delays);
+    same(10, Connection.RECONNECT_ATTEMPTS);
+    same(1000L, PanelsGroup.watchDelayMs(0));
+    same(8000L, PanelsGroup.watchDelayMs(3));
+    same(15000L, PanelsGroup.watchDelayMs(4));
+    same(15000L, PanelsGroup.watchDelayMs(60));
+  }
+
+  static void models() {
+    String text =
+        "{\"id\":\"r1\",\"space_id\":\"s\",\"version\":2,\"content\":\"Deploys run from main\","
+            + "\"source_ids\":[\"a\",\"b\"],\"dependency_versions\":{\"r0\":1},\"metadata\":{\"k\":[1,true]},"
+            + "\"stale_reason\":{\"kind\":\"superseded\"},\"something_newer\":1}";
+    Http.MemoryRecord record = Json.bind(Json.parse(text), Http.MemoryRecord.class);
+    same("r1", record.id());
+    same("s", record.spaceId());
+    same(2.0, record.version());
+    same(List.of("a", "b"), record.sourceIds());
+    same(Map.of("r0", 1.0), record.dependencyVersions());
+    same("superseded", record.staleReason().kind());
+    same(null, record.tier());
+    // Back to JSON: the JSON names, no null fields, unknown fields gone.
+    Map<String, Object> back = Json.object(Json.unbind(record));
+    same("s", back.get("space_id"));
+    check(!back.containsKey("tier") && !back.containsKey("something_newer"), "no nulls, no unknown fields");
+    same(record, Json.bind(Json.parse(Json.write(record)), Http.MemoryRecord.class));
+    @SuppressWarnings("unchecked")
+    List<Http.MemoryReceipt> receipts =
+        (List<Http.MemoryReceipt>) Json.bind(Json.parse("[{\"id\":\"x\",\"job_id\":\"j\"}]"), Json.listOf(Http.MemoryReceipt.class));
+    same("j", receipts.get(0).jobId());
+    same(Http.MemoryRecordInput.of("c").withTier("fact"), Json.bind(Json.parse("{\"content\":\"c\",\"tier\":\"fact\"}"), Http.MemoryRecordInput.class));
+    throwsIllegal(() -> Json.bind(Json.parse("{\"id\":5}"), Http.MemoryReceipt.class));
+    throwsIllegal(() -> Json.bind(Json.parse("[1]"), Http.MemoryReceipt.class));
   }
 }
