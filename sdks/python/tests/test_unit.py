@@ -25,7 +25,22 @@ from marina import (  # noqa: E402
     code_event_of,
     exec_approval_of,
 )
+from marina import Connection, ConnectionLost, MarinaError, compose_command, reconnect_delay, retry_memory  # noqa: E402
 from marina._operations import OPERATIONS  # noqa: E402
+from marina.agent import (  # noqa: E402
+    TellTimeout,
+    correlation_tag,
+    has_correlation_tag,
+    is_tell_notice,
+    strip_correlation_tag,
+    tell_and_await,
+    wait_for_tell,
+)
+from marina.forms import find_form, forms_of, js_number  # noqa: E402
+from marina.http import NetworkError  # noqa: E402
+from marina.models import MemoryApi, RoutingApi  # noqa: E402
+from marina.panels import dashboard_ws_url, watch_delay  # noqa: E402
+from marina.retry import backoff_ms  # noqa: E402
 from marina._ws import OP_PING, OP_PONG, WebSocket, WebSocketClosed, accept_key, encode_frame  # noqa: E402
 from marina.client import CommandError, endpoints  # noqa: E402
 
@@ -304,6 +319,400 @@ class ExecApprovals(unittest.TestCase):
             sorted(connection.sent),
             ["code exec-approve a", "code exec-deny b", "code exec-deny c", "code exec-deny d"],
         )
+
+
+class TellRules(unittest.TestCase):
+    def test_notices_are_never_answers(self) -> None:
+        for text in (
+            "[notice] paused",
+            "  [NOTICE] x",
+            "I've spent my model-call budget for today",
+            "I've hit a spend cap and paused",
+            "I've hit 3 consecutive upstream errors",
+        ):
+            self.assertTrue(is_tell_notice(text), text)
+        for text in ("pong", "I've hit the target", "notice: x"):
+            self.assertFalse(is_tell_notice(text), text)
+
+    def test_correlation_tags(self) -> None:
+        self.assertEqual(correlation_tag("ab12cd"), " [re:ab12cd]")
+        for text in ("pong [re:ab12cd]", "pong re:ab12cd", "[re:ab12cd] pong"):
+            self.assertTrue(has_correlation_tag(text, "ab12cd"), text)
+            self.assertEqual(strip_correlation_tag(text, "ab12cd"), "pong")
+        self.assertFalse(has_correlation_tag("pong [re:zzzzzz]", "ab12cd"))
+        self.assertEqual(strip_correlation_tag("a.b [re:a.b]", "a.b"), "a.b")
+
+
+class FakeWorld:
+    """A connection whose `command` delivers scripted frames to the SDK's waiters."""
+
+    def __init__(self, script) -> None:  # noqa: ANN001 - script(command text) -> frames
+        self.session = object()
+        self.waiters: list = []
+        self.script = script
+        self.sent: list[str] = []
+
+    def _add_waiter(self, waiter) -> None:  # noqa: ANN001
+        self.waiters.append(waiter)
+
+    def _remove_waiter(self, waiter) -> None:  # noqa: ANN001
+        self.waiters.remove(waiter)
+
+    def deliver(self, frame: dict) -> None:
+        for waiter in list(self.waiters):
+            waiter(frame)
+
+    def command(self, text: str, **_kw):  # noqa: ANN003, ANN201
+        self.sent.append(text)
+        for frame in self.script(text):
+            self.deliver(frame)
+        return []
+
+
+def tell(sender, text, stamp=None) -> dict:  # noqa: ANN001
+    data = {"senderName": sender, "message": text} if sender else {"text": text}
+    return {"kind": "message", "tag": "tell", "timestamp": stamp if stamp is not None else 0, "data": data}
+
+
+class TellAndAwait(unittest.TestCase):
+    def tag(self, text: str) -> str:
+        return text[text.index("[re:") :]
+
+    def test_a_tagged_reply_wins_over_stale_untagged_and_notices(self) -> None:
+        def script(text: str) -> list:
+            tag = self.tag(text)
+            return [
+                tell("Peer", "late answer to an old question"),  # before our echo, old timestamp
+                tell(None, f"You tell Peer: {text[len('tell Peer '):]}"),
+                tell("Other", f"pong {tag}"),
+                tell("Peer", "I've spent my model-call budget"),
+                tell("Peer", "untagged"),
+                tell("Peer", f"pong {tag}"),
+            ]
+
+        world = FakeWorld(script)
+        self.assertEqual(tell_and_await(world, "Peer", "ping", 2), "pong")  # type: ignore[arg-type]
+        self.assertRegex(world.sent[0], r"^tell Peer ping \[re:[a-z0-9]{6}\]$")
+
+    def test_an_untagged_reply_is_taken_after_the_grace(self) -> None:
+        world = FakeWorld(lambda text: [tell("peer", "pong", stamp=time.time() * 1000 + 5)])
+        started = time.monotonic()
+        self.assertEqual(tell_and_await(world, "Peer", "ping", 2, grace=0.1), "pong")  # type: ignore[arg-type]
+        self.assertLess(time.monotonic() - started, 1.5)
+        strict = FakeWorld(lambda text: [tell("peer", "pong", stamp=time.time() * 1000 + 5)])
+        with self.assertRaises(TellTimeout):
+            tell_and_await(strict, "Peer", "ping", 0.3, strict_correlation=True)  # type: ignore[arg-type]
+
+    def test_without_correlation_the_first_fresh_reply_wins(self) -> None:
+        world = FakeWorld(lambda text: [tell(None, "You tell Peer: ping"), tell("Peer", "pong [re:other]")])
+        self.assertEqual(tell_and_await(world, "Peer", "ping", 1, correlate=False), "pong [re:other]")  # type: ignore[arg-type]
+        self.assertEqual(world.sent, ["tell Peer ping"])
+
+    def test_times_out_without_a_reply(self) -> None:
+        with self.assertRaises(TellTimeout):
+            tell_and_await(FakeWorld(lambda text: []), "Peer", "ping", 0.2)  # type: ignore[arg-type]
+
+    def test_wait_for_tell_hears_tells_to_you_only(self) -> None:
+        world = FakeWorld(lambda text: [])
+        threading.Timer(
+            0.05,
+            lambda: [
+                world.deliver(tell(None, "You tell Peer: hi")),
+                world.deliver(tell("Other", "not you")),
+                world.deliver({"tag": "tell", "data": {"senderName": "PEER", "text": "question?"}}),
+            ],
+        ).start()
+        self.assertEqual(wait_for_tell(world, "peer", 2), "question?")  # type: ignore[arg-type]
+        with self.assertRaises(TellTimeout):
+            wait_for_tell(world, None, 0.05)  # type: ignore[arg-type]
+
+
+class ComposeCommand(unittest.TestCase):
+    def test_matches_the_typescript_sdk_case_by_case(self) -> None:
+        # Each case's `expected` is what the TypeScript SDK's composeCommand returned for it.
+        with open(os.path.join(os.path.dirname(__file__), "compose_golden.json"), encoding="utf-8") as f:
+            cases = json.load(f)
+        self.assertGreater(len(cases), 15)
+        for case in cases:
+            got = compose_command(case["form"], case["values"], case["enabled"])
+            self.assertEqual({"command": got.command, "errors": got.errors}, case["expected"], case["values"])
+
+    def test_takes_a_field_label_as_the_key(self) -> None:
+        with open(os.path.join(os.path.dirname(__file__), "compose_golden.json"), encoding="utf-8") as f:
+            form = next(c["form"] for c in json.load(f) if c["form"]["syntax"] == "say <message>")
+        self.assertEqual(compose_command(form, {"message": "hi"}), ("say hi", {}))
+        caps = {"commands": [{"name": "say", "forms": [form]}, {"name": "look"}]}
+        self.assertEqual(forms_of(caps, "say"), [form])
+        self.assertEqual(forms_of(caps, "look"), [])
+        self.assertIs(find_form(caps, "say", "say "), form)
+        self.assertIsNone(find_form(caps, "say", "tell "))
+
+    def test_numbers_read_as_javascript_reads_them(self) -> None:
+        self.assertEqual([js_number(t) for t in ("0x10", " 12 ", "1e3", ".5", "", "Infinity")], [16, 12, 1000, 0.5, 0, float("inf")])
+        for bad in ("abc", "1_0", "inf", "nan", "1,5"):
+            self.assertNotEqual(js_number(bad), js_number(bad), bad)  # NaN
+
+
+class MemoryRetry(unittest.TestCase):
+    def run_with(self, failures: list, attempts: int = 5):  # noqa: ANN201
+        sleeps: list[float] = []
+        calls = [0]
+
+        def operation() -> str:
+            calls[0] += 1
+            if failures:
+                raise failures.pop(0)
+            return "ok"
+
+        result = retry_memory(operation, attempts=attempts, sleep=sleeps.append)
+        return result, calls[0], [round(s * 1000) for s in sleeps]
+
+    def test_transient_failures_back_off_250ms_doubling_to_2s(self) -> None:
+        errors = [ApiError(503, "unavailable", "x"), ApiError(502, "bad", "x"), NetworkError("down"), ApiError(408, "t", "x")]
+        self.assertEqual(self.run_with(errors, attempts=5), ("ok", 5, [250, 500, 1000, 2000]))
+        self.assertEqual([backoff_ms(n) for n in range(1, 7)], [250, 500, 1000, 2000, 2000, 2000])
+        self.assertEqual(backoff_ms(1, 900), 900)
+
+    def test_gives_up_after_the_attempts(self) -> None:
+        with self.assertRaises(ApiError):
+            self.run_with([ApiError(503, "u", "x")] * 3, attempts=3)
+
+    def test_named_rate_limits_are_waited_out_without_using_attempts(self) -> None:
+        limited = [ApiError(429, "rate_limited", "slow", 100) for _ in range(6)]
+        self.assertEqual(self.run_with(limited, attempts=1), ("ok", 7, [105] * 6))
+        # Up to 30 s of such waits in all.
+        with self.assertRaises(ApiError):
+            self.run_with([ApiError(429, "rate_limited", "slow", 4000) for _ in range(8)])
+
+    def test_never_retries_refusals_or_long_server_waits(self) -> None:
+        for error in (ApiError(409, "conflict", "x"), ApiError(403, "denied", "x"), ApiError(503, "u", "x", 6000), MarinaError("x")):
+            with self.assertRaises(type(error)):
+                self.run_with([error])
+        for bad in (0, 11, True, 2.5):
+            with self.assertRaises(ValueError):
+                retry_memory(lambda: None, attempts=bad)  # type: ignore[arg-type]
+
+    def test_an_unnamed_429_backs_off_with_its_retry_after(self) -> None:
+        self.assertEqual(self.run_with([ApiError(429, "too_many", "x", 1500)]), ("ok", 2, [1500]))
+
+
+class TypedHttp(unittest.TestCase):
+    setUpClass = classmethod(Http.setUpClass.__func__)  # type: ignore[attr-defined]
+    tearDownClass = classmethod(Http.tearDownClass.__func__)  # type: ignore[attr-defined]
+    setUp = Http.setUp
+
+    def test_typed_methods_take_path_parameters_positionally(self) -> None:
+        memory = MemoryApi(self.base, "cred")
+        memory.remember("s1", {"content": "x"}, idempotency_key="k")
+        memory.get("s1", "r1", version=2)
+        RoutingApi(self.base, lambda: "tok").inbox("sess", limit=5)
+        paths = [(r["method"], r["path"]) for r in Recorder.seen]
+        self.assertEqual(
+            paths,
+            [
+                ("POST", "/v1/memory/spaces/s1/records"),
+                ("GET", "/v1/memory/spaces/s1/records/r1?version=2"),
+                ("GET", "/api/routing/sessions/sess/inbox?limit=5"),
+            ],
+        )
+        self.assertEqual(Recorder.seen[0]["headers"]["Idempotency-Key"], "k")
+        self.assertEqual(memory.call("me"), {"ok": True})  # the generic call stays
+
+    def test_panel_stream_url_and_backoff(self) -> None:
+        self.assertEqual(dashboard_ws_url("http://h:1/w", "a b"), "ws://h:1/w/dashboard-ws?token=a%20b")
+        self.assertEqual(dashboard_ws_url("https://h", None), "wss://h/dashboard-ws")
+        self.assertEqual([watch_delay(n) for n in range(6)], [1, 2, 4, 8, 15, 15])
+
+
+def _recv_exact(sock: socket.socket, n: int) -> bytes:
+    data = b""
+    while len(data) < n:
+        chunk = sock.recv(n - len(data))
+        if not chunk:
+            raise ConnectionError("closed")
+        data += chunk
+    return data
+
+
+class FakeMarina:
+    """A WebSocket server speaking just enough marina.wire.v1: login, auth with rotating tokens, commands."""
+
+    def __init__(self, refuse_resume: bool = False) -> None:
+        self.server = socket.create_server(("127.0.0.1", 0))
+        self.url = f"ws://127.0.0.1:{self.server.getsockname()[1]}"
+        self.refuse_resume = refuse_resume
+        self.token = 0
+        self.connections: list[socket.socket] = []
+        self.auths = 0
+        self.lock = threading.Lock()
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self) -> None:
+        while True:
+            try:
+                sock, _ = self.server.accept()
+            except OSError:
+                return
+            with self.lock:
+                self.connections.append(sock)
+            threading.Thread(target=self._serve, args=(sock,), daemon=True).start()
+
+    def _send(self, sock: socket.socket, frame: dict) -> None:
+        sock.sendall(server_frame(0x1, json.dumps(frame).encode()))
+
+    def _session(self, sock: socket.socket) -> None:
+        self.token += 1
+        self._send(sock, {"kind": "system", "data": {"entityId": "e_1", "name": "bob", "token": f"t{self.token}"}})
+
+    def _serve(self, sock: socket.socket) -> None:
+        try:
+            head = b""
+            while b"\r\n\r\n" not in head:
+                head += sock.recv(1024)
+            key = next(line.split(":", 1)[1].strip() for line in head.decode().split("\r\n") if line.lower().startswith("sec-websocket-key"))
+            sock.sendall(
+                f"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept_key(key)}\r\n\r\n".encode()
+            )
+            while True:
+                b0, b1 = _recv_exact(sock, 2)
+                n = b1 & 0x7F
+                if n == 126:
+                    (n,) = struct.unpack("!H", _recv_exact(sock, 2))
+                mask = _recv_exact(sock, 4)
+                payload = bytes(b ^ mask[i % 4] for i, b in enumerate(_recv_exact(sock, n)))
+                if b0 & 0x0F == 0x8:
+                    return
+                frame = json.loads(payload)
+                if frame["type"] == "login":
+                    self._session(sock)
+                elif frame["type"] == "auth":
+                    self.auths += 1
+                    if self.refuse_resume or frame["token"] != f"t{self.token}":
+                        self._send(sock, {"kind": "auth_error", "data": {"text": "Invalid token"}})
+                    else:
+                        self._session(sock)
+                elif frame["type"] == "command":
+                    rid = frame["request_id"]
+                    self._send(sock, {"kind": "room", "command_request_id": rid, "data": {"text": "A room"}})
+                    self._send(sock, {"kind": "system", "data": {"command_result": {"request_id": rid, "ok": True}}})
+        except (OSError, ConnectionError, ValueError):
+            pass
+        finally:
+            sock.close()
+
+    def drop(self) -> None:
+        with self.lock:
+            for sock in self.connections:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    def close(self) -> None:
+        self.server.close()
+        self.drop()
+
+
+class Reconnect(unittest.TestCase):
+    def test_the_backoff_schedule(self) -> None:
+        self.assertEqual([reconnect_delay(n) for n in range(10)], [3, 6, 12, 24, 30, 30, 30, 30, 30, 30])
+
+    def until(self, check, seconds: float = 5) -> bool:  # noqa: ANN001
+        end = time.monotonic() + seconds
+        while not check() and time.monotonic() < end:
+            time.sleep(0.01)
+        return check()
+
+    def test_resumes_with_the_newest_token_and_fails_fast_meanwhile(self) -> None:
+        server = FakeMarina()
+        connection = Connection(server.url, reconnect_delay=0.3, max_reconnect_delay=0.3)
+        try:
+            connection.login("bob")
+            self.assertEqual(connection.session.token, "t1")  # type: ignore[union-attr]
+            back: list[str] = []
+            closed: list[bool] = []
+            connection.on_reconnect(lambda session: back.append(session.token))
+            connection.on_close(lambda: closed.append(True))
+            for expected in ("t2", "t3"):  # twice: the second resume needs the second token
+                server.drop()
+                self.assertTrue(self.until(lambda: not connection.connected))
+                with self.assertRaises(ConnectionLost):
+                    connection.command("look")
+                self.assertTrue(self.until(lambda: connection.connected))
+                self.assertEqual(back[-1], expected)
+                self.assertEqual(connection.session.token, expected)  # type: ignore[union-attr]
+                self.assertEqual(connection.command("look").text, "A room")
+            self.assertEqual(closed, [])
+            connection.close()
+            self.assertEqual(closed, [True])
+            auths = server.auths
+            time.sleep(0.5)
+            self.assertEqual(server.auths, auths, "close() never reconnects")
+            with self.assertRaises(ConnectionLost):
+                connection.command("look")
+        finally:
+            connection.close()
+            server.close()
+
+    def test_gives_up_after_the_attempts_and_closes(self) -> None:
+        server = FakeMarina(refuse_resume=True)
+        connection = Connection(server.url, reconnect_delay=0.01, max_reconnect_delay=0.02, max_reconnect_attempts=3)
+        try:
+            connection.login("bob")
+            closed: list[bool] = []
+            connection.on_close(lambda: closed.append(True))
+            with self.assertLogs("marina", "WARNING"):
+                server.drop()
+                self.assertTrue(self.until(lambda: connection.closed))
+            self.assertTrue(connection.reconnect_failed)
+            self.assertEqual(server.auths, 3)
+            self.assertEqual(closed, [True])
+        finally:
+            connection.close()
+            server.close()
+
+    def test_no_reconnect_when_turned_off(self) -> None:
+        server = FakeMarina()
+        connection = Connection(server.url, auto_reconnect=False)
+        try:
+            connection.login("bob")
+            server.drop()
+            self.assertTrue(self.until(lambda: connection.closed))
+            self.assertEqual(server.auths, 0)
+        finally:
+            connection.close()
+            server.close()
+
+
+class Examples(unittest.TestCase):
+    def test_the_tell_answering_agent_echoes_the_tag(self) -> None:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "examples"))
+        try:
+            import answer_tells  # noqa: PLC0415
+            import coding as coding_example  # noqa: PLC0415, F401 - it imports cleanly
+        finally:
+            sys.path.pop(0)
+        self.assertEqual(answer_tells.reply_to("Peer", "ping [re:ab12cd]"), "tell Peer pong [re:ab12cd]")
+        self.assertEqual(answer_tells.reply_to("Peer", "why?"), "tell Peer you asked: why?")
+
+        class World:
+            def __init__(self) -> None:
+                self.listener = None
+                self.sent: list[str] = []
+
+            def on_event(self, listener):  # noqa: ANN001, ANN202
+                self.listener = listener
+
+            def on_reconnect(self, _callback) -> None:  # noqa: ANN001
+                pass
+
+            def command(self, text: str) -> None:
+                self.sent.append(text)
+
+        world = World()
+        threading.Timer(0.05, lambda: world.listener({"tag": "tell", "data": {"senderName": "Ann", "message": "ping [re:zz11yy]"}})).start()  # type: ignore[misc]
+        self.assertEqual(answer_tells.serve(world, rounds=1, idle=0.05), 1)  # type: ignore[arg-type]
+        self.assertEqual(world.sent, ["tell Ann pong [re:zz11yy]"])
 
 
 if __name__ == "__main__":

@@ -51,6 +51,17 @@ export const LANGUAGES: Language[] = [
       args,
     ],
   },
+  {
+    id: "python",
+    name: "pydriver",
+    argv: (scenario, url, args) => [
+      process.env.MARINA_TEST_PYTHON ?? "python3",
+      join(ROOT, "sdks/python/tests/conformance.py"),
+      scenario,
+      url,
+      args,
+    ],
+  },
 ];
 
 function check(schema: TSchema, value: unknown, what: string): void {

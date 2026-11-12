@@ -90,11 +90,31 @@ def endpoints(url: str) -> tuple[str, str]:
     return f"{'wss' if secure else 'ws'}://{base}/ws", f"{'https' if secure else 'http'}://{base}"
 
 
+
+
+RECONNECT_DELAY = 3.0
+"""Seconds before the first attempt to resume a dropped session; each further attempt doubles it."""
+MAX_RECONNECT_DELAY = 30.0
+"""The longest wait between two attempts."""
+MAX_RECONNECT_ATTEMPTS = 10
+"""Attempts before the SDK gives up and closes the connection."""
+
+
+def reconnect_delay(attempt: int, base: float = RECONNECT_DELAY, cap: float = MAX_RECONNECT_DELAY) -> float:
+    """Seconds to wait before reconnect attempt `attempt` (0 for the first): 3, 6, 12, 24, 30, 30..."""
+    return min(base * 2**attempt, cap)
+
+
 Listener = Callable[[Frame], None]
 
 
 class Connection:
-    """One WebSocket session with a Marina server."""
+    """One WebSocket session with a Marina server.
+
+    When the socket drops, the session resumes on its own with its newest token (an `auth`
+    frame): after 3 s, then 6, 12, 24 and 30 s, at most 10 attempts. Commands sent meanwhile fail
+    at once with ConnectionLost; retry them once `on_reconnect` fires. `close()` never reconnects.
+    """
 
     def __init__(
         self,
@@ -105,6 +125,10 @@ class Connection:
         internal_token: Optional[str] = None,
         command_timeout: float = 120.0,
         connect_timeout: float = 30.0,
+        auto_reconnect: bool = True,
+        reconnect_delay: float = RECONNECT_DELAY,
+        max_reconnect_delay: float = MAX_RECONNECT_DELAY,
+        max_reconnect_attempts: int = MAX_RECONNECT_ATTEMPTS,
     ) -> None:
         self.ws_url, self.http_url = endpoints(url)
         self.principal = principal
@@ -112,28 +136,46 @@ class Connection:
         self.internal_token = internal_token
         self.command_timeout = command_timeout
         self.connect_timeout = connect_timeout
+        self.auto_reconnect = auto_reconnect
+        self.reconnect_delay = reconnect_delay
+        self.max_reconnect_delay = max_reconnect_delay
+        self.max_reconnect_attempts = max_reconnect_attempts
         self.session: Optional[Session] = None
+        self.reconnect_failed = False
+        """True once the SDK gave up resuming a dropped session."""
         self._ws: Optional[WebSocket] = None
         self._lock = threading.Lock()
+        self._state = threading.Lock()
         self._waiters: list[Listener] = []
         self._listeners: list[Listener] = []
+        self._drop_hooks: list[Callable[[], None]] = []
+        self._on_reconnect: list[Callable[[Session], None]] = []
         self._on_close: list[Callable[[], None]] = []
         self._events: queue.Queue[Optional[Frame]] = queue.Queue()
-        self._closed = threading.Event()
+        self._up = threading.Event()  # logged in on an open socket
+        self._closing = threading.Event()  # close() was called
+        self._closed = threading.Event()  # closed for good
+        self._finished = False
+        self._started = False
+        self._reconnecting = False
 
     # ─── Opening ──────────────────────────────────────────────────────────
 
     def _open(self) -> None:
+        if self._closing.is_set():
+            raise ConnectionLost("The connection is closed.")
         if self._ws and not self._ws.closed:
             return
         try:
-            self._ws = WebSocket.connect(self.ws_url, timeout=self.connect_timeout)
+            ws = WebSocket.connect(self.ws_url, timeout=self.connect_timeout)
         except WebSocketError as error:
             raise ConnectionLost(str(error)) from error
-        self._closed.clear()
-        threading.Thread(target=self._read_loop, name="marina-read", daemon=True).start()
-        threading.Thread(target=self._dispatch_loop, name="marina-events", daemon=True).start()
-        threading.Thread(target=self._ping_loop, name="marina-ping", daemon=True).start()
+        self._ws = ws
+        threading.Thread(target=self._read_loop, args=(ws,), name="marina-read", daemon=True).start()
+        if not self._started:
+            self._started = True
+            threading.Thread(target=self._dispatch_loop, name="marina-events", daemon=True).start()
+            threading.Thread(target=self._ping_loop, name="marina-ping", daemon=True).start()
 
     def login(self, name: str) -> Session:
         """Enter the world under a name (2-20 letters or digits)."""
@@ -164,29 +206,42 @@ class Connection:
                 done.set()
 
         self._add_waiter(waiter)
+        self._drop_hooks.append(done.set)
         try:
             self._send(frame)
             if not done.wait(self.connect_timeout):
                 raise ConnectionLost("The server did not answer the login in time.")
         finally:
             self._remove_waiter(waiter)
+            if done.set in self._drop_hooks:
+                self._drop_hooks.remove(done.set)
         if "error" in outcome:
             raise LoginRefused(outcome["error"])
-        if "session" not in outcome:
+        if "session" not in outcome or not self._ws or self._ws.closed:
             raise ConnectionLost("The connection closed during login.")
+        self._up.set()
         return self.session  # type: ignore[return-value]  # set by the reader
 
     # ─── Commands ─────────────────────────────────────────────────────────
 
+    def _require_up(self) -> Session:
+        session = self.session
+        if self._closing.is_set() or self._closed.is_set():
+            raise ConnectionLost("The connection is closed.")
+        if not session:
+            raise ConnectionLost("Not logged in.")
+        if not self._up.is_set():
+            raise ConnectionLost("Connection lost; the session is resuming. Retry once it is back.")
+        return session
+
     def command(self, text: str, *, timeout: Optional[float] = None, world: bool = True) -> CommandResult:
         """Run one command and wait until the server says it is done.
 
-        Raises CommandError when the server refuses or fails it. With `world` (the default) the
-        command is always a world command, never a task for a coder in Code Mode.
+        Raises CommandError when the server refuses or fails it, ConnectionLost at once while the
+        connection is down. With `world` (the default) the command is always a world command,
+        never a task for a coder in Code Mode.
         """
-        session = self.session
-        if not session:
-            raise ConnectionLost("Not logged in.")
+        session = self._require_up()
         line = text.strip()
         if world and session.world_command_grammar and not line.startswith("/"):
             line = "/" + line
@@ -203,18 +258,15 @@ class Connection:
                 outcome["result"] = result
                 done.set()
 
-        def lost() -> None:
-            done.set()
-
         self._add_waiter(waiter)
-        self._on_close.append(lost)
+        self._drop_hooks.append(done.set)
         try:
             self._send({"type": "command", "command": line, "request_id": request_id})
             finished = done.wait(self.command_timeout if timeout is None else timeout)
         finally:
             self._remove_waiter(waiter)
-            if lost in self._on_close:
-                self._on_close.remove(lost)
+            if done.set in self._drop_hooks:
+                self._drop_hooks.remove(done.set)
         result = outcome.get("result")
         if not result:
             raise CommandError(
@@ -229,6 +281,7 @@ class Connection:
 
     def capabilities(self, timeout: float = 10.0) -> dict[str, Any]:
         """Every command this session may run, with typed forms (`marina.capabilities.v1`)."""
+        self._require_up()
         request_id = str(uuid.uuid4())
         done = threading.Event()
         outcome: dict[str, Any] = {}
@@ -263,17 +316,35 @@ class Connection:
         self._listeners.append(listener)
         return lambda: self._listeners.remove(listener) if listener in self._listeners else None
 
+    def on_reconnect(self, callback: Callable[[Session], None]) -> Callable[[], None]:
+        """Call `callback(session)` each time a dropped session is back (with its new token).
+
+        It runs on the SDK's reconnect thread. Returns a function that stops listening.
+        """
+        self._on_reconnect.append(callback)
+        return lambda: self._on_reconnect.remove(callback) if callback in self._on_reconnect else None
+
     def on_close(self, callback: Callable[[], None]) -> None:
+        """Call `callback()` once the connection is closed for good: `close()`, or reconnecting gave up."""
         self._on_close.append(callback)
 
     @property
+    def connected(self) -> bool:
+        """Logged in on an open socket (False while a dropped session is resuming)."""
+        return self._up.is_set()
+
+    @property
     def closed(self) -> bool:
+        """Closed for good: no more reconnecting."""
         return self._closed.is_set()
 
     def close(self) -> None:
-        if self._ws:
-            self._ws.close()
-        self._closed.set()
+        """Close the connection. It never reconnects after this."""
+        self._closing.set()
+        ws = self._ws
+        if ws:
+            ws.close()
+        self._finish_close()
 
     # ─── Internals ────────────────────────────────────────────────────────
 
@@ -287,16 +358,15 @@ class Connection:
                 self._waiters.remove(waiter)
 
     def _send(self, frame: dict[str, Any]) -> None:
-        if not self._ws or self._ws.closed:
+        ws = self._ws
+        if not ws or ws.closed:
             raise ConnectionLost("The connection is closed.")
         try:
-            self._ws.send(json.dumps(frame))
+            ws.send(json.dumps(frame))
         except WebSocketClosed as error:
             raise ConnectionLost(str(error)) from error
 
-    def _read_loop(self) -> None:
-        ws = self._ws
-        assert ws is not None
+    def _read_loop(self, ws: WebSocket) -> None:
         try:
             while True:
                 try:
@@ -310,7 +380,7 @@ class Connection:
                     self.session = Session(
                         entity_id=data["entityId"],
                         name=str(data.get("name") or (self.session.name if self.session else "")),
-                        token=str(data.get("token") or ""),
+                        token=str(data.get("token") or (self.session.token if self.session else "")),
                         world_command_grammar=data.get("worldCommandProtocol") == "slash-v1",
                     )
                 with self._lock:
@@ -321,15 +391,86 @@ class Connection:
                 if not (data.get("command_result") or data.get("capabilities")):
                     self._events.put(frame)
         except WebSocketError:
-            pass  # closed: reported below
+            pass  # closed: handled below
         finally:
-            self._closed.set()
-            self._events.put(None)
-            for callback in list(self._on_close):
+            ws.close()
+            self._dropped(ws)
+
+    def _dropped(self, ws: WebSocket) -> None:
+        """The socket `ws` ended: fail what waits on it, then resume the session or close."""
+        with self._state:
+            if ws is not self._ws:
+                return  # an older socket
+            self._up.clear()
+            reconnecting = self._reconnecting
+            resume = (
+                not reconnecting
+                and self.auto_reconnect
+                and not self._closing.is_set()
+                and bool(self.session and self.session.token)
+            )
+            if resume:
+                self._reconnecting = True
+        self._run_hooks(self._drop_hooks)
+        if resume:
+            threading.Thread(target=self._reconnect_loop, name="marina-reconnect", daemon=True).start()
+        elif not reconnecting:
+            self._finish_close()
+
+    def _reconnect_loop(self) -> None:
+        attempt = 0
+        while attempt < self.max_reconnect_attempts:
+            delay = reconnect_delay(attempt, self.reconnect_delay, self.max_reconnect_delay)
+            attempt += 1
+            if self._closing.wait(delay):
+                return  # close() finishes the connection
+            session = self.session
+            assert session is not None
+            try:
+                self._open()
+                self._authenticate({"type": "auth", "token": session.token})
+            except (ConnectionLost, LoginRefused) as error:
+                log.info("Reconnect attempt %d failed: %s", attempt, error)
+                ws = self._ws
+                if ws and not ws.closed:
+                    ws.close()  # its reader ends; the next attempt opens another
+                continue
+            with self._state:
+                ws = self._ws
+                if not ws or ws.closed:
+                    continue  # dropped again at once
+                self._reconnecting = False
+            log.info("Reconnected as %s", self.session.name if self.session else "?")
+            for callback in list(self._on_reconnect):
                 try:
-                    callback()
+                    callback(self.session)  # type: ignore[arg-type]
                 except Exception:  # noqa: BLE001 - one failing callback must not stop the others
-                    log.exception("A close callback failed")
+                    log.exception("A reconnect callback failed")
+            return
+        log.warning("Gave up resuming the session after %d attempts.", attempt)
+        self.reconnect_failed = True
+        with self._state:
+            self._reconnecting = False
+        self._finish_close()
+
+    def _finish_close(self) -> None:
+        with self._state:
+            if self._finished:
+                return
+            self._finished = True
+        self._up.clear()
+        self._closed.set()
+        self._events.put(None)
+        self._run_hooks(self._drop_hooks)
+        self._run_hooks(self._on_close)
+
+    @staticmethod
+    def _run_hooks(hooks: list[Callable[[], None]]) -> None:
+        for callback in list(hooks):
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 - one failing callback must not stop the others
+                log.exception("A close callback failed")
 
     def _dispatch_loop(self) -> None:
         while True:
@@ -344,7 +485,9 @@ class Connection:
 
     def _ping_loop(self) -> None:
         while not self._closed.wait(PING_INTERVAL):
+            if not self._up.is_set():
+                continue
             try:
                 self._send({"type": "ping"})
             except ConnectionLost:
-                return
+                continue  # the reader sees the drop
