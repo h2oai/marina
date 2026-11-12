@@ -133,6 +133,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The coder's closing reply is written for the person reading it.** Its brief now says the
+  terminal already shows each change, the check result and the review commands, so the reply
+  explains what changed, why and what the checks showed, without artifact ids (they stay in the
+  stored summary). A recorded run went from three ids in the reply to none.
 - **A coding session shows what it is doing and what it produced.** People could not tell
   whether `marina` was working or what it changed: steps were raw commands (`▸ code read`),
   edits showed no change, checks were a dozen lines of ids and agent hints, "task received" came
