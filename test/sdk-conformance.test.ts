@@ -120,7 +120,7 @@ async function drive(
   return report;
 }
 
-const selected = (process.env.MARINA_CONFORMANCE_LANGS ?? "")
+const selected = (process.env.MARINA_TEST_CONFORMANCE_LANGS ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
