@@ -140,6 +140,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serves it at `GET /api/protocol`. The welcome and login frames name the protocol. CI checks every
   frame a live server sends, every coding event and every example in the guide against the schema.
   This is the base for the TypeScript, Python, Java and Rust SDKs.
+- **The HTTP APIs have an OpenAPI document.** `protocol/marina.http.v1.openapi.json` (OpenAPI 3.1)
+  describes all 117 operations of memory (`/v1/memory`), participant routing, investigations and
+  published panels: paths, bodies, replies, credentials, idempotency keys and error bodies. It is
+  generated from the TypeScript types the SDK and the server already share, so it cannot drift from
+  them, and a running world serves it at `GET /api/openapi` (named in `/api/connect`). CI drives a
+  live server through every operation with the SDK's own clients and checks each request and reply
+  against it. `protocol/http.md` is the guide, with a curl session that works as written. Where the
+  SDK left a reply untyped (a finished or cancelled assistance job, the JSON store), the document
+  says what the server sends.
 
 ### Changed
 

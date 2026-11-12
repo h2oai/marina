@@ -20,6 +20,7 @@ import { retrieveMemory } from "../../memory/task-retrieval";
 import { memoryWorkflow } from "../../memory/workflows";
 import { memoryStorageFailure } from "../../persistence/db-memory-failures";
 import type { MemoryActor } from "../../persistence/db-principals";
+import { memoryNeedsIdempotencyKey } from "../../protocol/http-api";
 import { withMemoryAbort } from "../../sdk/memory-abort";
 import {
   authFailuresExhausted,
@@ -210,26 +211,7 @@ export async function handleMemoryServiceApi(
       );
     }
     const key = req.headers.get("Idempotency-Key") ?? "";
-    if (
-      ["POST", "PATCH", "DELETE"].includes(req.method) &&
-      !path.endsWith("/search") &&
-      !path.endsWith("/context") &&
-      !path.endsWith("/query") &&
-      !path.endsWith("/graph") &&
-      !path.endsWith("/source_search") &&
-      !path.endsWith("/plan") &&
-      !path.endsWith("/execute_plan") &&
-      !path.endsWith("/retrieve") &&
-      !path.endsWith("/workflow") &&
-      !path.endsWith("/federated_retrieve") &&
-      !path.endsWith("/retrieve_cached") &&
-      !path.endsWith("/review") &&
-      !path.endsWith("/cache/get") &&
-      !path.endsWith("/federated_search") &&
-      !path.endsWith("/federated_read") &&
-      !path.endsWith("/knowledge_graph") &&
-      (!key || key.length > 128)
-    )
+    if (memoryNeedsIdempotencyKey(req.method, path) && (!key || key.length > 128))
       throw new MemoryError(
         400,
         "idempotency_required",
