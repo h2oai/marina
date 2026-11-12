@@ -3175,7 +3175,7 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
 
     const joined = notified.join("\n");
     expect(joined).toContain("u_alice:");
-    expect(joined).toContain("code read src/x.ts");
+    expect(joined).toContain("Read src/x.ts");
     expect(joined).toContain("Coder: Found the issue.");
     expect(
       notifications

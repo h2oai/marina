@@ -133,6 +133,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A coding session shows what it is doing and what it produced.** People could not tell
+  whether `marina` was working or what it changed: steps were raw commands (`▸ code read`),
+  edits showed no change, checks were a dozen lines of ids and agent hints, "task received" came
+  three times under an internal name, the world brief printed into the session, and nothing said
+  "done". Now each step is one line in plain words, every edit and new file shows its change
+  inline, checks are one line from the run's structured verdict (never from prose), the
+  coder's words are labelled Coder, and the input rule shows the working time and the latest
+  step. A run ends with one block: how it ended, the files changed, whether checks passed, its
+  own time and cost, and the exact next commands (`/diff`, `/review approve|reject <attempt>`,
+  `git restore`). Task-board notices stay in the World view (F6), and the periodic world brief skips a person in Code Mode (`brief` on request still works).
 - **The dashboard builds itself.** A source checkout used to need `bun run dashboard:build`, which
   the `marina` CLI setup never ran, so a coding session's dashboard link opened a "not built yet"
   page. The server now builds `dist/dashboard` in the background at boot when it is missing or

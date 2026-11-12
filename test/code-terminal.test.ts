@@ -517,9 +517,8 @@ it("keeps receipts, submitted tasks and world messages distinct without overstat
     timestamp: 0,
     data: { code, text },
   });
-  expect(formatCodePerception(p({ event: "verification_started" }, "Receipt accepted"))).toBe(
-    "[checks · running] Receipt accepted",
-  );
+  // Checks starting is the live status line's news, not a transcript entry.
+  expect(formatCodePerception(p({ event: "verification_started" }, "Receipt accepted"))).toBe("");
   expect(
     formatCodePerception(
       p({ event: "verification_finished", status: "complete" }, "Inspect artifact: receipt"),
@@ -529,6 +528,7 @@ it("keeps receipts, submitted tasks and world messages distinct without overstat
   expect(formatCodePerception(p({ event: "verification_ran", status: "complete" }, evidence))).toBe(
     `[checks · result] ${evidence}`,
   );
+  // The end of a run is the console's result block (diff, checks, next commands).
   expect(
     formatCodePerception(
       p(
@@ -536,7 +536,16 @@ it("keeps receipts, submitted tasks and world messages distinct without overstat
         "Awaiting owner review",
       ),
     ),
-  ).toBe("[task · submitted for review] Awaiting owner review");
+  ).toBe("");
+  // Only the structured verdict says passed; the same prose without it stays a receipt.
+  expect(
+    formatCodePerception(
+      p(
+        { event: "verification_ran", status: "complete", metadata: { verification: "passed" } },
+        "anything",
+      ),
+    ),
+  ).toBe("[checks passed] on a snapshot of the change");
   expect(
     formatCodePerception({
       kind: "message",
@@ -732,7 +741,8 @@ it("uses run-scoped readiness feedback without turning receipts or stale attempt
   });
   const activity = async () => {
     await view.submit("/agents");
-    return output.at(-1)!;
+    // The end-of-run result block may print after the /agents reply (it fetches the diff).
+    return output.filter((o) => !o.startsWith("────")).at(-1)!;
   };
   try {
     view.observe(
@@ -860,12 +870,9 @@ it("renders declared readiness plainly and keeps completed receipts separate fro
       code: { event, status: "complete", metadata: { verificationReadiness: readiness } },
     },
   });
-  expect(formatCodePerception(feedback("verification_required", "required"))).toStartWith(
-    "[verification required]",
-  );
-  expect(formatCodePerception(feedback("verification_started", "running"))).toStartWith(
-    "[checks running]",
-  );
+  // Required and running are live status (the input rule), not transcript lines.
+  expect(formatCodePerception(feedback("verification_required", "required"))).toBe("");
+  expect(formatCodePerception(feedback("verification_started", "running"))).toBe("");
   expect(formatCodePerception(feedback("verification_ran", "ready"))).toStartWith(
     "[checks · result · ready for review]",
   );

@@ -362,10 +362,10 @@ export class CodeTerminal {
         return;
       }
       if (!delivery.visible && !urgent) {
-        if (delivery.firstUnread)
-          this.print(
-            `[${view === "world" ? "World" : "Coding"}] New activity is waiting. F6 switches views; your draft stays here.`,
-          );
+        // World activity waits quietly behind F6 (the footer names it); only work
+        // in the coding view is worth a line while you look at the world.
+        if (delivery.firstUnread && view !== "world")
+          this.print("[Coding] New activity is waiting. F6 switches views; your draft stays here.");
         else this.scheduleRedraw();
         return;
       }
