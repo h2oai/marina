@@ -14,6 +14,7 @@ export type {
   SessionInfo,
 } from "./client";
 export { CommandError, LoginRefusedError, MarinaAgent, MarinaClient } from "./client";
+export * from "./coding";
 export { codingDesk } from "./coding-desk";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms";
 export {
@@ -29,6 +30,8 @@ export { EXTENSION_API_VERSION } from "./extensions";
 export * from "./investigation-client";
 export * from "./investigation-text";
 export { INVESTIGATION_SCHEMA, investigationTerminal } from "./investigation-types";
+export type { ConnectOptions, LocalOptions, LocalServerAnnouncement } from "./marina";
+export { Marina, serverUrls, startLocalServer } from "./marina";
 export type { UnifiedContextResult } from "./memory-context";
 export type { DurableMemoryAPI, MemoryOperationRequest } from "./memory-operations";
 export type { ParticipantOrientation } from "./onboarding";

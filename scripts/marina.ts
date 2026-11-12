@@ -9,6 +9,10 @@
  *   marina connect <name> [...]  connect to a running Marina (REPL / -c one-shot / pipe)
  *   marina attach [url] [...]    code in an existing coding session on a running Marina
  *   marina start                 run the full server in the foreground
+ *   marina serve [dir] [--fresh] [--json]
+ *                                the folder's server without a terminal, for
+ *                                programs (SDKs' Marina.local); --json prints
+ *                                one marina.local.v1 line when it is ready
  *   marina worlds [--json]       list the worlds built into this binary
  *   marina endpoint [--data-dir <dir>] [--show-key]
  *                                where the running instance for a data directory
@@ -122,7 +126,8 @@ export type Dispatch =
   | { kind: "mcp-stdio"; rest: string[] }
   | { kind: "memory-mcp"; rest: string[] }
   | { kind: "worlds"; json: boolean }
-  | { kind: "endpoint"; dataDir?: string; showKey: boolean };
+  | { kind: "endpoint"; dataDir?: string; showKey: boolean }
+  | { kind: "serve"; dir?: string; fresh: boolean; json: boolean };
 
 /** Default directory probe for `parseDispatch` — an existing directory on disk. */
 function isExistingDirectory(path: string): boolean {
@@ -200,6 +205,19 @@ function missingConnectedPieces(connected: { url?: string; name?: string; sessio
 }
 
 /** `marina endpoint [--data-dir <dir>] [--show-key]`. */
+function parseServe(argv: string[]): Dispatch {
+  let dir: string | undefined;
+  let fresh = false;
+  let json = false;
+  for (const arg of argv) {
+    if (arg === "--fresh") fresh = true;
+    else if (arg === "--json") json = true;
+    else if (!arg.startsWith("-") && dir === undefined) dir = arg;
+    else return { kind: "usage-error", arg };
+  }
+  return { kind: "serve", ...(dir ? { dir } : {}), fresh, json };
+}
+
 function parseEndpoint(argv: string[]): Dispatch {
   let dataDir: string | undefined;
   let showKey = false;
@@ -239,6 +257,7 @@ export function parseDispatch(
   if (first === "memory-mcp") return { kind: "memory-mcp", rest: argv.slice(1) };
   if (first === "worlds") return { kind: "worlds", json: argv.includes("--json") };
   if (first === "endpoint") return parseEndpoint(argv.slice(1));
+  if (first === "serve") return parseServe(argv.slice(1));
   // Coding flow: [dir] plus optional --fresh, -p/--print "<task>", and the
   // exec-approval flags, in any order.
   let dir: string | undefined;
@@ -444,6 +463,9 @@ Usage:
   marina learned <verb> [...]  learned bundles: distill an old world's database into a
                                bundle, archive it, import, export, verify
   marina start                 run the full server in the foreground
+  marina serve [dir] [--fresh] [--json]
+                               the folder's server without a terminal, for programs
+                               (the SDKs' Marina.local); --json prints where it is
   marina worlds [--json]       list the worlds built into this binary
   marina endpoint [--data-dir <dir>] [--show-key]
                                where the running instance for a data directory
@@ -928,6 +950,15 @@ if (import.meta.main) {
           ? endpoint
           : { ...endpoint, apiKey: `${endpoint.apiKey.slice(0, 9)}…` };
       console.log(JSON.stringify(shown, null, 2));
+      break;
+    }
+    case "serve": {
+      const { serveFolder } = await import("./serve");
+      process.exitCode = await serveFolder(dispatch.dir ?? process.cwd(), {
+        fresh: dispatch.fresh,
+        json: dispatch.json,
+      });
+      process.exit();
       break;
     }
     case "start":

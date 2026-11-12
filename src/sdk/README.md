@@ -1,8 +1,49 @@
 # Marina SDK
 
-TypeScript client for building agents that connect to a Marina instance via WebSocket.
+TypeScript client for Marina: run coding tasks, send commands, and use the HTTP APIs from your own
+code. It speaks the documented protocols (`protocol/` in the repository: `marina.wire.v1` over
+WebSocket, `marina.http.v1` over HTTP), so anything it does, another language can do the same way.
 
-## Quick Start
+## Quick start
+
+```typescript
+import { Marina } from "@marina/agent-sdk";
+
+// A Marina for this folder: the same server and saved sessions `marina .` uses.
+const marina = await Marina.local("./my-project");
+
+const run = await marina.code.run("The last page drops its final item; fix it", { budget: "10m" });
+for await (const step of run.steps()) console.log(step.label); // "Edit paginate.ts", "Run checks…"
+const result = await run.result;
+console.log(result.outcome, result.verification, result.summary); // submitted passed …
+console.log(await marina.code.diff());
+await marina.code.review(result.runId, "approve");
+
+await marina.close(); // also stops the folder's server
+```
+
+`Marina.local(folder)` runs `marina serve <folder> --json` (the `marina` CLI must be installed;
+pass `{ command: [...] }` to point at it) and logs in as the folder's owner. It needs Node or Bun.
+To use a server that is already running, connect to it instead:
+
+```typescript
+const marina = await Marina.connect("ws://localhost:3300", { name: "builder" });
+await marina.command("look"); // one world command; rejects when the server refuses it
+```
+
+| On `marina` | What it is |
+|---|---|
+| `code.run(task, { verification, budget, timeoutMs })` | a coding task: `steps()`, `events`, `result` (a Run result), `steer()`, `stop()` |
+| `code.diff()`, `code.review(runId, verdict)`, `code.onExecApproval(fn)` | the change, your verdict, and answers to the coder's requests to run other commands |
+| `command(text)`, `capabilities()`, `onEvent(fn)` | world commands, what this session may run, everything the server sends |
+| `routing`, `investigations`, `panels` | the HTTP clients, signed in as this session |
+| `memory(credential)` | the memory API, with a memory credential of its own |
+| `session`, `token`, `client` | who you are, the newest session token, the WebSocket client underneath |
+
+A token resumes a dropped session: `Marina.connect(url, { token })` within 60 s of the drop.
+Commands always mean what they say: Code Mode never turns `look` into a coding task.
+
+The lower-level clients below are still exported; the front door is built on them.
 
 ```typescript
 import { MarinaAgent } from "@marina/agent-sdk";

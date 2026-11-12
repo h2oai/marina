@@ -736,6 +736,18 @@ describe("embedding subcommands (SRV-8, SRV-11)", () => {
     expect(parseDispatch(["endpoint", "--bogus"]).kind).toBe("usage-error");
   });
 
+  it("routes serve: a folder, --fresh and --json", () => {
+    expect(parseDispatch(["serve"])).toEqual({ kind: "serve", fresh: false, json: false });
+    expect(parseDispatch(["serve", "proj", "--json", "--fresh"])).toEqual({
+      kind: "serve",
+      dir: "proj",
+      fresh: true,
+      json: true,
+    });
+    expect(parseDispatch(["serve", "a", "b"]).kind).toBe("usage-error");
+    expect(parseDispatch(["serve", "--port"]).kind).toBe("usage-error");
+  });
+
   it("--help lists every embedding subcommand", () => {
     for (const sub of ["worlds", "endpoint", "acp", "mcp-stdio", "memory-mcp"])
       expect(USAGE).toContain(`  marina ${sub} `);
