@@ -409,11 +409,17 @@ async function ensureSessionAgent(
 
   // 3) Spawn a fresh coder (agent.spawn-gated).
   if (!deps.agentRuntime?.spawn) {
-    ctx.send(eid, "No agent runtime available to drive this session.");
+    refuseCommand(ctx, eid, "No agent runtime available to drive this session.");
     return null;
   }
   if (deps.agentRuntime.isAvailable && !deps.agentRuntime.isAvailable()) {
-    ctx.send(eid, "No LLM provider configured — set a provider key, then a coding agent can run.");
+    // A refusal, not a notice: a caller waiting for the run (`marina -p`, an SDK) must
+    // learn now that no run will start, instead of waiting for one.
+    refuseCommand(
+      ctx,
+      eid,
+      "No model provider configured, so no coder can start. Run `marina init` to connect one (paste a provider key, or pick a local model).",
+    );
     return null;
   }
   // Posture-aware agent.spawn: self-certification stays closed; approved

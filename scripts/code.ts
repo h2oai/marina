@@ -41,7 +41,7 @@ import { diffStat } from "../src/coding/unified-diff";
 import { formatAge } from "../src/engine/commands/format-duration";
 import { waitForDatabaseLease } from "../src/persistence/database-lease";
 import { IS_COMPILED, MARINA_ROOT } from "../src/runtime-paths";
-import { MarinaAgent, type Perception } from "../src/sdk/client";
+import { CommandError, MarinaAgent, type Perception } from "../src/sdk/client";
 import { MARINA_VERSION } from "../src/version";
 import { applyCliEnvironment, userMarinaDir } from "./cli-env";
 import { CodeConsole } from "./code-console";
@@ -1166,7 +1166,8 @@ export async function runCodeSession(
         oneShotBudgetMs(timeoutMs),
       );
     } catch (error) {
-      console.error(String(error));
+      // A refused task's reason already printed with its output; say anything else.
+      if (!(error instanceof CommandError)) console.error(String(error));
       await finishPrint(printOutcome(undefined));
       return;
     }

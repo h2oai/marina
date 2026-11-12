@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -192,6 +192,45 @@ describe("rendering structured diff perceptions", () => {
     const whole = await new LocalWorkspace(directory).diff();
     expect(whole.truncated).toBe(false);
     expect(whole.totalBytes).toBeUndefined();
+  });
+
+  it("shows files the coder created, not only edits to tracked files", async () => {
+    const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: directory });
+    git("init", "-q");
+    writeFileSync(join(directory, "a.txt"), "a\n");
+    writeFileSync(join(directory, ".gitignore"), "build/\n");
+    git("add", "a.txt", ".gitignore");
+    writeFileSync(join(directory, "a.txt"), "b\n");
+    writeFileSync(join(directory, "new.test.js"), "test one\ntest two\n");
+    mkdirSync(join(directory, "build"));
+    writeFileSync(join(directory, "build", "out.js"), "ignored\n");
+    const result = await new LocalWorkspace(directory).diff();
+    expect(result.exitCode).toBe(0);
+    expect(
+      diffStat(result.content)
+        .map((f) => f.path)
+        .sort(),
+    ).toEqual(["a.txt", "new.test.js"]);
+    expect(result.content).toContain("--- /dev/null");
+    expect(result.content).toContain("+test two");
+    expect(result.content).not.toContain("ignored");
+    // A path narrows new files too.
+    const one = await new LocalWorkspace(directory).diff("a.txt");
+    expect(one.content).not.toContain("new.test.js");
+    // A big new folder (a cache nobody ignored) is named, not listed file by file;
+    // a small one (new tests) is shown.
+    mkdirSync(join(directory, "cache"));
+    for (let i = 0; i < 25; i++) writeFileSync(join(directory, "cache", `${i}.bin`), "x\n");
+    mkdirSync(join(directory, "tests"));
+    writeFileSync(join(directory, "tests", "page.test.js"), "test page\n");
+    const folders = await new LocalWorkspace(directory).diff();
+    expect(folders.collapsed).toEqual(["cache/ (25 new files)"]);
+    expect(folders.content).not.toContain("cache/0.bin");
+    expect(folders.content).toContain("+test page");
+    // A new file past the byte budget marks the diff cut, with its full size.
+    const cut = await new LocalWorkspace(directory).diff(undefined, 120);
+    expect(cut.truncated).toBe(true);
+    expect(cut.totalBytes).toBeGreaterThan(120);
   });
 
   it("keeps a 40 KB diff whole while other entries are still clipped at 16 KB", () => {
