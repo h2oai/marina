@@ -220,6 +220,9 @@ Best for: scripting, quick one-shot commands, piping output between tools.
 
 ### The interactive terminal
 
+For a fullscreen view of the world instead, with live boards beside the World conversation,
+add `--tui`. See [the world view](interfaces.md#world-view-no-coding-session).
+
 On a terminal, `marina connect <name>` opens a full-screen-style session:
 
 - **First page.** A welcome card (world, server, tips, and your room, standing and rank) and

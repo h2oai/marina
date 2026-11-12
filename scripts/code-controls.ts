@@ -118,6 +118,25 @@ export const QUIT_INPUTS = ["/quit", "/exit", "exit", "quit"];
 /**
  * One screen: what most sessions need. Everything else is in `/help all`.
  */
+/** Help for a world view with no coding session (`marina connect --tui`). */
+export function worldEssentials(): string {
+  const rows: Array<[string, string]> = [
+    ["<command>", "any Marina command, typed in the World (look, task list, agent list …)"],
+    ["@name …", "address someone in the room"],
+    ["/mode <name>", "operate, coordinate, memory, investigate, forecast, admin (or F3)"],
+    ["/live <card>", "draw one live card in the World (status, logs, setup …)"],
+    ["/layout", "auto, focus or split (or F2)"],
+    ["/panel …", "open and use published panels (or F8)"],
+    ["/dashboard", "open the browser dashboard signed in"],
+    ["/quit", "close this view; the world keeps running"],
+  ];
+  return [
+    "A world view: no coding session. Shift+PageUp/PageDown scroll the board.",
+    ...rows.map(([usage, help]) => `  ${usage.padEnd(14)} ${help}`),
+    "For coding: marina --tui in a project folder, or marina attach --tui.",
+  ].join("\n");
+}
+
 export function terminalEssentials(connected = false, runtimes: string[] = []): string {
   const rows: Array<[string, string]> = [
     ["/task", "work toward candidate verification"],

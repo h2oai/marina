@@ -82,6 +82,23 @@ marina --mode operate
 terminal, which has the same controls on the normal screen. The workspace needs an interactive
 terminal. One-shot `-p`, pipes and redirected output keep plain text. `NO_COLOR=1` turns off colour.
 
+### World view (no coding session)
+
+To watch and run a world without coding in it, for example on a server you reached over SSH,
+open the workspace from `marina connect`:
+
+```bash
+marina connect <name> --tui
+marina connect <name> --mode admin
+```
+
+It signs in the way `marina connect` does, then shows the World beside a mode's board. It starts in
+`operate` unless `--mode` names another board mode (`--mode` implies `--tui`). There is no Coding
+conversation and no `coding` mode, and F3 cycles the board modes. Plain text goes to the World as a
+world command, and `/live`, `/panel`, `/layout` and `/dashboard` work as in the coding workspace.
+Coding controls such as `/task` or `/diff` are refused without being sent. Closing the view
+leaves the world, its agents and its tasks running.
+
 ### The layout
 
 | Area | What it shows |
@@ -175,7 +192,8 @@ Some dashboard views have no pane yet. You can still reach most of their data as
 | Admin: security, keys, default model | `admin` mode, or `/live setup`; `/world key list`, `/world admin models`. Changing keys or settings stays in the browser or `key add` |
 | Canvas, media | Browser dashboard only: both are visual |
 
-`marina connect` is the world REPL. It uses the scrollback screen and has no fullscreen mode.
+`marina connect <name>` is the world REPL on the scrollback screen; `marina connect <name> --tui`
+is the fullscreen [world view](#world-view-no-coding-session).
 
 ## Desktop development and packaging
 

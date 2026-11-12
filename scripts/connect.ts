@@ -10,6 +10,7 @@
  *   bun run scripts/connect.ts <name>                            # interactive REPL
  *   bun run scripts/connect.ts <name> -c "look"                  # one-shot
  *   echo "look\nsay hello" | bun run scripts/connect.ts <name>   # pipe mode
+ *   marina connect <name> --tui [--mode admin]                    # fullscreen world view
  *
  * One-shot and pipe modes suppress the login burst and linger (default up to
  * 20s, tune with --wait <sec>) so asynchronous responses — `ask` answers,
@@ -25,6 +26,7 @@ import { sanitizeEntityName } from "../src/engine/entity-name";
 import { formatPerception } from "../src/net/formatter";
 import type { CommandCatalogEntry } from "../src/sdk/capabilities";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
+import { modesFor, parseMode, type WorkspaceMode } from "./code-modes";
 import { commandCompletionMs, runCliCommand } from "./connect-command";
 import { isTransportFailure } from "./connect-errors";
 import { runRelayCli } from "./connect-relay";
@@ -34,6 +36,7 @@ import { colorChoiceFromArgs, termCaps } from "./term-caps";
 import { renderPerception } from "./term-render";
 import { sanitizeServerText } from "./term-sanitize";
 import { createTheme } from "./term-theme";
+import { runWorldWorkspace } from "./world-workspace";
 
 const args = process.argv.slice(2);
 
@@ -67,6 +70,9 @@ Usage:
 
 Flags:
   -c "<command>"   run a single command and exit
+  --tui            fullscreen world view: the World beside a live board
+                   (no coding session; F3 cycles boards)
+  --mode <name>    first board for --tui (implies it): ${modesFor(true).join(", ")}
   --wait <sec>     max seconds to linger for asynchronous output (model-backed
                    commands like \`ask\` answer after the ack) in one-shot/pipe
                    mode. Default 20; 0 exits as soon as the command is acked.
@@ -105,6 +111,27 @@ for (const flag of ["--port", "--url", "--color"]) {
 }
 for (const [i, arg] of args.entries())
   if (arg === "--no-color" || arg.startsWith("--color=")) consumed.add(i);
+// --tui / --mode <name>: the fullscreen world view (no coding session).
+let worldTui = false;
+let worldMode: WorkspaceMode | undefined;
+for (const [i, arg] of args.entries()) {
+  if (arg === "--tui") {
+    worldTui = true;
+    consumed.add(i);
+  } else if (arg === "--mode") {
+    const mode = parseMode(args[i + 1]);
+    if (!mode || mode === "coding") {
+      console.error(
+        `--mode expects one of ${modesFor(true).join(", ")}. Coding needs a project folder: marina --tui.`,
+      );
+      process.exit(1);
+    }
+    worldTui = true;
+    worldMode = mode;
+    consumed.add(i);
+    consumed.add(i + 1);
+  }
+}
 const colorChoice = colorChoiceFromArgs(args);
 const dashC = args.indexOf("-c");
 let oneShot: string | undefined;
@@ -132,7 +159,13 @@ const relaySocket = process.env.MARINA_RELAY_SOCKET;
 if (relaySocket) process.exit(await runRelayCli(relaySocket, oneShot));
 
 if (!requestedName) {
-  console.error('Usage: marina connect <name> [-c "command"] [--wait <sec>]');
+  console.error(
+    'Usage: marina connect <name> [-c "command"] [--wait <sec>] [--tui [--mode <name>]]',
+  );
+  process.exit(1);
+}
+if (worldTui && (oneShot || !process.stdin.isTTY || !process.stdout.isTTY)) {
+  console.error("--tui needs an interactive terminal; -c and pipes print plain text.");
   process.exit(1);
 }
 
@@ -333,7 +366,19 @@ try {
   /* Older servers retain plain command input. */
 }
 
-if (rich) {
+if (rich && worldTui) {
+  const code = await runWorldWorkspace({
+    agent,
+    url: URL,
+    ...(worldMode ? { mode: worldMode } : {}),
+    handoff: () => {
+      agent.offPerception(printer);
+      return early.splice(0);
+    },
+  });
+  agent.disconnect();
+  process.exit(code);
+} else if (rich) {
   await runInteractive({
     agent,
     session: { name: connectedName, entityId: connectedId },

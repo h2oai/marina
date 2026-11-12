@@ -33,6 +33,8 @@ export interface CodeEditorState {
 
 export interface CodeEditorOptions {
   connected?: boolean;
+  /** A world-only workspace (`marina connect --tui`): no Coding conversation. */
+  worldOnly?: boolean;
   completions?: () => readonly AutocompleteItem[];
   line(text: string): void;
   interrupt(): void;

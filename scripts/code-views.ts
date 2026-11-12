@@ -140,10 +140,16 @@ export class TerminalViews {
       .join(" · ");
   }
 
-  navigation(questions: number): string {
+  /** `worldOnly`: a world view with no coding session lists no Coding conversation. */
+  navigation(questions: number, worldOnly = false): string {
     const label = (view: TerminalView, name: string, count: number) =>
       `${view === this.focus ? "● " : ""}${name}${count ? ` (${count})` : ""}`;
-    return `${label("coding", "Coding", this.unread.coding)}  ·  ${label("world", "World", this.unread.world)}  ·  ${label("approvals", "Requests", questions)}  ·  ${label("panel", "Panel", 0)}`;
+    return [
+      ...(worldOnly ? [] : [label("coding", "Coding", this.unread.coding)]),
+      label("world", "World", this.unread.world),
+      label("approvals", "Requests", questions),
+      label("panel", "Panel", 0),
+    ].join("  ·  ");
   }
 
   select(view: TerminalView): void {
