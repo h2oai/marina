@@ -7,6 +7,8 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -21,6 +23,7 @@ import {
   deliveryLimits,
   parseDeliveryManifest,
   prepareDeliveryMount,
+  readDeliveryManifest,
 } from "../src/coding/delivery";
 import { LocalWorkspace } from "../src/coding/local-workspace";
 import {
@@ -43,15 +46,15 @@ let owner: ReturnType<typeof f.login>;
 let run: CodingArtifactRow;
 let state: DisposableStack;
 const files = ["report.ts", "report.test.ts"];
+function declaration(paths = files) {
+  return {
+    files: paths,
+    checks: ["bun test report.test.ts"],
+    requirements: [{ text: "the delivered report exports amount 11", checks: [0] }],
+  };
+}
 function manifest(paths = files) {
-  writeFileSync(
-    join(root, "delivery.json"),
-    JSON.stringify({
-      files: paths,
-      checks: ["bun test report.test.ts"],
-      requirements: [{ text: "the delivered report exports amount 11", checks: [0] }],
-    }),
-  );
+  writeFileSync(join(root, "delivery.json"), JSON.stringify(declaration(paths)));
 }
 const current = () => f.db.getCodingArtifact(run.id)!;
 const send = (command: string) =>
@@ -152,6 +155,117 @@ it("rechecks output bytes and the manifest at submission even without a Marina w
   writeFileSync(join(root, "helper.ts"), "export const amount = 11;");
   manifest();
   expect((await assessCodingVerification(f.db, current())).verification).toBe("stale");
+});
+
+it("verifies inline declarations without workspace bookkeeping and retains them for review", async () => {
+  rmSync(join(root, "delivery.json"));
+  const before = readdirSync(root).sort();
+  const source = readFileSync(join(root, "report.ts"), "utf8");
+  const missing = JSON.stringify(declaration(), null, 2);
+  await send(`code verify delivery dependencies:none -- ${missing}`);
+  await f.engine.drainCommands();
+  expect(checks()[0]?.status, owner.connection.allTextJoined()).toBe("failed");
+  expect(JSON.parse(checks()[0]!.metadata_json).delivery.manifestContent).toBe(missing);
+  const json = JSON.stringify(declaration([...files, "helper.ts"]), null, 2);
+  await send(`code verify delivery dependencies:none -- ${json}`);
+  await f.engine.drainCommands();
+  const checked = checks()[0]!;
+  expect(checked.status, owner.connection.allTextJoined()).toBe("complete");
+  const evidence = JSON.parse(checked.metadata_json).delivery;
+  expect(evidence.manifestPath).toBeUndefined();
+  expect(evidence.manifestContent).toBe(json);
+  expect(evidence.files.map((file: { path: string }) => file.path)).toEqual([
+    ...files,
+    "helper.ts",
+  ]);
+  expect(evidence.checkedFingerprint).toBe(evidence.fingerprint);
+  expect((await assessCodingVerification(f.db, current())).verification).toBe("passed");
+  await send(`code show ${checked.id}`);
+  expect(owner.connection.allTextJoined()).toContain(`Delivery manifest (declared JSON):\n${json}`);
+  const receipt = f.db.listCodingRunArtifacts(run.id, ["verification_request"])[0]!;
+  owner.connection.clear();
+  await send(`code show ${receipt.id}`);
+  expect(owner.connection.allTextJoined()).toContain(`Delivery manifest (declared JSON):\n${json}`);
+  expect(readdirSync(root).sort()).toEqual(before);
+  expect(readFileSync(join(root, "report.ts"), "utf8")).toBe(source);
+  writeFileSync(join(root, "helper.ts"), "export const amount = 12;");
+  expect((await assessCodingVerification(f.db, current())).verification).toBe("stale");
+  writeFileSync(join(root, "helper.ts"), "export const amount = 11;");
+  await send("code summary Inline delivery checked");
+  expect(current().status, owner.connection.allTextJoined()).toBe("submitted");
+});
+
+it("continues to assess legacy path evidence and explicitly delivered manifest files", async () => {
+  manifest([...files, "helper.ts", "delivery.json"]);
+  await verify();
+  const checked = checks()[0]!;
+  expect(checked.status, owner.connection.allTextJoined()).toBe("complete");
+  const metadata = JSON.parse(checked.metadata_json);
+  expect(metadata.delivery.files.map((file: { path: string }) => file.path)).toContain(
+    "delivery.json",
+  );
+  delete metadata.delivery.manifestContent;
+  f.db.updateCodingArtifact(checked.id, { metadata });
+  expect((await assessCodingVerification(f.db, current())).verification).toBe("passed");
+  manifest();
+  expect((await assessCodingVerification(f.db, current())).verification).toBe("stale");
+});
+
+it("rejects ambiguous, missing, malformed and non-delivery inline declarations", async () => {
+  for (const [command, reason] of [
+    ["code verify delivery", "requires inline JSON"],
+    [
+      `code verify delivery manifest:delivery.json -- ${JSON.stringify(declaration())}`,
+      "requires inline JSON",
+    ],
+    [`code verify candidate -- ${JSON.stringify(declaration())}`, "requires inline JSON"],
+    [`code verify -- ${JSON.stringify(declaration())}`, "requires inline JSON"],
+    ["code verify delivery -- {invalid}", "JSON Parse error"],
+    ['code verify delivery -- {"files":["../outside"],"checks":["bun test"]}', "Delivery paths"],
+    ['code verify delivery -- {"files":["report.ts"],"checks":[]}', "finite check commands"],
+  ]) {
+    owner.connection.clear();
+    await send(command!);
+    expect(owner.connection.allTextJoined(), command).toContain(reason!);
+  }
+  expect(checks()).toHaveLength(0);
+  expect(f.db.listCodingRunArtifacts(run.id, ["verification_request"])).toHaveLength(0);
+  await expect(
+    readDeliveryManifest(new LocalWorkspace(root), { json: " ".repeat(65537) }),
+  ).rejects.toThrow("64 KiB");
+});
+
+it("detects changes to path manifests and either form's files during capture", async () => {
+  const workspace = new LocalWorkspace(root);
+  manifest([...files, "helper.ts"]);
+  const captured = await captureDelivery(workspace, "delivery.json", () => {});
+  try {
+    expect(captured.evidence.manifestContent).toBe(
+      readFileSync(join(root, "delivery.json"), "utf8"),
+    );
+    expect(readdirSync(captured.directory).sort()).toEqual([...files, "helper.ts"].sort());
+  } finally {
+    await captured.dispose();
+  }
+  let calls = 0;
+  await expect(
+    captureDelivery(workspace, "delivery.json", () => {
+      if (++calls === 2) manifest();
+    }),
+  ).rejects.toThrow("changed while being captured");
+  for (const source of [
+    "delivery.json",
+    { json: JSON.stringify(declaration([...files, "helper.ts"])) },
+  ]) {
+    manifest([...files, "helper.ts"]);
+    writeFileSync(join(root, "helper.ts"), "export const amount = 11;");
+    calls = 0;
+    await expect(
+      captureDelivery(workspace, source, () => {
+        if (++calls === 2) writeFileSync(join(root, "helper.ts"), "export const amount = 12;");
+      }),
+    ).rejects.toThrow("changed while being captured");
+  }
 });
 
 it("captures and rechecks a large binary delivery without the buffered read limit", async () => {

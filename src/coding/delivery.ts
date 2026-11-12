@@ -56,7 +56,9 @@ export interface RequirementCoverage {
 
 export interface DeliveryEvidence {
   version: 1;
-  manifestPath: string;
+  manifestPath?: string;
+  /** Exact declaration retained for review; optional on legacy evidence. */
+  manifestContent?: string;
   manifestSha256: string;
   files: { path: string; sha256: string; bytes: number }[];
   fingerprint: string;
@@ -189,13 +191,27 @@ export function requirementLines(coverage: RequirementCoverage): string[] {
   ];
 }
 
-export async function readDeliveryManifest(workspace: WorkspaceFiles, path: string) {
-  if (!workspace.readBytes) throw new Error("This workspace cannot capture delivery files.");
-  assertRegularFile(workspace, path);
-  const source = await workspace.readBytes(deliveryPath(path), 64 * 1024);
+/** A string retains the legacy workspace-path form; inline JSON never touches the workspace. */
+export type DeliveryManifestSource = string | { json: string };
+
+export async function readDeliveryManifest(
+  workspace: WorkspaceFiles,
+  source: DeliveryManifestSource,
+) {
+  let data: Uint8Array;
+  if (typeof source === "string") {
+    if (!workspace.readBytes) throw new Error("This workspace cannot capture delivery files.");
+    assertRegularFile(workspace, source);
+    data = (await workspace.readBytes(deliveryPath(source), 64 * 1024)).data;
+  } else {
+    data = new TextEncoder().encode(source.json);
+    if (data.length > 64 * 1024) throw new Error("Delivery manifest exceeds 64 KiB.");
+  }
+  const content = new TextDecoder().decode(data);
   return {
-    manifest: parseDeliveryManifest(JSON.parse(new TextDecoder().decode(source.data))),
-    sha256: hash(source.data),
+    manifest: parseDeliveryManifest(JSON.parse(content)),
+    sha256: hash(data),
+    content,
   };
 }
 
@@ -272,11 +288,11 @@ export async function prepareDeliveryMount(directory: string, beforeSpawn: () =>
 /** Capture exactly the selected files. A clean working directory is not a security sandbox. */
 export async function captureDelivery(
   workspace: WorkspaceFiles,
-  manifestPath: string,
+  source: DeliveryManifestSource,
   beforeCapture: () => void,
 ) {
   beforeCapture();
-  const { manifest, sha256 } = await readDeliveryManifest(workspace, manifestPath);
+  const { manifest, sha256, content } = await readDeliveryManifest(workspace, source);
   const directory = await mkdtemp(join(tmpdir(), "marina-delivery-"));
   const dispose = () => rm(directory, { recursive: true, force: true });
   try {
@@ -284,7 +300,8 @@ export async function captureDelivery(
     beforeCapture();
     const evidence: DeliveryEvidence = {
       version: 1,
-      manifestPath,
+      ...(typeof source === "string" ? { manifestPath: source } : {}),
+      manifestContent: content,
       manifestSha256: sha256,
       files: inventory,
       fingerprint: hash(JSON.stringify(inventory)),
@@ -292,7 +309,8 @@ export async function captureDelivery(
     // Detect edits during capture instead of presenting a mixed-version bundle as current.
     if (
       (await deliveryFingerprint(workspace, manifest.files)) !== evidence.fingerprint ||
-      (await readDeliveryManifest(workspace, manifestPath)).sha256 !== sha256
+      (typeof source === "string" &&
+        (await readDeliveryManifest(workspace, source)).sha256 !== sha256)
     )
       throw new Error("Delivery files changed while being captured. Retry after edits finish.");
     beforeCapture();

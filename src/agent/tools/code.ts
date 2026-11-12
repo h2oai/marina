@@ -19,7 +19,7 @@ const verificationMode = Type.Optional(
     ],
     {
       description:
-        "live: workspace; start: background; candidate: Git snapshot; delivery: manifest files only. Inspect receipts using show/artifactId before summary.",
+        "live: workspace; start: background; candidate: Git snapshot; delivery: inline manifestJson files only. Inspect receipts using show/artifactId before summary.",
     },
   ),
 );
@@ -42,6 +42,19 @@ const scope = Type.Optional(
         "Test scope. auto (default): tests relevant to the change, else the full suite; changed: relevant tests only; full: the whole suite; changed+full: relevant tests, then the full suite under a time budget.",
     },
   ),
+);
+
+const manifestJson = Type.Optional(
+  Type.Union([Type.String(), Type.Record(Type.String(), Type.Unknown())], {
+    description:
+      "delivery verify: inline manifest JSON object or string with files, checks and requirements. Pass bookkeeping here without creating a workspace file.",
+  }),
+);
+const manifest = Type.Optional(
+  Type.String({
+    description:
+      "delivery verify: existing relative JSON manifest path; prefer manifestJson for bookkeeping. Use only one manifest source.",
+  }),
 );
 
 const codeEditSchema = Type.Object({
@@ -112,11 +125,8 @@ const CODE_ACTIONS = [
 // verificationCommand.
 const codeSchema = Type.Object({
   verificationMode,
-  manifest: Type.Optional(
-    Type.String({
-      description: "delivery verify: relative JSON manifest path with files and checks",
-    }),
-  ),
+  manifestJson,
+  manifest,
   dependencies: Type.Optional(
     Type.String({ description: "verify: check (default), none, auto or a manager" }),
   ),
@@ -359,14 +369,22 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
     wrap(
       "marina_code_verify",
       "Code Verify",
-      "Run the detected verification chain where the session runs (host or its container runner): prepare by project type, then tests relevant to the change. The result is passed, failed (checks ran and failed), not_run (no tests found, or the environment is not ready) or error. Candidate mode binds results to an isolated local Git snapshot; ignored dependencies are excluded. Background admission is not a passing result.",
+      "Run the detected verification chain where the session runs (host or its container runner): prepare by project type, then tests relevant to the change. The result is passed, failed (checks ran and failed), not_run (no tests found, or the environment is not ready) or error. Candidate mode binds results to an isolated local Git snapshot; ignored dependencies are excluded. Delivery mode uses inline manifestJson (files, checks, requirements) without creating a bookkeeping file in the workspace. Background admission is not a passing result.",
       Type.Object({
         verificationMode,
         dependencies,
         scope,
-        manifest: Type.Optional(Type.String()),
+        manifestJson,
+        manifest,
       }),
-      (p) => verificationCommand(p.verificationMode, p.dependencies, p.scope, p.manifest),
+      (p) =>
+        verificationCommand(
+          p.verificationMode,
+          p.dependencies,
+          p.scope,
+          p.manifest,
+          p.manifestJson,
+        ),
       ctx,
     ),
     wrap(
@@ -702,6 +720,7 @@ function verificationCommand(
   dependencies?: unknown,
   scopeValue?: unknown,
   manifest?: unknown,
+  inlineManifest?: unknown,
 ): string {
   if (
     mode !== undefined &&
@@ -718,18 +737,28 @@ function verificationCommand(
     throw new Error(`dependencies must be one of ${DEPENDENCY_MODES.join(", ")}`);
   if (scopeValue !== undefined && !(VERIFY_SCOPES as readonly unknown[]).includes(scopeValue))
     throw new Error(`scope must be one of ${VERIFY_SCOPES.join(", ")}`);
-  if ((mode === "delivery") !== (typeof manifest === "string" && manifest.length > 0))
+  const hasManifest = manifest !== undefined;
+  const hasInline = inlineManifest !== undefined;
+  if ((hasManifest && hasInline) || (mode === "delivery") !== (hasManifest || hasInline))
     throw new Error(
-      "Delivery verification requires a manifest path; other modes do not accept one.",
+      "Delivery verification requires manifestJson or an existing manifest path, exclusively; other modes do not accept a manifest.",
     );
-  if (manifest !== undefined && (typeof manifest !== "string" || /\s/.test(manifest)))
+  if (hasManifest && (typeof manifest !== "string" || !manifest || /\s/.test(manifest)))
     throw new Error("Manifest must be a path without whitespace.");
+  let json: string | undefined;
+  if (hasInline) {
+    const value = typeof inlineManifest === "string" ? JSON.parse(inlineManifest) : inlineManifest;
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error("manifestJson must be a JSON object or an encoded JSON object.");
+    json = JSON.stringify(value);
+  }
   return [
     "code verify",
     ...(mode === "start" || mode === "candidate" || mode === "delivery" ? [mode] : []),
     ...(manifest ? [`manifest:${manifest}`] : []),
     ...(dependencies !== undefined ? [`dependencies:${dependencies}`] : []),
     ...(scopeValue !== undefined ? [`scope:${scopeValue}`] : []),
+    ...(json !== undefined ? [`-- ${json}`] : []),
   ].join(" ");
 }
 
@@ -763,6 +792,7 @@ function buildCodeCommand(params: Record<string, unknown>): string {
         params.dependencies,
         params.scope,
         params.manifest,
+        params.manifestJson,
       );
     case "observe":
       return `code observe ${requiredSingleLineCodeParam(text, "text", "action=observe requires text")}`;

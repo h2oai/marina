@@ -23,7 +23,7 @@ import { parseCodingCommandTarget } from "../../sdk/command-target";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { failCommandResponse, refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
-import { parseModifiers } from "../parse-input";
+import { parseModifiers, splitOnTerminator } from "../parse-input";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import { dailySpendCapUsd, formatSpendUsd, spentTodayUsd } from "../spend-ledger";
 import {
@@ -244,7 +244,7 @@ const stopHandler: SubcommandHandler = async (c) => {
   await stopSessionAgent(c.ctx, c.eid, c.entity, c.deps);
 };
 const VERIFY_USAGE =
-  "code verify [start|candidate|delivery] [manifest:<path>] [dependencies:none|check|auto|<manager>] [scope:auto|changed|full|changed+full] [typecheck:auto|off] [budget:<duration>]";
+  "code verify [start|candidate|delivery] [manifest:<path>] [dependencies:none|check|auto|<manager>] [scope:auto|changed|full|changed+full] [typecheck:auto|off] [budget:<duration>] [-- <delivery manifest JSON>]";
 
 /**
  * Subcommand dispatch table, keyed by the profile-canonical subcommand name.
@@ -388,7 +388,9 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
     await runWorkspaceCommand(c.ctx, c.eid, c.entity, c.deps, parseCommandArgv(c.rawAfterSub));
   },
   verify: async (c) => {
-    const parsed = parseModifiers(c.args, {
+    // JSON is free text after the modifier terminator, preserving whitespace and quotes.
+    const [head, inline] = splitOnTerminator(c.rawAfterSub);
+    const parsed = parseModifiers(head.split(/\s+/).filter(Boolean), {
       manifest: { type: "string" },
       dependencies: { type: "string" },
       scope: { type: "string" },
@@ -403,9 +405,12 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
     )
       throw new Error(`Usage: ${VERIFY_USAGE}`);
     const manifest = parsed.values.manifest as string | undefined;
-    if ((mode === "delivery") !== !!manifest)
+    if (
+      (manifest !== undefined && inline !== undefined) ||
+      (mode === "delivery") !== (manifest !== undefined || inline !== undefined)
+    )
       throw new Error(
-        "Delivery verification requires manifest:<relative path>; other modes do not accept a manifest.",
+        "Delivery verification requires inline JSON after -- or manifest:<relative path>, exclusively; other modes do not accept a manifest.",
       );
     let options: VerificationOptions;
     try {
@@ -426,7 +431,7 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
         c.deps,
         mode === "candidate",
         options,
-        manifest,
+        inline !== undefined ? { json: inline } : manifest,
       );
       return;
     }
@@ -679,6 +684,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       { syntax: "code verify", effect: "execute" },
       { syntax: "code verify start", effect: "execute" },
       { syntax: "code verify candidate", effect: "execute" },
+      { syntax: "code verify delivery -- <json>", effect: "execute" },
       { syntax: "code verify delivery manifest:<path>", effect: "execute" },
       { syntax: "code verify candidate dependencies:auto", effect: "execute" },
       { syntax: "code verify scope:changed+full budget:10m", effect: "execute" },

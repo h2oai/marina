@@ -766,7 +766,7 @@ export async function runVerificationCommands(
       ? `\n${dim(`Scope: ${stepPlan.scopeNote}.${relevant?.files.length ? ` Relevant tests: ${relevant.files.slice(0, 8).join(", ")}${relevant.files.length > 8 ? ", …" : ""}` : ""}`)}`
       : "") +
     (candidateEvidence?.delivery
-      ? `\nDelivery checks used only the manifest's files in a clean working directory under the configured runner. The inventory and digests are saved. Check coverage and task acceptance still require review.${
+      ? `\nDelivery checks used only the manifest's files in a clean working directory under the configured runner. The manifest content, inventory and digests are saved. Check coverage and task acceptance still require review.${
           coverage
             ? `\nRequirements:\n${requirementLines(coverage)
                 .map((line) => `- ${line}`)

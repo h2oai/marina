@@ -1520,6 +1520,44 @@ describe("tool profiles", () => {
     await expect(typedVerify.execute("invalid-scope", { scope: "everything" })).rejects.toThrow(
       "scope must be one of",
     );
+    const declaration = {
+      files: ["file with spaces.ts", "file with spaces.test.ts"],
+      checks: ['bun test "file with spaces.test.ts"'],
+      requirements: [{ text: "preserve spaces, quotes and -- dependencies:auto", checks: [0] }],
+    };
+    const inlineCommand = `code verify delivery dependencies:none -- ${JSON.stringify(declaration)}`;
+    await tool!.execute("inline-delivery", {
+      action: "verify",
+      verificationMode: "delivery",
+      dependencies: "none",
+      manifestJson: declaration,
+    });
+    await typedVerify.execute("typed-inline-delivery", {
+      verificationMode: "delivery",
+      dependencies: "none",
+      manifestJson: JSON.stringify(declaration, null, 2),
+    });
+    expect(commands.slice(-2)).toEqual([inlineCommand, inlineCommand]);
+    await typedVerify.execute("path-delivery", {
+      verificationMode: "delivery",
+      manifest: "existing.json",
+    });
+    expect(commands.at(-1)).toBe("code verify delivery manifest:existing.json");
+    const beforeRefusals = commands.length;
+    for (const params of [
+      { verificationMode: "delivery" },
+      { verificationMode: "delivery", manifest: "existing.json", manifestJson: declaration },
+      { verificationMode: "candidate", manifestJson: declaration },
+      { verificationMode: "delivery", manifestJson: "not JSON\ncode run bad" },
+      { verificationMode: "delivery", manifestJson: [] },
+      { verificationMode: "delivery", manifestJson: null },
+    ]) {
+      await expect(typedVerify.execute("invalid-inline", params)).rejects.toThrow();
+      expect(
+        JSON.stringify(await tool!.execute("invalid-inline", { action: "verify", ...params })),
+      ).toContain("Invalid marina_code request");
+    }
+    expect(commands).toHaveLength(beforeRefusals);
   });
 
   it("resident coding tools expose edit/write and share safe command composition with deferred wrappers", async () => {
