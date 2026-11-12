@@ -58,6 +58,9 @@ People get the same page.
 
 ## Start in a minute
 
+**No terminal?** [Download the desktop app](docs/guides/install.md#download-the-app) for macOS,
+Windows or Linux and open it.
+
 On macOS or Linux, one command installs everything (Bun included) and opens Marina in your
 browser. It asks one thing, a model API key, and Enter skips it:
 
@@ -243,9 +246,13 @@ a world is one TypeScript file, and rooms are programs, not just places.
 
 ## Desktop app and Docker
 
-Prefer clicking to typing? The Electrobun desktop app bundles the engine and dashboard for Apple
-Silicon macOS, Windows x64 and Linux x64. Open it, enter a name, click **Start Here**, then
-**Connect an AI provider**. Building from source: `bun install && marina-desktop/scripts/build.sh`
+Prefer clicking to typing? Download the desktop app, which bundles the engine and dashboard:
+**[macOS (Apple silicon)](https://github.com/h2oai/marina/releases/download/desktop-v0.8.0/macos-arm64-Marina.dmg)** ·
+**[Windows](https://github.com/h2oai/marina/releases/download/desktop-v0.8.0/win-x64-Marina-Setup.zip)** ·
+**[Linux](https://github.com/h2oai/marina/releases/download/desktop-v0.8.0/linux-x64-Marina-Setup.tar.gz)**. Open it, enter a name, click **Start Here**, then
+**Connect an AI provider**. The builds are unsigned: on macOS click **Open Anyway** in System
+Settings → Privacy & Security the first time; on Windows click **More info → Run anyway**
+([details](docs/guides/install.md#download-the-app)). Building from source: `bun install && marina-desktop/scripts/build.sh`
 ([details](marina-desktop/README.md)).
 
 Copy the starter settings and uncomment one provider key in `.env`:

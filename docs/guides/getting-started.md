@@ -65,7 +65,8 @@ it); `MARINA_DASHBOARD_AUTOBUILD=off` leaves that to `bun run dashboard:build`.
 
 ### Packaged desktop app
 
-If you are using a packaged Electrobun build, open Marina directly. It contains the engine and
+[Download the app](install.md#download-the-app) for macOS, Windows or Linux and open it; the
+builds are unsigned, and that page says how to open them the first time. It contains the engine and
 dashboard, stores its world locally, and does not require terminal commands or an `.env` file.
 Provider keys, agent launch, chat, and world selection are available in the UI. See
 [Desktop App](../../README.md#desktop-app-and-docker) for the packaged-app security boundary and source-build
