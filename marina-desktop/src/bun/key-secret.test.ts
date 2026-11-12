@@ -30,7 +30,8 @@ describe("ensureDesktopKeySecret", () => {
     expect(first).toHaveLength(64);
     expect(second).toBe(first);
     expect(firstEnv.MARINA_KEY_SECRET).toBe(first);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits: the file's access comes from its folder's ACL.
+    if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(readFileSync(path, "utf8").trim()).toBe(first);
   });
 
