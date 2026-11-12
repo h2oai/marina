@@ -507,6 +507,188 @@ export declare class MarinaAgent extends MarinaClient {
 }
 ```
 
+## coding
+
+[Source](../../src/sdk/coding.ts)
+
+```typescript
+import type { MarinaClient } from "./client.js";
+import type { Perception } from "./protocol.js";
+/** What kind of step a coding activity is. */
+export declare const CODING_ACTIVITY_KINDS: readonly ["read", "search", "edit", "write", "patch", "run", "verify", "plan", "summary", "other"];
+/** What the checks said. Only `passed` means checks ran on the change and passed. */
+export declare const VERIFICATIONS: readonly ["passed", "failed", "not_run", "error", "missing", "stale", "unbound", "unavailable"];
+/** How a run ended. `submitted`: the coder finished and handed the change in for review. */
+export declare const RUN_OUTCOMES: readonly ["submitted", "failed", "cancelled", "interrupted"];
+/** One step the coder took. */
+export interface CodingActivity {
+    kind: (typeof CODING_ACTIVITY_KINDS)[number];
+    /** One line in plain words: "Edit paginate.js". */
+    label: string;
+    path?: string;
+    /** The change, as unified-diff body lines (`-old`, `+new`, ` context`), capped. */
+    diff?: string[];
+    /** Diff lines left out past the cap. */
+    more?: number;
+    /** Bookkeeping; a UI may hide it. */
+    quiet?: boolean;
+}
+/** What the checks said. Only `passed` means checks ran on the change and passed. */
+export type Verification = (typeof VERIFICATIONS)[number];
+/** How a coding run ended. Review it with `review(runId, "approve" | "reject")`. */
+export interface RunResult {
+    runId: string;
+    taskId?: number;
+    agent?: string;
+    terminal: true;
+    phase: "completed" | "failed";
+    /** `submitted`: the coder finished and handed the change in for review. */
+    outcome?: (typeof RUN_OUTCOMES)[number];
+    /** `blocked`, `agent_died`, or free text. */
+    reason?: string;
+    detail?: string;
+    summary?: string;
+    summaryId?: string;
+    verification?: Verification;
+    verificationReason?: string;
+    /** Present when a budget forced the answer; never a free answer. */
+    budgetForced?: {
+        reason: string;
+        used?: number;
+        cap?: number;
+    };
+}
+/** One coding event, as the server sent it (`data.code` of a `code` frame). */
+export interface CodeEvent {
+    /** `agent_output`, `code_lifecycle`, `verification_finished`, … */
+    event: string;
+    /** Payload shape: `stream`, `lifecycle`, `diff`, `file`, `verification`, … */
+    type: string;
+    /** For people: print it as is (it may carry ANSI colour codes). */
+    text: string;
+    sessionId?: string;
+    runId?: string;
+    phase?: string;
+    /** On `agent_output`: a step (`tool`), the coder's words (`prose`), or a failure. */
+    kind?: "tool" | "prose" | "tool_error" | "error";
+    /** On a step: what the coder did. */
+    activity?: CodingActivity;
+    /** On the end of a run. */
+    result?: RunResult;
+    /** The whole frame, for anything not lifted out above. */
+    raw: Perception;
+}
+/** The coder asks to run a command outside its allowlist. */
+export interface ExecApprovalRequest {
+    token: string;
+    argv: string[];
+    cwd: string;
+    /** The command as one line, for people. */
+    rendered: string;
+}
+export interface CodeRunOptions {
+    /**
+     * What counts as done (default `checks`): `checks` runs the project's checks
+     * on the change, `candidate` lets the coder's own checks stand,
+     * `delivery` asks for the delivery checklist.
+     */
+    verification?: "checks" | "candidate" | "delivery";
+    /**
+     * Wall-clock budget for the coder: `"10m"`, `"90s"`, or milliseconds. At the
+     * deadline it hands in what it has, labelled `budgetForced`.
+     */
+    budget?: string | number;
+    /**
+     * Give up waiting after this long (default 30 minutes): the run is stopped
+     * and `result` rejects with `CodingTimeoutError`.
+     */
+    timeoutMs?: number;
+}
+export declare class CodingTimeoutError extends Error {
+    readonly timeoutMs: number;
+    constructor(timeoutMs: number);
+}
+/** The coding event a frame carries, or undefined when it is not one. */
+export declare function codeEventOf(p: Perception): CodeEvent | undefined;
+/** An exec approval request a frame carries, or undefined. */
+export declare function execApprovalOf(p: Perception): ExecApprovalRequest | undefined;
+/** `budget:` value for `code do`: whole seconds. */
+export declare function budgetArgument(budget: string | number): string;
+/**
+ * One coding task, from dispatch to its Run result.
+ *
+ * ```ts
+ * const run = await marina.code.run("Fix the off-by-one in paginate()");
+ * for await (const step of run.steps()) console.log(step.label);
+ * const result = await run.result; // RunResult
+ * ```
+ */
+export declare class CodingRun {
+    private readonly coding;
+    private readonly sessionId;
+    /** Every coding event of this run's session while it runs, in order. Read once. */
+    readonly events: AsyncIterable<CodeEvent>;
+    /** Resolves with the Run result (completed or failed); rejects on timeout or disconnect. */
+    readonly result: Promise<RunResult>;
+    private stream;
+    private settle;
+    private id?;
+    /** @internal */
+    constructor(coding: MarinaCoding, sessionId: string | undefined);
+    /** The run's id once the server has accepted it (`task_run_…`). */
+    get runId(): string | undefined;
+    /** Only the coder's steps (reads, edits with their diffs, checks). Read once. */
+    steps(): AsyncGenerator<CodingActivity>;
+    /** Redirect the coder while it works. */
+    steer(direction: string): Promise<unknown>;
+    /** Stop the coder. The result still arrives, as `failed`. */
+    stop(): Promise<unknown>;
+    /** @internal Feed one frame; returns true once the run has ended. */
+    receive(p: Perception): boolean;
+    /** @internal */
+    finish(result: RunResult): void;
+    /** @internal */
+    fail(error: unknown): void;
+}
+/**
+ * Code Mode for one connection: run tasks in the server's workspace, follow
+ * them, review what they produced.
+ */
+export declare class MarinaCoding {
+    private readonly client;
+    private session?;
+    private approver?;
+    private watching;
+    private readonly active;
+    /** @internal */
+    constructor(client: MarinaClient);
+    /**
+     * Enter Code Mode (once per connection) and return the coding session id.
+     * The server picks the workspace: a local folder server codes in its folder.
+     */
+    open(): Promise<string | undefined>;
+    /** Dispatch a coding task. Resolves once the server accepts it; follow it on the run. */
+    run(task: string, options?: CodeRunOptions): Promise<CodingRun>;
+    /**
+     * Answer the coder's requests to run commands outside its allowlist. Without
+     * a handler they wait for someone else to answer (`code exec-approve`).
+     * The server honours approvals only when it allows them (a local folder
+     * server started with exec approval on).
+     */
+    onExecApproval(handler: (request: ExecApprovalRequest) => boolean | Promise<boolean>): void;
+    /** The session's whole change as a unified diff ("" when nothing changed). */
+    diff(path?: string): Promise<string>;
+    /** Record your verdict on a run's change. */
+    review(runId: string, verdict: "approve" | "reject"): Promise<unknown>;
+    /** Redirect the coder while it works. */
+    steer(direction: string): Promise<unknown>;
+    /** Stop the coder. */
+    stop(): Promise<unknown>;
+    /** @internal The connection is closing: every unfinished run fails. */
+    closed(): void;
+}
+```
+
 ## coding-desk
 
 [Source](../../src/sdk/coding-desk.ts)
@@ -822,6 +1004,7 @@ export type { CapabilityManifest, CommandCatalogEntry } from "./capabilities.js"
 export { renderCapabilityRoster } from "./capabilities.js";
 export type { ClientOptions, CommandOptions, CommandResult, ConnectionState, RoomView, SessionInfo, } from "./client.js";
 export { CommandError, LoginRefusedError, MarinaAgent, MarinaClient } from "./client.js";
+export * from "./coding.js";
 export { codingDesk } from "./coding-desk.js";
 export type { CommandField, CommandForm, CommandUsage } from "./command-forms.js";
 export { commandFormPrefix, compileCommandForms, composeCommand, matchCommandForm, } from "./command-forms.js";
@@ -832,6 +1015,8 @@ export { EXTENSION_API_VERSION } from "./extensions.js";
 export * from "./investigation-client.js";
 export * from "./investigation-text.js";
 export { INVESTIGATION_SCHEMA, investigationTerminal } from "./investigation-types.js";
+export type { ConnectOptions, LocalOptions, LocalServerAnnouncement } from "./marina.js";
+export { Marina, serverUrls, startLocalServer } from "./marina.js";
 export type { UnifiedContextResult } from "./memory-context.js";
 export type { DurableMemoryAPI, MemoryOperationRequest } from "./memory-operations.js";
 export type { ParticipantOrientation } from "./onboarding.js";
@@ -1100,6 +1285,117 @@ export interface InvestigationEventPage {
     reset: boolean;
 }
 export declare function investigationTerminal(state: InvestigationState): boolean;
+```
+
+## marina
+
+[Source](../../src/sdk/marina.ts)
+
+```typescript
+import type { CapabilityManifest } from "./capabilities.js";
+import { type ClientOptions, type CommandOptions, type CommandResult, MarinaAgent, type SessionInfo } from "./client.js";
+import { MarinaCoding } from "./coding.js";
+import { MarinaInvestigationClient } from "./investigation-client.js";
+import { MarinaMemoryClient } from "./memory-client.js";
+import { MarinaPanelClient } from "./panel-client.js";
+import type { Perception } from "./protocol.js";
+import { MarinaRoutingClient } from "./routing-client.js";
+export interface ConnectOptions extends Pick<ClientOptions, "principal" | "model" | "commandTimeout" | "internalToken"> {
+    /** Log in under this name (2-20 letters or digits). */
+    name?: string;
+    /**
+     * Or resume a session: the token from an earlier session, within 60 s of
+     * its disconnect. Each token works once; `marina.token` is the newest.
+     */
+    token?: string;
+}
+export interface LocalOptions {
+    /** A throwaway database instead of the folder's saved one (deleted on close). */
+    fresh?: boolean;
+    /**
+     * How to run the Marina CLI (default `["marina"]`, found on PATH). From a
+     * checkout: `["bun", "run", "/path/to/marina/scripts/marina.ts"]`.
+     */
+    command?: string[];
+    /** Extra environment for the server (a provider key, `MARINA_DEFAULT_MODEL`, …). */
+    env?: Record<string, string>;
+    /** Give up if the server is not ready within this long (default 90 s). */
+    startTimeoutMs?: number;
+}
+/** What `marina serve <folder> --json` prints once its server is ready: one JSON line. */
+export interface LocalServerAnnouncement {
+    protocol: "marina.local.v1";
+    /** WebSocket URL. */
+    url: string;
+    /** HTTP base URL of the same server. */
+    http: string;
+    /** The name to log in as: the folder's owner, an operator of this server. */
+    name: string;
+    pid: number;
+    folder: string;
+}
+/** ws(s):// and http(s):// forms of one server URL. */
+export declare function serverUrls(url: string): {
+    ws: string;
+    http: string;
+};
+export declare class Marina {
+    /** The WebSocket client underneath, for anything the front door does not wrap. */
+    readonly client: MarinaAgent;
+    /** WebSocket URL. */
+    readonly url: string;
+    /** HTTP base URL of the same server. */
+    readonly httpUrl: string;
+    private stopServer?;
+    /** Code Mode: run coding tasks, follow them, review their changes. */
+    readonly code: MarinaCoding;
+    private routingClient?;
+    private investigationClient?;
+    private panelClient?;
+    private closing?;
+    private constructor();
+    /** Connect to a running Marina. */
+    static connect(url: string, options: ConnectOptions): Promise<Marina>;
+    /**
+     * Start a Marina for a folder and connect to it as its owner. It codes in
+     * that folder and keeps its sessions and memory in `~/.marina/projects/`
+     * (the same home `marina <folder>` uses). `close()` stops it.
+     *
+     * Needs Node or Bun, and the `marina` CLI (`options.command` to point at it).
+     */
+    static local(folder: string, options?: LocalOptions): Promise<Marina>;
+    /** This session: entity id, name, and the newest token. */
+    get session(): SessionInfo;
+    /** The newest session token: it signs the HTTP clients and resumes a dropped session. */
+    get token(): string;
+    /**
+     * Run one world command (`look`, `task list`, `memory recall …`). Rejects
+     * when the server refuses it. Coding tasks go through `code.run`.
+     */
+    command(text: string, options?: CommandOptions): Promise<CommandResult>;
+    /** Every command this session may run, with its forms and effects. */
+    capabilities(): Promise<CapabilityManifest>;
+    /** Everything the server sends this session. Returns a function that stops listening. */
+    onEvent(handler: (frame: Perception) => void): () => void;
+    /** Participant routing (`/api/routing`), signed in as this session. */
+    get routing(): MarinaRoutingClient;
+    /** Investigations (`/api/investigations`), signed in as this session. */
+    get investigations(): MarinaInvestigationClient;
+    /** Published panels (`/api/canvases`), signed in as this session. */
+    get panels(): MarinaPanelClient;
+    /**
+     * Memory (`/v1/memory`). It takes a memory credential of its own (audience
+     * `marina:memory`), never this session's token.
+     */
+    memory(credential: string): MarinaMemoryClient;
+    /** Disconnect, and stop the server if `Marina.local` started it. */
+    close(): Promise<void>;
+}
+/** Start `marina serve <folder> --json` and wait for its announcement. */
+export declare function startLocalServer(folder: string, options?: LocalOptions): Promise<{
+    announcement: LocalServerAnnouncement;
+    stop: () => Promise<void>;
+}>;
 ```
 
 ## memory
