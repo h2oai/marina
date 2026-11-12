@@ -26,6 +26,7 @@ import { extensionGatewayAdmission } from "../extensions/loader";
 import type { MemoryService } from "../memory/service";
 import { worldMemoryService } from "../memory/world-service";
 import type { MarinaDB } from "../persistence/database";
+import { WIRE_PROTOCOL, WIRE_SCHEMA_PATH } from "../protocol/wire";
 import { MARINA_ROOT } from "../runtime-paths";
 import type {
   GatewayAdmissionCheck,
@@ -891,6 +892,8 @@ export class WebSocketServer {
               timestamp: Date.now(),
               data: {
                 text: "Welcome to Marina. Enter your name to begin.",
+                protocol: WIRE_PROTOCOL,
+                schema: WIRE_SCHEMA_PATH,
                 skill: "/api/skill",
                 connect: "/api/connect",
               },

@@ -131,6 +131,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inbound gateway connections are refused unless `GATEWAY_SECRET` is set; the refusal, the boot log
   and `readiness` (`federation-inbound`) say how to set it. The `local` profile is unchanged.
 
+### Added
+
+- **The protocol is written down, so any language can drive Marina.** `protocol/README.md` walks
+  through the whole WebSocket conversation: log in, run a command, read its output and result, run
+  a coding task and follow its steps, edits and result, reconnect. `marina.wire.v1.schema.json`
+  (JSON Schema, generated from `src/protocol/wire.ts`) defines every frame, and a running server
+  serves it at `GET /api/protocol`. The welcome and login frames name the protocol. CI checks every
+  frame a live server sends, every coding event and every example in the guide against the schema.
+  This is the base for the TypeScript, Python, Java and Rust SDKs.
+
 ### Changed
 
 - **A coding session shows what it is doing and what it produced.** People could not tell

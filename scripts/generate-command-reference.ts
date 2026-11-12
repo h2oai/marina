@@ -9,6 +9,7 @@ import { commandManifest } from "../src/engine/command-manifest";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { generateEnvironmentReference } from "./generate-environment-reference";
+import { generateProtocolSchema } from "./generate-protocol";
 import { generateSurfaceReference } from "./generate-surface-reference";
 
 const directory = mkdtempSync(join(tmpdir(), "marina-reference-"));
@@ -81,6 +82,7 @@ try {
   } else writeFileSync(posturePath, posture);
   await generateSurfaceReference(engine, process.argv.includes("--check"));
   generateEnvironmentReference(process.argv.includes("--check"));
+  generateProtocolSchema(process.argv.includes("--check"));
 } finally {
   await engine.shutdown();
   db.close();

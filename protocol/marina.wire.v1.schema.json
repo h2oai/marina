@@ -1,0 +1,1652 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://marina.h2o.ai/protocol/marina.wire.v1.schema.json",
+  "title": "marina.wire.v1",
+  "description": "Marina's WebSocket protocol. Connect to ws(s)://<host>/ws, send ClientFrame objects as JSON text, receive ServerFrame objects. Every server frame is a ServerFrame; the other server definitions name the well-known ones. Guide: protocol/README.md.",
+  "$defs": {
+    "ClientFrame": {
+      "description": "Any frame a client sends.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Login"
+        },
+        {
+          "$ref": "#/$defs/Auth"
+        },
+        {
+          "$ref": "#/$defs/Command"
+        },
+        {
+          "$ref": "#/$defs/Capabilities"
+        },
+        {
+          "$ref": "#/$defs/ContextPreview"
+        },
+        {
+          "$ref": "#/$defs/Ping"
+        }
+      ]
+    },
+    "ServerFrame": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "message"
+            },
+            {
+              "type": "string",
+              "const": "system"
+            },
+            {
+              "type": "string",
+              "const": "error"
+            },
+            {
+              "type": "string",
+              "const": "auth_error"
+            },
+            {
+              "type": "string",
+              "const": "room"
+            },
+            {
+              "type": "string",
+              "const": "broadcast"
+            },
+            {
+              "type": "string",
+              "const": "movement"
+            }
+          ],
+          "description": "`message` world output, `system` protocol and session notices, `error` a refusal, `auth_error` login refused (forget the token). The last three are reserved; today's servers send them as `message`."
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Milliseconds since the Unix epoch."
+        },
+        "command_request_id": {
+          "type": "string",
+          "description": "The `request_id` of the command that produced this frame."
+        },
+        "tag": {
+          "type": "string",
+          "description": "What the frame is about: `code`, `tell`, `say`, `capabilities`, `onboarding`, …"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "Human-readable rendering. Safe to print; never needed to parse."
+            },
+            "traceLinks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "traceId",
+                  "spanId"
+                ],
+                "properties": {
+                  "traceId": {
+                    "type": "string"
+                  },
+                  "spanId": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true
+              }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Server frame"
+    },
+    "CodingActivity": {
+      "type": "object",
+      "required": [
+        "kind",
+        "label"
+      ],
+      "properties": {
+        "kind": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "read"
+            },
+            {
+              "type": "string",
+              "const": "search"
+            },
+            {
+              "type": "string",
+              "const": "edit"
+            },
+            {
+              "type": "string",
+              "const": "write"
+            },
+            {
+              "type": "string",
+              "const": "patch"
+            },
+            {
+              "type": "string",
+              "const": "run"
+            },
+            {
+              "type": "string",
+              "const": "verify"
+            },
+            {
+              "type": "string",
+              "const": "plan"
+            },
+            {
+              "type": "string",
+              "const": "summary"
+            },
+            {
+              "type": "string",
+              "const": "other"
+            }
+          ]
+        },
+        "label": {
+          "type": "string",
+          "description": "One line in plain words: \"Edit paginate.js\"."
+        },
+        "path": {
+          "type": "string"
+        },
+        "diff": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The change, as unified-diff body lines (`-old`, `+new`, ` context`), capped."
+        },
+        "more": {
+          "type": "integer",
+          "description": "Diff lines left out past the cap."
+        },
+        "quiet": {
+          "type": "boolean",
+          "description": "Bookkeeping; a UI may hide it."
+        }
+      },
+      "additionalProperties": true,
+      "title": "Coding activity",
+      "description": "One step the coder took."
+    },
+    "RunResult": {
+      "type": "object",
+      "required": [
+        "runId",
+        "terminal",
+        "phase"
+      ],
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "number"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "terminal": {
+          "type": "boolean",
+          "const": true
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "completed"
+            },
+            {
+              "type": "string",
+              "const": "failed"
+            }
+          ]
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "submitted"
+            },
+            {
+              "type": "string",
+              "const": "failed"
+            },
+            {
+              "type": "string",
+              "const": "cancelled"
+            },
+            {
+              "type": "string",
+              "const": "interrupted"
+            }
+          ],
+          "description": "`submitted`: the coder finished and handed the change in for review."
+        },
+        "reason": {
+          "type": "string",
+          "description": "`blocked`, `agent_died`, or free text."
+        },
+        "detail": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "summaryId": {
+          "type": "string"
+        },
+        "verification": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "passed"
+            },
+            {
+              "type": "string",
+              "const": "failed"
+            },
+            {
+              "type": "string",
+              "const": "not_run"
+            },
+            {
+              "type": "string",
+              "const": "error"
+            },
+            {
+              "type": "string",
+              "const": "missing"
+            },
+            {
+              "type": "string",
+              "const": "stale"
+            },
+            {
+              "type": "string",
+              "const": "unbound"
+            },
+            {
+              "type": "string",
+              "const": "unavailable"
+            }
+          ],
+          "description": "What the checks said. Only `passed` means checks ran on the change and passed."
+        },
+        "verificationReason": {
+          "type": "string"
+        },
+        "budgetForced": {
+          "type": "object",
+          "required": [
+            "reason"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "used": {
+              "type": "number"
+            },
+            "cap": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": true,
+          "description": "Present when a budget forced the answer; never a free answer."
+        }
+      },
+      "additionalProperties": true,
+      "title": "Run result",
+      "description": "How a coding run ended. Review it with `code review approve|reject <runId>`."
+    },
+    "Verification": {
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "passed"
+        },
+        {
+          "type": "string",
+          "const": "failed"
+        },
+        {
+          "type": "string",
+          "const": "not_run"
+        },
+        {
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "type": "string",
+          "const": "missing"
+        },
+        {
+          "type": "string",
+          "const": "stale"
+        },
+        {
+          "type": "string",
+          "const": "unbound"
+        },
+        {
+          "type": "string",
+          "const": "unavailable"
+        }
+      ],
+      "description": "What the checks said. Only `passed` means checks ran on the change and passed."
+    },
+    "Login": {
+      "type": "object",
+      "required": [
+        "type",
+        "name"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "login"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 20,
+          "pattern": "^[A-Za-z0-9]+$",
+          "description": "Your name in the world: 2-20 letters or digits."
+        },
+        "principal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "agent"
+            },
+            {
+              "type": "string",
+              "const": "person"
+            }
+          ],
+          "description": "Who is at the keyboard. `agent` (the SDK default) can never approve another's held action; `person` is a human at a terminal."
+        },
+        "model": {
+          "type": "string",
+          "pattern": "^[\\w./:@-]{1,120}$",
+          "description": "The model this participant runs on, shown to others. Omit when not a model."
+        },
+        "internalToken": {
+          "type": "string",
+          "description": "A workload credential issued by this server, if you hold one."
+        }
+      },
+      "additionalProperties": false,
+      "title": "Login",
+      "description": "Enter the world under a name. First frame you send."
+    },
+    "Auth": {
+      "type": "object",
+      "required": [
+        "type",
+        "token"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "auth"
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The session token from your last login or auth reply. It is single-use: the reply carries a new one."
+        },
+        "principal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "agent"
+            },
+            {
+              "type": "string",
+              "const": "person"
+            }
+          ],
+          "description": "Who is at the keyboard. `agent` (the SDK default) can never approve another's held action; `person` is a human at a terminal."
+        },
+        "model": {
+          "type": "string",
+          "pattern": "^[\\w./:@-]{1,120}$",
+          "description": "The model this participant runs on, shown to others. Omit when not a model."
+        },
+        "internalToken": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "title": "Auth",
+      "description": "Resume a session after a disconnect. Within 60 s of the drop you get the same entity back."
+    },
+    "Command": {
+      "type": "object",
+      "required": [
+        "type",
+        "command"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "command"
+        },
+        "command": {
+          "type": "string",
+          "description": "One command line, exactly as a person would type it: `look`, `code do fix the bug`."
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Your id for this command. Every frame it produces carries it as `command_request_id`, and it ends with exactly one `command_result`. Always send one."
+        },
+        "coding_target": {
+          "type": "object",
+          "required": [
+            "sessionId"
+          ],
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            },
+            "runId": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Aim a `code …` command at one coding session (and run). Needs `codingTargetProtocol: session-run-v1`."
+        },
+        "cause": {
+          "type": "string",
+          "description": "The message this command answers (`tell:12`, `channel_msg:4`). Kept only if it was delivered to you."
+        },
+        "trace_links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "traceId",
+              "spanId"
+            ],
+            "properties": {
+              "traceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "spanId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "additionalProperties": false
+          },
+          "maxItems": 32
+        }
+      },
+      "additionalProperties": false,
+      "title": "Command",
+      "description": "Run one command."
+    },
+    "Capabilities": {
+      "type": "object",
+      "required": [
+        "type",
+        "request_id"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "capabilities"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "capability_key": {
+          "type": "string",
+          "description": "The `key` of a manifest you already hold; the reply says `unchanged` if it still matches."
+        }
+      },
+      "additionalProperties": false,
+      "title": "Capabilities",
+      "description": "Ask for every command you can run, with typed forms and JSON Schemas. Reply: a `capabilities` frame."
+    },
+    "ContextPreview": {
+      "type": "object",
+      "required": [
+        "type",
+        "request_id",
+        "options"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "context_preview"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "options": {
+          "type": "object",
+          "required": [
+            "query"
+          ],
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "budgetBytes": {
+              "type": "integer",
+              "minimum": 256,
+              "maximum": 16384,
+              "default": 4096
+            },
+            "scope": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "all"
+                },
+                {
+                  "type": "string",
+                  "const": "evidence"
+                }
+              ]
+            },
+            "warm": {
+              "type": "boolean",
+              "const": true
+            },
+            "skipTiers": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "evidence"
+                  },
+                  {
+                    "type": "string",
+                    "const": "proposal"
+                  }
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "title": "Context preview",
+      "description": "See what Marina's memory would put in front of you for a query, within a byte budget."
+    },
+    "Ping": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ping"
+        }
+      },
+      "additionalProperties": false,
+      "title": "Ping",
+      "description": "Keep an idle connection open (the server closes a connection silent for 255 s). No reply."
+    },
+    "Welcome": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "system"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "command_request_id": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "text",
+            "protocol",
+            "schema",
+            "skill",
+            "connect"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "protocol": {
+              "type": "string",
+              "const": "marina.wire.v1"
+            },
+            "schema": {
+              "type": "string",
+              "description": "Path of this schema on the server."
+            },
+            "skill": {
+              "type": "string"
+            },
+            "connect": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Welcome",
+      "description": "Sent as soon as the socket opens. Reply with `login` or `auth`."
+    },
+    "Session": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "system"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "command_request_id": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "text",
+            "entityId",
+            "name",
+            "token",
+            "protocol",
+            "commandProtocol"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "entityId": {
+              "type": "string",
+              "description": "Your entity id in the world."
+            },
+            "name": {
+              "type": "string"
+            },
+            "token": {
+              "type": "string",
+              "description": "Session token for `auth` after a disconnect. Store the newest one; each is single-use."
+            },
+            "protocol": {
+              "type": "string",
+              "const": "marina.wire.v1"
+            },
+            "commandProtocol": {
+              "type": "string",
+              "const": "correlated-v1"
+            },
+            "worldCommandProtocol": {
+              "type": "string",
+              "const": "slash-v1"
+            },
+            "codingTargetProtocol": {
+              "type": "string",
+              "const": "session-run-v1"
+            },
+            "activeEvolutionSessions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "experimentId"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "experimentId": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true
+              }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Session",
+      "description": "Login or auth succeeded. A `system` frame whose data has `entityId`."
+    },
+    "AuthError": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "auth_error"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "command_request_id": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Auth error",
+      "description": "Login or auth refused (name taken, invalid name, rate limited, token expired). Drop the token; the socket stays open."
+    },
+    "CommandResult": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "system"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "command_request_id": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "command_result"
+          ],
+          "properties": {
+            "command_result": {
+              "type": "object",
+              "required": [
+                "request_id",
+                "ok"
+              ],
+              "properties": {
+                "request_id": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean",
+                  "description": "false: the command was refused or failed. Its frames say why."
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Command result",
+      "description": "Exactly one per command sent with a `request_id`, after all of its output. The command is over."
+    },
+    "Error": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "error"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "command_request_id": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "description": "Machine-readable reason, e.g. `command_overloaded`."
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "executed": {
+              "type": "boolean",
+              "description": "false: the command never ran, so it is safe to resend."
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Error",
+      "description": "A refusal. Inside a command it also makes that command's result `ok: false`."
+    },
+    "CapabilitiesReply": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "tag",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "system"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "command_request_id": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string",
+          "const": "capabilities"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "capabilities"
+          ],
+          "properties": {
+            "capabilities": {
+              "type": "object",
+              "required": [
+                "request_id"
+              ],
+              "properties": {
+                "schema": {
+                  "type": "string",
+                  "const": "marina.capabilities.v1"
+                },
+                "request_id": {
+                  "type": "string"
+                },
+                "revision": {
+                  "type": "number"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "unchanged": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "commands": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "name",
+                      "aliases",
+                      "category",
+                      "help",
+                      "minRank"
+                    ],
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "aliases": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "category": {
+                        "type": "string"
+                      },
+                      "help": {
+                        "type": "string"
+                      },
+                      "minRank": {
+                        "type": "number"
+                      }
+                    },
+                    "additionalProperties": true
+                  },
+                  "description": "Every command, each with `forms`: its syntax and an `inputSchema` (JSON Schema) for typed calls."
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Capabilities reply",
+      "description": "Answer to `capabilities`."
+    },
+    "ContextPreviewReply": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "tag",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "system"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "command_request_id": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string",
+          "const": "context_preview"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "context_preview"
+          ],
+          "properties": {
+            "context_preview": {
+              "type": "object",
+              "required": [
+                "request_id"
+              ],
+              "properties": {
+                "schema": {
+                  "type": "string",
+                  "const": "marina.context.preview.v1"
+                },
+                "request_id": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "number"
+                },
+                "context": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": true
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Context preview reply",
+      "description": "Answer to `context_preview`."
+    },
+    "MemoryService": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "message"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "command_request_id": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "memory_service"
+          ],
+          "properties": {
+            "memory_service": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "result"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "result": {},
+                    "space_id": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": false
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "number"
+                        },
+                        "retry_after_ms": {
+                          "type": "number"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              ]
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Memory service reply",
+      "description": "Answer to the command `memory api {json}`, matched by the JSON's `request_id` (see the memory guide)."
+    },
+    "ExecApproval": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "tag",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "message"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "command_request_id": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string",
+          "const": "code"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "text",
+            "execApproval"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "execApproval": {
+              "type": "object",
+              "required": [
+                "token",
+                "argv",
+                "cwd",
+                "rendered"
+              ],
+              "properties": {
+                "token": {
+                  "type": "string"
+                },
+                "argv": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "rendered": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Exec approval",
+      "description": "The coder wants to run a command outside the allowlist. Answer `code exec-approve <token>` or `code exec-deny <token> [reason]`."
+    },
+    "Code": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "tag",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "message"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "command_request_id": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string",
+          "const": "code"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "text",
+            "code"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "code": {
+              "type": "object",
+              "required": [
+                "event",
+                "type"
+              ],
+              "properties": {
+                "event": {
+                  "type": "string",
+                  "description": "What happened: `agent_output` (a step or the coder's words), `code_lifecycle` (session or run state; a run's end carries a Run result), `verification_finished`, …"
+                },
+                "type": {
+                  "type": "string",
+                  "description": "Payload shape: `stream`, `lifecycle`, `diff`, `file`, `verification`, `list`, …"
+                },
+                "sessionId": {
+                  "type": "string"
+                },
+                "phase": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "artifactId": {
+                  "type": "string"
+                },
+                "artifactKind": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "commands": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "label",
+                      "status"
+                    ],
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": "fail"
+                          },
+                          {
+                            "type": "string",
+                            "const": "info"
+                          },
+                          {
+                            "type": "string",
+                            "const": "ok"
+                          },
+                          {
+                            "type": "string",
+                            "const": "warn"
+                          }
+                        ]
+                      },
+                      "detail": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": true
+                  }
+                },
+                "metadata": {
+                  "type": "object",
+                  "properties": {
+                    "agent": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "const": "tool"
+                        },
+                        {
+                          "type": "string",
+                          "const": "prose"
+                        },
+                        {
+                          "type": "string",
+                          "const": "tool_error"
+                        },
+                        {
+                          "type": "string",
+                          "const": "error"
+                        }
+                      ],
+                      "description": "On `agent_output`: a step (`tool`), the coder's words (`prose`), or a failure."
+                    },
+                    "activity": {
+                      "type": "object",
+                      "required": [
+                        "kind",
+                        "label"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "const": "read"
+                            },
+                            {
+                              "type": "string",
+                              "const": "search"
+                            },
+                            {
+                              "type": "string",
+                              "const": "edit"
+                            },
+                            {
+                              "type": "string",
+                              "const": "write"
+                            },
+                            {
+                              "type": "string",
+                              "const": "patch"
+                            },
+                            {
+                              "type": "string",
+                              "const": "run"
+                            },
+                            {
+                              "type": "string",
+                              "const": "verify"
+                            },
+                            {
+                              "type": "string",
+                              "const": "plan"
+                            },
+                            {
+                              "type": "string",
+                              "const": "summary"
+                            },
+                            {
+                              "type": "string",
+                              "const": "other"
+                            }
+                          ]
+                        },
+                        "label": {
+                          "type": "string",
+                          "description": "One line in plain words: \"Edit paginate.js\"."
+                        },
+                        "path": {
+                          "type": "string"
+                        },
+                        "diff": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "The change, as unified-diff body lines (`-old`, `+new`, ` context`), capped."
+                        },
+                        "more": {
+                          "type": "integer",
+                          "description": "Diff lines left out past the cap."
+                        },
+                        "quiet": {
+                          "type": "boolean",
+                          "description": "Bookkeeping; a UI may hide it."
+                        }
+                      },
+                      "additionalProperties": true,
+                      "title": "Coding activity",
+                      "description": "One step the coder took."
+                    }
+                  },
+                  "additionalProperties": true,
+                  "description": "Event detail. A run's end puts its Run result here."
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Code event",
+      "description": "Coding session output: steps, edits with their diffs, checks, and how a run ended."
+    },
+    "Tell": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "tag",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "message"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "command_request_id": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string",
+          "const": "tell"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "senderName": {
+              "type": "string"
+            },
+            "senderKind": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "agent"
+                },
+                {
+                  "type": "string",
+                  "const": "person"
+                }
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "messageRef": {
+              "type": "string",
+              "description": "Pass as a command's `cause` when you answer it, e.g. `tell:12`."
+            },
+            "correlationId": {
+              "type": "string"
+            },
+            "deadlineAt": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Tell",
+      "description": "A direct message to you (or the echo of one you sent)."
+    },
+    "Onboarding": {
+      "type": "object",
+      "required": [
+        "kind",
+        "timestamp",
+        "tag",
+        "data"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "message"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "command_request_id": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string",
+          "const": "onboarding"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "text",
+            "onboarding"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "onboarding": {
+              "type": "object",
+              "required": [
+                "schema",
+                "entity"
+              ],
+              "properties": {
+                "schema": {
+                  "type": "string",
+                  "const": "marina.onboarding.v1"
+                },
+                "entity": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "command",
+                      "description"
+                    ],
+                    "properties": {
+                      "command": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": true
+                  }
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true,
+      "title": "Onboarding",
+      "description": "Right after login: where you are and the first commands worth running."
+    }
+  }
+}
