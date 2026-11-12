@@ -304,6 +304,7 @@ import {
   CODE_TOOL_ROLES,
   createEvolutionTool,
   createProfileToolset,
+  isWorkspaceAuthoringCall,
   resolveToolProfile,
   TOOL_SEARCH_NAME,
   type ToolContext,
@@ -2351,11 +2352,14 @@ export class LeanAgentAdapter implements AgentHandle {
         }
         // Argument check (opt-in, MARINA_ARGCHECK): a call that changes state
         // must use values the conversation established; refused once if not.
-        // A dispatcher call whose inner tool is a lookup changes nothing.
+        // A dispatcher call whose inner tool is a lookup changes nothing, and a
+        // coder's work in its own workspace is checked by verification and
+        // review, not by conversation support (`isWorkspaceAuthoringCall`).
         const dispatched = dispatchedCall(context.toolCall.name, args);
         if (
           (policy.risk === "mutate" || policy.risk === "consequential") &&
-          !(dispatched && readOnlyByName(dispatched.name))
+          !(dispatched && readOnlyByName(dispatched.name)) &&
+          !isWorkspaceAuthoringCall(context.toolCall.name, args)
         ) {
           const refusal = await this.argumentCheck(
             context.toolCall.name,
