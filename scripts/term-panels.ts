@@ -73,6 +73,7 @@ const fmtDuration = (ms: number) => {
 const money = (usd: number) => `$${usd.toFixed(2)}`;
 const tokens = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const clean = (theme: Theme, s: string) => sanitizeServerText(s, theme);
 
 function waiting(c: SegmentContext, what: string): string[] {
@@ -435,6 +436,103 @@ export const PANELS: Panel[] = [
           ]),
       );
       return card(t, "Feed", [...body, t.fg("muted")("feed list kind:<k> entity:<name> since:2h")]);
+    },
+  },
+  {
+    name: "logs",
+    aliases: ["log"],
+    describe: "recent errors and warnings from the server log, errors first",
+    needs: ["logs"],
+    render: (c) => {
+      const t = c.theme;
+      if (c.snapshot.denied?.logs)
+        return card(t, "Logs", [t.fg("faint")("logs need operator read")]);
+      const logs = c.snapshot.logs;
+      if (!logs) return card(t, "Logs", waiting(c, "the server log"));
+      if (!logs.length)
+        return card(t, "Logs", [t.fg("success")(`${glyphsFor(t).ok} no errors or warnings`)]);
+      const rows = [...logs].sort(
+        (a, b) => Number(b.level === "error") - Number(a.level === "error") || b.at - a.at,
+      );
+      const body = columns(
+        rows.map((r) => [
+          t.fg("faint")(fmtDuration(Date.now() - r.at)),
+          t.fg(r.level === "error" ? "error" : "warning")(r.level),
+          t.fg("muted")(clean(t, r.category)),
+          clean(t, r.message.replace(/\s+/g, " ")),
+        ]),
+      );
+      const errors = rows.filter((r) => r.level === "error").length;
+      return card(
+        t,
+        "Logs",
+        [...body, t.fg("muted")("/dashboard for search, levels and trace links")],
+        `${plural(errors, "error")} · ${plural(rows.length - errors, "warning")}`,
+      );
+    },
+  },
+  {
+    name: "setup",
+    aliases: ["admin", "security"],
+    describe: "how this world is set up: sign-in, key storage, default model, provider keys",
+    needs: ["setup"],
+    render: (c) => {
+      const t = c.theme;
+      const g = glyphsFor(t);
+      if (c.snapshot.denied?.setup)
+        return card(t, "Setup", [t.fg("faint")("setup needs a signed-in world account")]);
+      const s = c.snapshot.setup;
+      if (!s) return card(t, "Setup", waiting(c, "the world's setup"));
+      const ok = (text: string) => t.fg("success")(`${g.ok} ${text}`);
+      const warn = (text: string) => t.fg("warning")(`${g.warn} ${text}`);
+      const body = kv(t, [
+        ["sign-in", s.authRequired ? ok("required") : warn("not required")],
+        [
+          "model API",
+          s.openApi
+            ? t.fg("error")(`${g.error} open without a key (dev only)`)
+            : ok("key required"),
+        ],
+        [
+          "stored keys",
+          s.keyEncryption
+            ? ok("encrypted at rest")
+            : warn("plaintext — set MARINA_KEY_SECRET, or use provider env vars"),
+        ],
+        [
+          "default model",
+          `${t.fg("code")(clean(t, s.defaultModel))}${t.fg("faint")(s.modelConfigured ? "  set at runtime" : "  from the environment")}`,
+        ],
+        ["roles", s.roles === null ? undefined : String(s.roles)],
+      ]);
+      if (s.unreadableKeys)
+        body.push(
+          t.fg("error")(
+            `${g.error} ${s.unreadableKeys} stored key(s) do not decrypt: MARINA_KEY_SECRET is missing or changed`,
+          ),
+        );
+      body.push("");
+      if (s.keys === null) body.push(t.fg("faint")("Provider keys are shown to operators only."));
+      else if (!s.keys.length)
+        body.push(
+          t.fg("faint")("no stored provider keys — environment variables are never listed"),
+        );
+      else
+        body.push(
+          ...columns(
+            [...s.keys]
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((k) => [
+                t.fg("code")(clean(t, k.name)),
+                t.fg("muted")(clean(t, k.provider)),
+                t.fg("faint")(k.setBy ? `set by ${clean(t, k.setBy)}` : ""),
+                t.fg("faint")(k.updatedAt ? fmtDuration(Date.now() - k.updatedAt) : ""),
+              ]),
+          ),
+        );
+      body.push(t.fg("muted")("key list · key test <name> · admin models · readiness"));
+      const keys = s.keys === null ? "" : `${s.keys.length} keys`;
+      return card(t, "Setup", body, keys);
     },
   },
   {

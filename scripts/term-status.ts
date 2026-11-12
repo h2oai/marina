@@ -91,6 +91,10 @@ export interface WorldSnapshot {
   feed?: FeedItem[];
   /** Your newest predictions and research (investigations), with their state and answer. */
   forecasts?: { total: number; items: ForecastSummary[] };
+  /** Recent errors and warnings from the structured log (operator read), newest first. */
+  logs?: LogLine[];
+  /** How this world is set up: security posture, default model, provider keys, roles. */
+  setup?: WorldSetup;
   /** When each part was last read successfully. */
   at: Partial<Record<Part, number>>;
   /** Parts this session may not read (the server answered 401/403). */
@@ -181,6 +185,28 @@ export interface ForecastSummary {
   updatedAt: number;
 }
 
+export interface LogLine {
+  level: string;
+  category: string;
+  message: string;
+  at: number;
+  traceId: string;
+}
+
+export interface WorldSetup {
+  authRequired: boolean;
+  openApi: boolean;
+  keyEncryption: boolean;
+  /** Stored keys that do not decrypt under the current secret. */
+  unreadableKeys: number;
+  defaultModel: string;
+  /** The default model was chosen at runtime, not by the environment. */
+  modelConfigured: boolean;
+  /** Stored provider keys by name and provider, never their values; null = operator only. */
+  keys: { name: string; provider: string; setBy: string; updatedAt: number }[] | null;
+  roles: number | null;
+}
+
 export interface HeldAction {
   token: string;
   kind: string;
@@ -208,7 +234,9 @@ export type Part =
   | "memory"
   | "traces"
   | "feed"
-  | "forecasts";
+  | "forecasts"
+  | "logs"
+  | "setup";
 
 const EVERY: Record<Part, number> = {
   health: 5_000,
@@ -226,6 +254,8 @@ const EVERY: Record<Part, number> = {
   traces: 15_000,
   feed: 10_000,
   forecasts: 20_000,
+  logs: 10_000,
+  setup: 60_000,
 };
 
 /** Read only while something on screen wants them (a mode's board, a `/live` card). */
@@ -237,7 +267,12 @@ const ON_DEMAND = new Set<Part>([
   "traces",
   "feed",
   "forecasts",
+  "logs",
+  "setup",
 ]);
+
+/** How many of each level the logs card asks for. */
+const LOG_LINES = 10;
 
 /** The case list carries no attempt state; only this many newest cases are opened. */
 const FORECAST_DETAIL = 5;
@@ -552,6 +587,62 @@ export class WorldStatus {
           s.forecasts = { total: cases.length, items };
           break;
         }
+        case "logs": {
+          // The endpoint filters one level at a time; ask for both and merge.
+          const pages = (await Promise.all(
+            ["error", "warn"].map((level) =>
+              this.get(`/api/logs?level=${level}&limit=${LOG_LINES}`),
+            ),
+          )) as Json[];
+          s.logs = pages
+            .flatMap((page) => (Array.isArray(page.logs) ? page.logs : []))
+            .map(
+              (row: Json): LogLine => ({
+                level: String(row.level ?? ""),
+                category: String(row.category ?? ""),
+                message: String(row.message ?? ""),
+                at: Number(row.timestamp ?? 0),
+                traceId: typeof row.traceId === "string" ? row.traceId : "",
+              }),
+            )
+            .sort((a, b) => b.at - a.at);
+          break;
+        }
+        case "setup": {
+          const [security, model] = (await Promise.all([
+            this.get("/api/security-status"),
+            this.get("/api/default-model"),
+          ])) as [Json, Json];
+          // Keys are operator read; roles are open. Either may be refused alone.
+          const optional = async (path: string): Promise<unknown> => {
+            try {
+              return await this.get(path);
+            } catch (err) {
+              if (err instanceof HttpStatusError && (err.status === 401 || err.status === 403))
+                return null;
+              throw err;
+            }
+          };
+          const [keys, roles] = await Promise.all([optional("/api/keys"), optional("/api/roles")]);
+          s.setup = {
+            authRequired: !!security.authRequired,
+            openApi: !!security.openApi,
+            keyEncryption: !!security.keyEncryption,
+            unreadableKeys: Number(security.unreadableKeys ?? 0),
+            defaultModel: String(model.model ?? ""),
+            modelConfigured: typeof model.configured === "string",
+            keys: Array.isArray(keys)
+              ? keys.map((k: Json) => ({
+                  name: String(k.name ?? ""),
+                  provider: String(k.provider ?? ""),
+                  setBy: String(k.setBy ?? ""),
+                  updatedAt: Number(k.updatedAt ?? 0),
+                }))
+              : null,
+            roles: Array.isArray(roles) ? roles.length : null,
+          };
+          break;
+        }
         case "readiness": {
           const r = (await this.get("/api/readiness")) as Json;
           s.readiness = {
@@ -578,6 +669,8 @@ export class WorldStatus {
         if (part === "traces") this.snapshot.traces = undefined;
         if (part === "feed") this.snapshot.feed = undefined;
         if (part === "forecasts") this.snapshot.forecasts = undefined;
+        if (part === "logs") this.snapshot.logs = undefined;
+        if (part === "setup") this.snapshot.setup = undefined;
         return first;
       }
       return false;

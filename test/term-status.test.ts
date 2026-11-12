@@ -380,4 +380,95 @@ describe("live world status for the CLI", () => {
     expect(out).toContain("7 · 2 running");
     expect(out).not.toContain("question 6");
   });
+  test("admin shows the setup without key values, and errors before warnings", async () => {
+    const now = Date.now();
+    const routes = (keys: () => Response) => async (url: string) => {
+      const u = new URL(url);
+      if (u.pathname === "/api/security-status")
+        return json({
+          authRequired: false,
+          openApi: false,
+          keyEncryption: false,
+          unreadableKeys: 2,
+        });
+      if (u.pathname === "/api/default-model")
+        return json({ model: "openrouter/anthropic/claude-sonnet-5.5", configured: null });
+      if (u.pathname === "/api/keys") return keys();
+      if (u.pathname === "/api/roles") return json([{ name: "coder" }, { name: "judge" }]);
+      if (u.pathname === "/api/logs") {
+        const level = u.searchParams.get("level");
+        return json({
+          logs:
+            level === "error"
+              ? [
+                  {
+                    level: "error",
+                    category: "db",
+                    message: "disk  full",
+                    timestamp: now - 600_000,
+                  },
+                ]
+              : [
+                  {
+                    level: "warn",
+                    category: "agents",
+                    message: "slow turn",
+                    timestamp: now - 1_000,
+                  },
+                ],
+        });
+      }
+      return json({}, 404);
+    };
+    const status = new WorldStatus(
+      "http://x",
+      () => "t",
+      "Rowan",
+      routes(() =>
+        json([
+          {
+            name: "openrouter",
+            provider: "openrouter",
+            masked: "sk-…abcd",
+            setBy: "Jo",
+            updatedAt: now - 3_600_000,
+          },
+        ]),
+      ),
+    );
+    // On demand: nothing is read until the mode wants it.
+    await status.refresh(true);
+    expect(status.snapshot.setup).toBeUndefined();
+    status.want(["setup", "logs"]);
+    await status.refresh(true);
+    const theme = createTheme(termCaps({ isTTY: true, columns: 100 }, { NO_COLOR: "1" }));
+    const context = { theme, name: "Rowan", connected: true, snapshot: status.snapshot, queued: 0 };
+    const setup = findPanel("setup")!.render(context).join("\n");
+    expect(setup).toContain("not required");
+    expect(setup).toContain("plaintext");
+    expect(setup).toContain("2 stored key(s) do not decrypt");
+    expect(setup).toContain("claude-sonnet-5.5");
+    expect(setup).toContain("from the environment");
+    expect(setup).toContain("set by Jo");
+    expect(setup).not.toContain("abcd");
+    expect(findPanel("admin")).toBe(findPanel("setup"));
+    const logs = findPanel("logs")!.render(context).join("\n");
+    // The older error still comes first; whitespace runs collapse to one line.
+    expect(logs.indexOf("disk full")).toBeLessThan(logs.indexOf("slow turn"));
+    expect(logs).toContain("1 error · 1 warning");
+
+    const resident = new WorldStatus(
+      "http://x",
+      () => "t",
+      "Rowan",
+      routes(() => json({}, 403)),
+    );
+    resident.want(["setup"]);
+    await resident.refresh(true, ["setup"]);
+    expect(
+      findPanel("setup")!
+        .render({ ...context, snapshot: resident.snapshot })
+        .join("\n"),
+    ).toContain("operators only");
+  });
 });
