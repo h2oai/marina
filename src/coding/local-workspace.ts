@@ -29,6 +29,19 @@ const DEFAULT_MAX_READ_BYTES = 64 * 1024;
 const DEFAULT_MAX_LIST_ENTRIES = 200;
 const DEFAULT_MAX_SEARCH_RESULTS = 80;
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
+/** New files listed in one diff at most; the rest are counted as truncated. */
+const UNTRACKED_DIFF_FILES = 200;
+/** A new folder with more files than this is named, not shown file by file. */
+const UNTRACKED_DIR_FILES = 20;
+
+/** A workspace diff. `collapsed` names new folders too big to show file by file. */
+export interface WorkspaceDiff {
+  content: string;
+  truncated: boolean;
+  exitCode: number;
+  totalBytes?: number;
+  collapsed?: string[];
+}
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const MAX_RUN_TIMEOUT_MS = 300_000;
 
@@ -472,22 +485,85 @@ export class LocalWorkspace implements WorkspaceRuntime {
     return hits;
   }
 
-  async diff(
-    input?: string,
-    maxBytes = DEFAULT_MAX_OUTPUT_BYTES,
-  ): Promise<{
-    content: string;
-    truncated: boolean;
-    exitCode: number;
-    totalBytes?: number;
-  }> {
-    const args = ["diff", "--"];
-    if (input?.trim()) {
-      const target = this.resolvePath(input);
-      args.push(this.relativePath(target));
+  async diff(input?: string, maxBytes = DEFAULT_MAX_OUTPUT_BYTES): Promise<WorkspaceDiff> {
+    const pathspec: string[] = [];
+    if (input?.trim()) pathspec.push(this.relativePath(this.resolvePath(input)));
+    const result = await runCapture(
+      ["git", "diff", "--", ...pathspec],
+      this.root,
+      maxBytes,
+      this.hostExecForbidden,
+    );
+    if (result.exitCode !== 0 || result.truncated) return result;
+    // New files are changes too: `git diff` leaves out what git does not track yet,
+    // so a file the coder created would be missing from every "what changed" view.
+    return this.withUntrackedFiles(result, pathspec, maxBytes);
+  }
+
+  /**
+   * Append untracked, not-ignored files as added-file diffs, within `maxBytes`. A new
+   * folder of more than UNTRACKED_DIR_FILES files (a cache, `node_modules`, build
+   * output nobody ignored) is named in `collapsed` instead of flooding the diff.
+   */
+  private async withUntrackedFiles(
+    tracked: WorkspaceDiff,
+    pathspec: string[],
+    maxBytes: number,
+  ): Promise<WorkspaceDiff> {
+    const listUntracked = (args: string[], paths: string[], limit: number) =>
+      runCapture(
+        ["git", "ls-files", "--others", "--exclude-standard", ...args, "-z", "--", ...paths],
+        this.root,
+        limit,
+        this.hostExecForbidden,
+      );
+    // `--directory` names a wholly new folder once instead of every file in it.
+    const listed = await listUntracked(["--directory", "--no-empty-directory"], pathspec, 1 << 20);
+    if (listed.exitCode !== 0) return tracked;
+    const files: string[] = [];
+    const collapsed: string[] = [];
+    for (const entry of listed.content.split("\0").filter(Boolean)) {
+      if (!entry.endsWith("/")) {
+        files.push(entry);
+        continue;
+      }
+      const inner = await listUntracked([], [entry], 64 * 1024);
+      const names = inner.content.split("\0").filter(Boolean);
+      if (inner.exitCode === 0 && !inner.truncated && names.length <= UNTRACKED_DIR_FILES)
+        files.push(...names);
+      else collapsed.push(`${entry} (${names.length}${inner.truncated ? "+" : ""} new files)`);
     }
-    const result = await runCapture(["git", ...args], this.root, maxBytes, this.hostExecForbidden);
-    return result;
+    let content = tracked.content;
+    let totalBytes = tracked.totalBytes ?? Buffer.byteLength(content);
+    let truncated = listed.truncated;
+    for (const [index, file] of files.entries()) {
+      const budget = maxBytes - Buffer.byteLength(content);
+      if (index >= UNTRACKED_DIFF_FILES || budget <= 0) {
+        truncated = true;
+        break;
+      }
+      const added = await runCapture(
+        ["git", "diff", "--no-index", "--", "/dev/null", file],
+        this.root,
+        budget,
+        this.hostExecForbidden,
+      );
+      // `git diff --no-index` exits 1 when the files differ, which is the point.
+      if (added.exitCode > 1) continue;
+      content += added.content;
+      totalBytes += added.totalBytes ?? Buffer.byteLength(added.content);
+      if (added.truncated) {
+        truncated = true;
+        break;
+      }
+    }
+    return {
+      content,
+      truncated,
+      exitCode: 0,
+      ...(truncated ? { totalBytes } : {}),
+      ...(collapsed.length ? { collapsed } : {}),
+    };
   }
 
   async checkPatch(patch: string): Promise<PatchCheck> {

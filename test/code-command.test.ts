@@ -3388,7 +3388,7 @@ describe("code worktree (per-session isolation)", () => {
     });
   }
 
-  it("`code diff` names a new untracked file instead of reporting no change", async () => {
+  it("`code diff` shows a new untracked file instead of reporting no change", async () => {
     const repo = makeRepoWithCommit();
     try {
       const entity = makeAgentEntity("u_diff_new", "DiffNew");
@@ -3405,8 +3405,8 @@ describe("code worktree (per-session isolation)", () => {
       await command.handler(ctx, inputFor(entity, "code diff"));
       const out = stripAnsi(sent.at(-1) ?? "");
       expect(out).not.toContain("No git diff.");
-      expect(out).toContain("not shown by git diff");
-      expect(out).toContain("fresh.ts");
+      expect(out).toContain("new file mode");
+      expect(out).toContain("+export const fresh = 1;");
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

@@ -236,13 +236,13 @@ export async function diff(
   });
   let body = result.content.trim();
   if (!body) {
-    // `git diff` shows neither new (untracked) nor staged files: name them
-    // rather than report "no change" after `code write` created one.
+    // New files are in the diff itself; staged changes are not: name them
+    // rather than report "no change".
     // allow-empty-catch: changedPaths is optional; without it the reply is the plain "No git diff."
     let pending = (await workspace.changedPaths?.().catch(() => [] as string[])) ?? [];
     if (path) pending = pending.filter((p) => p === path || p.startsWith(`${path}/`));
     body = pending.length
-      ? `${dim("No unstaged changes to tracked files. New or staged, not shown by git diff:")}\n${pending
+      ? `${dim("No unstaged changes. Staged, not shown by git diff:")}\n${pending
           .slice(0, 20)
           .map((p) => `  ${p}`)
           .join(
@@ -251,6 +251,9 @@ export async function diff(
       : dim("No git diff.");
   }
   const totalBytes = (result as { totalBytes?: number }).totalBytes;
+  const collapsed = (result as { collapsed?: string[] }).collapsed ?? [];
+  if (collapsed.length)
+    body += `\n${dim(`Not shown, new folders: ${collapsed.join(", ")}. Add them to .gitignore if they are build output or caches.`)}`;
   const suffix = result.truncated
     ? dim(
         `\n[truncated: showing ${Buffer.byteLength(result.content)}${totalBytes ? ` of ${totalBytes}` : ""} bytes; code diff <path> reads one file]`,
@@ -265,6 +268,7 @@ export async function diff(
     sessionId: session.id,
     title: `Diff: ${path || "."}`,
     ...(totalBytes ? { totalBytes } : {}),
+    ...(collapsed.length ? { metadata: { collapsed } } : {}),
     truncated: result.truncated,
     type: "diff",
     workspace: session.workspace_root,

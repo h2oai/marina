@@ -753,6 +753,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **New files a coder creates show in every "what changed" view.** The workspace diff left out
+  files git does not track yet, so a coding run that added a test file reported "1 file changed"
+  and the review snapshot and checkpoints missed the new file. Untracked files (`.gitignore`
+  respected) now appear as added files in `code diff`, the run result, `marina -p` output, review
+  snapshots and checkpoints. A new folder of more than 20 files (a cache or `node_modules` nobody
+  ignored) is named in one line instead of listed file by file.
+- **`marina -p` with no model provider exits at once.** It printed that no provider was configured
+  and then waited for a run that could never start, until its timeout. Dispatching a task with no
+  provider (or no agent runtime) is now a refusal: the one-shot exits 1 in about two seconds, and
+  the message says to run `marina init`.
+
 - **A first run no longer looks broken in the log.** A fresh `marina start` printed about 20
   WARN and 8 ERROR lines in its first two minutes from a working install. The ERRORs were Marina's
   own second-opinion model calls, cancelled at their deadline and logged as provider failures; a
