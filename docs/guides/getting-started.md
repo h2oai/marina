@@ -6,6 +6,19 @@ not need to understand Marina's architecture first.
 
 ## Choose your installation path
 
+### One command
+
+On macOS or Linux this installs everything, Bun included, asks for one model API key (Enter
+skips it), and opens Marina in your browser:
+
+```bash
+curl -fsSL https://h2oai.github.io/marina/setup.sh | bash
+```
+
+Or ask your AI assistant to *"Install Marina from github.com/h2oai/marina"*. See
+[Install Marina](install.md) for what the command does, its options, and the steps an agent
+follows. Then skip to [Your first five minutes](#your-first-five-minutes).
+
 ### Source checkout
 
 Requirements: Git and [Bun](https://bun.sh) 1.4.4 or newer.
@@ -94,9 +107,11 @@ lists every place a key can go and which one each surface reads.
 
 ### `marina init`
 
-`marina init` asks for the model first. Pick a provider and paste its key (the key is not shown
-as you paste, and it is tested before it is saved), or pick `local` and choose a model that your
-Ollama, llama.cpp, LM Studio or vLLM server already serves. It writes `~/.marina/.env`, which every
+`marina init` asks one thing: paste an API key. It recognises the provider from the key, does
+not show the key as you paste, and tests it before saving. With Ollama running, Enter uses its
+model instead; otherwise Enter skips. A key already in your environment is used without asking.
+`marina init --advanced` also asks for the world, the instance name and an admin, and can point
+at a llama.cpp, LM Studio or vLLM server. It writes `~/.marina/.env`, which every
 folder session and `marina start` read; run inside the source checkout, it writes the checkout's
 `.env` instead, which `marina` also reads in every folder.
 

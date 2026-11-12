@@ -17,6 +17,7 @@ what's switched off, and the one thing to do next.
 
 | Guide | What you'll get |
 | --- | --- |
+| [Install Marina](install.md) | One command, or ask your AI assistant; the steps an agent follows to install it for someone. |
 | [Getting started](getting-started.md) | Install from source or open the desktop app, connect a provider, and see your first reviewed result. |
 | [Connecting](connecting.md) | Every way in: dashboard, WebSocket, Telnet, MCP, SDK, CLI and REST, and where each one's boundary is. |
 | [Commands](commands.md) | Every command, grouped by what it's for. |

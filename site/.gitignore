@@ -8,3 +8,5 @@ src/content/docs/docs/architecture/
 # Copied from ../docs/assets at build time by scripts/sync-docs.ts
 public/assets/
 src/assets/docs/
+# Copied from ../setup.sh at build time by scripts/sync-docs.ts
+public/setup.sh

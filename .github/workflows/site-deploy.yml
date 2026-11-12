@@ -11,6 +11,7 @@ on:
       - "bun.lock"
       - "package.json"
       - ".bun-version"
+      - "setup.sh"
       - "docs/guides/**"
       - "docs/assets/**"
       - "docs/reference/api.json"

@@ -43,7 +43,7 @@ for current capabilities and pricing.
 
 ## Together AI and Nebius Token Factory
 
-Run `marina init` and choose **together** or **nebius**, or add a key through
+Run `marina init` and paste a Together or Nebius key, or add a key through
 **Admin → Keys → Add**. Environment configuration works too:
 
 ```dotenv

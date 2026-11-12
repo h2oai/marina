@@ -143,6 +143,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step. A run ends with one block: how it ended, the files changed, whether checks passed, its
   own time and cost, and the exact next commands (`/diff`, `/review approve|reject <attempt>`,
   `git restore`). Task-board notices stay in the World view (F6), and the periodic world brief skips a person in Code Mode (`brief` on request still works).
+- **`marina init` asks one question.** It asks for an API key and recognises the provider from
+  the key (`sk-ant-`, `sk-or-`, `gsk_`, `AIza`, `sk-`; others are tried against Together and
+  Nebius). A key already saved or in the shell is used without asking, and with Ollama running
+  Enter uses its first model. The instance name, world and admin keep their defaults, and there
+  is no "Start now?" question. `marina init --advanced` is the old step-by-step flow. Input that
+  ends (a pipe) now answers each remaining question with its default, where it used to hang or
+  crash, and never starts a server.
 - **The dashboard builds itself.** A source checkout used to need `bun run dashboard:build`, which
   the `marina` CLI setup never ran, so a coding session's dashboard link opened a "not built yet"
   page. The server now builds `dist/dashboard` in the background at boot when it is missing or
@@ -1256,6 +1263,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One command installs Marina: `curl -fsSL https://h2oai.github.io/marina/setup.sh | bash`.**
+  On macOS or Linux, `setup.sh` installs Bun if needed (Bun's own installer, into `~/.bun`),
+  downloads Marina into `~/marina` (a tarball when git is not really installed, as on a Mac
+  without the developer tools), installs packages, builds the dashboard, puts `marina` on the
+  PATH (adding one line to the shell's startup file when new terminals would not find it;
+  `--no-modify-path` leaves it alone), asks for one API key, then starts Marina and opens it in
+  the browser. Run again to update; settings and the world are kept. No `sudo`. `--yes` asks
+  nothing and does not start the server, for agents and scripts.
+- **AI agents can install Marina for a person.** "Install Marina from github.com/h2oai/marina"
+  leads an agent from the README to [Install Marina → For AI agents](docs/guides/install.md):
+  install with `--yes`, start the server in the background, wait for `/health`, and send the
+  person to **Admin → Keys**, so their key never passes through the agent.
 - **The terminal workspace has use-case modes.** `marina --tui` opens in `coding` mode: the
   coding conversation alone, with the World cut down to one line showing the latest message
   addressed to you (a tell, or a message naming you). `operate` puts a live board beside the
