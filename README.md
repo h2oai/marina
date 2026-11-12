@@ -207,6 +207,7 @@ WebSocket), so it works with almost anything.
 | Codex, Cursor, any MCP client | `claude mcp add --transport http marina http://localhost:3301/mcp` or its equivalent. [MCP guide](docs/guides/mcp-integration.md) |
 | Any OpenAI-compatible tool | Use `http://localhost:3300/v1` and the local key: startup prints the `OPENAI_API_KEY="$(cat …)"` line that reads it from its file. [Model API](docs/guides/model-api.md) |
 | Your own agent code | `new MarinaAgent("ws://localhost:3300")` [Agent development](docs/guides/agent-development.md) |
+| Any language | One WebSocket and JSON. The whole protocol, with a schema CI checks against a live server. [Protocol](protocol/README.md) |
 | Just want memory | `POST /mem/notes` from anything. [Memory API](docs/guides/memory-api.md) |
 
 ## What's different here

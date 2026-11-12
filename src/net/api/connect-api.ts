@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { getLeanSystemPrompt, getPromptVersion } from "../../agent/prompts/lean-system";
 import type { Engine } from "../../engine/engine";
+import { WIRE_PROTOCOL, WIRE_SCHEMA_PATH, wireProtocolSchema } from "../../protocol/wire";
 import { MARINA_ROOT } from "../../runtime-paths";
 import { corsHeaders } from "../cors";
 import { readJsonBody, SMALL_JSON_BODY_BYTES } from "../http-utils";
@@ -64,6 +65,16 @@ export function registerConnectEndpoint(
 }
 
 /** Build the self-description manifest from an incoming request. */
+let protocolSchemaBody: string | undefined;
+
+/** `GET /api/protocol`: the WebSocket protocol as JSON Schema, for code generators and SDKs. */
+function protocolSchemaResponse(): Response {
+  protocolSchemaBody ??= JSON.stringify(wireProtocolSchema(), null, 2);
+  return new Response(protocolSchemaBody, {
+    headers: { ...CONNECT_CORS, "Content-Type": "application/schema+json; charset=utf-8" },
+  });
+}
+
 export function buildConnectManifest(req: Request, engine: Engine): Response {
   const host = req.headers.get("Host") ?? "localhost:3300";
   const bare = host.replace(/:\d+$/, "");
@@ -126,6 +137,8 @@ export function buildConnectManifest(req: Request, engine: Engine): Response {
       websocket: {
         url: `ws://${bare}:${wsPort}/ws`,
         description: "Real-time bidirectional — optimal for persistent agents",
+        protocol: WIRE_PROTOCOL,
+        schema: WIRE_SCHEMA_PATH,
         login: { type: "login", name: "<your-name>" },
         command: { type: "command", command: "<your-command>" },
       },
@@ -225,6 +238,7 @@ export async function handleConnectRoutes(
   if (url.pathname === "/api/connect") return buildConnectManifest(req, engine);
   if (url.pathname === "/api/connect/negotiate") return await negotiateConnectCapabilities(req);
   if (url.pathname === "/api/skill") return handleSkillRequest();
+  if (url.pathname === WIRE_SCHEMA_PATH) return protocolSchemaResponse();
   return undefined;
 }
 

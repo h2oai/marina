@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Value } from "typebox/value";
 import type { AgentEvent, AgentHandle } from "../src/agent/agent-types";
 import { CodeSessionDriver } from "../src/coding/code-session-driver";
 import { UnavailableContainerWorkspace } from "../src/coding/container-workspace";
@@ -15,6 +16,7 @@ import { recruitCodingAgent } from "../src/engine/commands/code/crew";
 import { sanitizeEntityName } from "../src/engine/entity-name";
 import { grant } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
+import { CodeFrame, RunResult } from "../src/protocol/wire";
 import {
   type CommandInput,
   type Entity,
@@ -976,6 +978,17 @@ describe("structured completion signal (machine-readable lifecycle metadata)", (
     return metadata?.code as Record<string, unknown> | undefined;
   }
 
+  /** Every coding notification is a marina.wire.v1 Code frame; a run's end is a Run result. */
+  function expectWireFrames(notifications: Notification[]): void {
+    for (const n of notifications) {
+      if (!codeMeta(n.metadata)) continue;
+      const data = { text: n.message, ...n.metadata };
+      expect(Value.Check(CodeFrame.properties.data, data)).toBe(true);
+      const payload = codeMeta(n.metadata)?.metadata as { terminal?: boolean } | undefined;
+      if (payload?.terminal) expect(Value.Check(RunResult, payload)).toBe(true);
+    }
+  }
+
   /** Bound setup whose notify AND ctx.send capture full metadata. */
   function makeStructuredSetup() {
     const alice = makeAgentEntity("u_alice", "Alice");
@@ -1042,6 +1055,7 @@ describe("structured completion signal (machine-readable lifecycle metadata)", (
     expect(payload.terminal).toBe(true);
     expect(payload.summary).toBe("Added /health in server.ts; bun test passes.");
     expect(payload.agent).toBe("Coder");
+    expectWireFrames(notifications);
   });
 
   it("agent death mid-task emits a terminal failed notification and clears the task", async () => {
@@ -1066,6 +1080,7 @@ describe("structured completion signal (machine-readable lifecycle metadata)", (
     const payload = failed!.metadata as Record<string, unknown>;
     expect(payload.terminal).toBe(true);
     expect(payload.reason).toBe("agent_died");
+    expectWireFrames(notifications);
     // Task mode ends with the death — no orphaned assignment.
     expect(coder.properties.coding_task).toBeUndefined();
     expect(fake.codingTasks.at(-1)).toBeNull();

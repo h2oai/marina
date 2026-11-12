@@ -11,6 +11,7 @@ import type { Engine } from "../engine/engine";
 import { getErrorMessage } from "../engine/errors";
 import { onboardParticipant } from "../engine/onboarding";
 import { ownedTraceLinks, runWithTraceLinks } from "../engine/trace-context";
+import { WIRE_PROTOCOL } from "../protocol/wire";
 import { type CodingCommandTarget, parseCodingCommandTarget } from "../sdk/command-target";
 import type { EntityId, Perception } from "../types";
 
@@ -72,6 +73,7 @@ export function handleParticipantMessage(
           entityId: result.entityId,
           name: result.name,
           token: result.token,
+          protocol: WIRE_PROTOCOL,
           commandProtocol: "correlated-v1",
           worldCommandProtocol: "slash-v1",
           codingTargetProtocol: "session-run-v1",
@@ -106,6 +108,7 @@ export function handleParticipantMessage(
           entityId: result.entityId,
           name: result.name,
           token: result.token,
+          protocol: WIRE_PROTOCOL,
           commandProtocol: "correlated-v1",
           worldCommandProtocol: "slash-v1",
           codingTargetProtocol: "session-run-v1",
