@@ -70,7 +70,7 @@ beforeAll(async () => {
 describe("Rust SDK: offline", () => {
   it("passes its own unit tests and doc examples", async () => {
     const result = await cargo(["test"]);
-    expect(result.stdout).toContain("5 passed");
+    expect(result.stdout).toContain("14 passed");
     expect(result.stdout).not.toContain("FAILED");
     expect(result.code).toBe(0);
   }, 600_000);

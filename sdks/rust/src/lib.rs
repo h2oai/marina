@@ -20,21 +20,40 @@
 //! The protocols are `marina.wire.v1` (WebSocket) and `marina.http.v1` (HTTP), in the Marina
 //! repository's `protocol/` folder. Blocking API: the SDK runs its own threads.
 
+pub mod agent;
 pub mod client;
 pub mod coding;
 pub mod error;
+pub mod forms;
 pub mod http;
 #[rustfmt::skip]
+pub mod models;
+#[rustfmt::skip]
 pub mod operations;
+pub mod panel_events;
+pub mod retry;
 pub mod wire;
 
-pub use client::{CommandResult, Connection, Session, endpoints};
+pub use agent::{
+    TELL_AWAIT_GRACE, TELL_NOTICE_PREFIX, TellAwaitOptions, correlation_tag, has_correlation_tag,
+    is_tell_notice, strip_correlation_tag, tell_of,
+};
+pub use client::{
+    CommandResult, Connection, MAX_RECONNECT_ATTEMPTS, MAX_RECONNECT_DELAY, RECONNECT_DELAY,
+    Session, endpoints, reconnect_delay,
+};
 pub use coding::{
     Coding, CodingRun, RunOptions, Verdict, Verification, budget_argument, exec_answer,
 };
 pub use error::{Error, Result};
+pub use forms::{
+    Capabilities, CapabilityCommand, CommandField, CommandForm, ComposedCommand, compose_command,
+};
 pub use http::HttpApi;
+pub use models::{InvestigationsApi, MemoryApi, PanelsApi, RoutingApi};
 pub use operations::Operation;
+pub use panel_events::{PanelChangeEvent, PanelWatch};
+pub use retry::retry_memory;
 pub use wire::{
     BudgetForced, CODING_ACTIVITY_KINDS, CodeEvent, CodingActivity, ExecApprovalRequest, Frame,
     Kind, RUN_OUTCOMES, RunResult, VERIFICATIONS, WIRE_PROTOCOL, classify, code_event,
@@ -271,9 +290,9 @@ pub struct Marina {
     connection: Connection,
     code_session: Mutex<Option<Option<String>>>,
     server: Mutex<Option<LocalServer>>,
-    routing: OnceLock<HttpApi>,
-    investigations: OnceLock<HttpApi>,
-    panels: OnceLock<HttpApi>,
+    routing: OnceLock<RoutingApi>,
+    investigations: OnceLock<InvestigationsApi>,
+    panels: OnceLock<PanelsApi>,
 }
 
 impl Marina {
@@ -389,9 +408,73 @@ impl Marina {
         self.connection.capabilities()
     }
 
+    /// The capabilities reply, typed: every command with its forms (see [`compose_command`]).
+    pub fn capability_manifest(&self) -> Result<Capabilities> {
+        Capabilities::from_reply(&self.capabilities()?)
+    }
+
     /// Everything the server sends this session. Returns an id for `connection().off_frame`.
     pub fn on_event(&self, listener: impl Fn(&Frame) + Send + Sync + 'static) -> u64 {
         self.connection.on_frame(listener)
+    }
+
+    /// Called with the new session each time the SDK resumes a dropped one (see
+    /// [`Connection`]). Returns an id for `connection().off_reconnect`.
+    pub fn on_reconnect(&self, callback: impl Fn(&Session) + Send + Sync + 'static) -> u64 {
+        self.connection.on_reconnect(callback)
+    }
+
+    /// A socket is open (false while the SDK is reconnecting, and after `close()`).
+    pub fn is_connected(&self) -> bool {
+        self.connection.is_connected()
+    }
+
+    // ─── Talking to others ─────────────────────────────────────────────────
+
+    /// Send a private message.
+    pub fn tell(&self, target: &str, message: &str) -> Result<()> {
+        self.connection.tell(target, message)
+    }
+
+    /// Say something to the room.
+    pub fn say(&self, message: &str) -> Result<()> {
+        self.connection.say(message)
+    }
+
+    /// Ask `target` and wait for its answer. See [`agent`] for the rules.
+    pub fn tell_and_await(&self, target: &str, message: &str, timeout: Duration) -> Result<String> {
+        self.connection.tell_and_await(target, message, timeout)
+    }
+
+    /// `tell_and_await` with every option.
+    pub fn tell_and_await_with(
+        &self,
+        target: &str,
+        message: &str,
+        options: &TellAwaitOptions,
+    ) -> Result<String> {
+        self.connection
+            .tell_and_await_with(target, message, options)
+    }
+
+    /// Wait for a tell to you, from `from` (any sender with `None`). Returns its text.
+    pub fn wait_for_tell(&self, from: Option<&str>, timeout: Duration) -> Result<String> {
+        self.connection.wait_for_tell(from, timeout)
+    }
+
+    /// Look at the room, or at something in it.
+    pub fn look(&self, target: Option<&str>) -> Result<CommandResult> {
+        self.connection.look(target)
+    }
+
+    /// Save a note to your memory.
+    pub fn note(&self, text: &str) -> Result<CommandResult> {
+        self.connection.note(text)
+    }
+
+    /// Search your memory.
+    pub fn recall(&self, query: &str) -> Result<CommandResult> {
+        self.connection.recall(query)
     }
 
     // ─── HTTP ──────────────────────────────────────────────────────────────
@@ -405,26 +488,50 @@ impl Marina {
         )
     }
 
-    /// Participant routing (`/api/routing`), signed in as this session.
-    pub fn routing(&self) -> &HttpApi {
-        self.routing.get_or_init(|| self.session_api("routing"))
+    /// Participant routing (`/api/routing`), signed in as this session. Typed methods, and
+    /// `call` for anything newer.
+    pub fn routing(&self) -> &RoutingApi {
+        self.routing
+            .get_or_init(|| RoutingApi::new(self.session_api("routing")))
     }
 
     /// Investigations (`/api/investigations`), signed in as this session.
-    pub fn investigations(&self) -> &HttpApi {
+    pub fn investigations(&self) -> &InvestigationsApi {
         self.investigations
-            .get_or_init(|| self.session_api("investigations"))
+            .get_or_init(|| InvestigationsApi::new(self.session_api("investigations")))
     }
 
     /// Published panels (`/api/canvases`), signed in as this session.
-    pub fn panels(&self) -> &HttpApi {
-        self.panels.get_or_init(|| self.session_api("panels"))
+    pub fn panels(&self) -> &PanelsApi {
+        self.panels
+            .get_or_init(|| PanelsApi::new(self.session_api("panels")))
     }
 
     /// Memory (`/v1/memory`), with a memory credential of its own (never the session token).
-    pub fn memory(&self, credential: &str) -> HttpApi {
+    pub fn memory(&self, credential: &str) -> MemoryApi {
         let credential = credential.to_string();
-        HttpApi::new(self.http_url(), move || credential.clone(), Some("memory"))
+        MemoryApi::new(HttpApi::new(
+            self.http_url(),
+            move || credential.clone(),
+            Some("memory"),
+        ))
+    }
+
+    /// Watch the live panel event stream (`/dashboard-ws`), signed with this session's newest
+    /// token. `on_snapshot` runs on every (re)connection: reread then. Events are hints to read
+    /// again, never content. Stop with the returned handle (or by dropping it).
+    pub fn watch_changes(
+        &self,
+        on_event: impl Fn(&PanelChangeEvent) + Send + 'static,
+        on_snapshot: impl Fn() + Send + 'static,
+    ) -> PanelWatch {
+        let connection = self.connection.clone();
+        panel_events::watch_changes(
+            self.http_url(),
+            move || connection.session().map(|s| s.token).unwrap_or_default(),
+            on_event,
+            on_snapshot,
+        )
     }
 
     /// Disconnect, and stop the server if `local` started it.

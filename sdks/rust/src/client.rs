@@ -4,6 +4,10 @@
 //!
 //! One SDK thread owns the socket; frames reach the SDK's own waiters there, in order. Your
 //! listeners run on a second SDK thread, in order, and may run commands.
+//!
+//! When the socket drops, the SDK resumes the session on a new one with its newest token
+//! (backoff from 3 s doubling to 30 s, at most 10 attempts). A command sent meanwhile fails at
+//! once with [`Error::ConnectionLost`]; retry it. Only [`Connection::close`] ends the session.
 
 use crate::error::{Error, Result};
 use crate::wire::{Frame, Kind, classify, data_of, text_of};
@@ -22,6 +26,19 @@ use tungstenite::{Message, WebSocket};
 const PING_EVERY: Duration = Duration::from_secs(30);
 /// How often the socket thread looks for frames to send while it waits to read.
 const POLL: Duration = Duration::from_millis(25);
+/// The first wait before resuming a dropped session; it doubles each attempt.
+pub const RECONNECT_DELAY: Duration = Duration::from_secs(3);
+/// The longest wait between attempts.
+pub const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
+/// Attempts before the SDK gives up and closes the connection.
+pub const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+
+/// The wait before reconnect attempt `attempt` (0-based): 3 s, 6 s, 12 s, 24 s, then 30 s.
+pub fn reconnect_delay(attempt: u32) -> Duration {
+    RECONNECT_DELAY
+        .saturating_mul(2u32.saturating_pow(attempt.min(16)))
+        .min(MAX_RECONNECT_DELAY)
+}
 
 /// Who you are on this connection. `token` is the newest; each token works once.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +94,7 @@ pub fn endpoints(url: &str) -> Result<(String, String)> {
 
 type Callback = Arc<dyn Fn(&Frame) + Send + Sync>;
 type CloseCallback = Arc<dyn Fn() + Send + Sync>;
+type SessionCallback = Arc<dyn Fn(&Session) + Send + Sync>;
 
 enum Outgoing {
     Text(String),
@@ -87,10 +105,22 @@ struct Inner {
     out: Mutex<Option<Sender<Outgoing>>>,
     waiters: Mutex<Vec<(u64, Callback)>>,
     listeners: Mutex<Vec<(u64, Callback)>>,
+    /// Final close (or reconnecting gave up).
     on_close: Mutex<Vec<(u64, CloseCallback)>>,
+    /// Every lost socket, and the final close.
+    on_disconnect: Mutex<Vec<(u64, CloseCallback)>>,
+    on_reconnect: Mutex<Vec<(u64, SessionCallback)>>,
     events: Mutex<Option<Sender<Frame>>>,
     session: Mutex<Option<Session>>,
     closed: AtomicBool,
+    /// `close()` was called: never reconnect.
+    closing: AtomicBool,
+    connected: AtomicBool,
+    reconnecting: AtomicBool,
+    auto_reconnect: AtomicBool,
+    dispatching: AtomicBool,
+    /// Which socket is current; a late end of an older one changes nothing.
+    generation: AtomicU64,
     next_id: AtomicU64,
 }
 
@@ -147,18 +177,23 @@ impl Inner {
         if self.closed.swap(true, Ordering::SeqCst) {
             return;
         }
+        self.connected.store(false, Ordering::SeqCst);
         self.out.lock().unwrap().take();
         self.events.lock().unwrap().take();
-        let callbacks: Vec<_> = self
-            .on_close
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(_, c)| c.clone())
-            .collect();
-        for callback in callbacks {
-            callback();
-        }
+        fire(&self.on_disconnect);
+        fire(&self.on_close);
+    }
+}
+
+fn fire(callbacks: &Mutex<Vec<(u64, CloseCallback)>>) {
+    let callbacks: Vec<_> = callbacks
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, c)| c.clone())
+        .collect();
+    for callback in callbacks {
+        callback();
     }
 }
 
@@ -186,9 +221,17 @@ impl Connection {
                 waiters: Mutex::new(Vec::new()),
                 listeners: Mutex::new(Vec::new()),
                 on_close: Mutex::new(Vec::new()),
+                on_disconnect: Mutex::new(Vec::new()),
+                on_reconnect: Mutex::new(Vec::new()),
                 events: Mutex::new(None),
                 session: Mutex::new(None),
                 closed: AtomicBool::new(false),
+                closing: AtomicBool::new(false),
+                connected: AtomicBool::new(false),
+                reconnecting: AtomicBool::new(false),
+                auto_reconnect: AtomicBool::new(true),
+                dispatching: AtomicBool::new(false),
+                generation: AtomicU64::new(0),
                 next_id: AtomicU64::new(1),
             }),
             ws_url,
@@ -213,13 +256,48 @@ impl Connection {
         self.inner.session.lock().unwrap().clone()
     }
 
+    /// Closed for good: by `close()`, or reconnecting gave up.
     pub fn is_closed(&self) -> bool {
         self.inner.closed.load(Ordering::SeqCst)
+    }
+
+    /// A socket is open (false while the SDK is reconnecting).
+    pub fn is_connected(&self) -> bool {
+        self.inner.connected.load(Ordering::SeqCst)
+    }
+
+    /// Resume a dropped session on its own (default true). Turn it off before logging in to
+    /// handle drops yourself.
+    pub fn set_auto_reconnect(&self, on: bool) {
+        self.inner.auto_reconnect.store(on, Ordering::SeqCst);
+    }
+
+    /// Called with the new session each time the SDK resumes a dropped one. Returns an id for
+    /// [`Connection::off_reconnect`]. Runs on an SDK thread; it may run commands.
+    pub fn on_reconnect(&self, callback: impl Fn(&Session) + Send + Sync + 'static) -> u64 {
+        let id = self.inner.id();
+        self.inner
+            .on_reconnect
+            .lock()
+            .unwrap()
+            .push((id, Arc::new(callback)));
+        id
+    }
+
+    pub fn off_reconnect(&self, id: u64) {
+        self.inner
+            .on_reconnect
+            .lock()
+            .unwrap()
+            .retain(|(i, _)| *i != id);
     }
 
     // ─── Opening ───────────────────────────────────────────────────────────
 
     fn open(&self) -> Result<()> {
+        if self.is_closed() {
+            return Err(Error::ConnectionLost("The connection is closed.".into()));
+        }
         if self.inner.out.lock().unwrap().is_some() {
             return Ok(());
         }
@@ -232,24 +310,135 @@ impl Connection {
         };
         tcp.set_read_timeout(Some(POLL))
             .map_err(|e| Error::ConnectionLost(format!("Could not configure the socket: {e}")))?;
+        if !self.inner.dispatching.swap(true, Ordering::SeqCst) {
+            // One listener thread for the connection's whole life, across sockets.
+            let (event_tx, event_rx) = mpsc::channel::<Frame>();
+            *self.inner.events.lock().unwrap() = Some(event_tx);
+            let inner = self.inner.clone();
+            thread::Builder::new()
+                .name("marina-events".into())
+                .spawn(move || dispatch(event_rx, &inner))
+                .map_err(|e| Error::Other(e.to_string()))?;
+        }
         let (out_tx, out_rx) = mpsc::channel::<Outgoing>();
-        let (event_tx, event_rx) = mpsc::channel::<Frame>();
-        *self.inner.out.lock().unwrap() = Some(out_tx);
-        *self.inner.events.lock().unwrap() = Some(event_tx);
-        let inner = self.inner.clone();
+        let generation = {
+            let mut out = self.inner.out.lock().unwrap();
+            if self.is_closed() {
+                return Err(Error::ConnectionLost("The connection is closed.".into()));
+            }
+            *out = Some(out_tx);
+            let generation = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            self.inner.connected.store(true, Ordering::SeqCst);
+            generation
+        };
+        let connection = self.clone();
         thread::Builder::new()
             .name("marina-socket".into())
             .spawn(move || {
-                pump(&mut socket, &out_rx, &inner);
-                inner.finish();
+                pump(&mut socket, &out_rx, &connection.inner);
+                connection.socket_ended(generation);
             })
             .map_err(|e| Error::Other(e.to_string()))?;
-        let inner = self.inner.clone();
-        thread::Builder::new()
-            .name("marina-events".into())
-            .spawn(move || dispatch(event_rx, &inner))
-            .map_err(|e| Error::Other(e.to_string()))?;
         Ok(())
+    }
+
+    /// A socket's thread ended: tell in-flight waiters, then resume the session, or finish.
+    fn socket_ended(&self, generation: u64) {
+        let inner = &self.inner;
+        {
+            let mut out = inner.out.lock().unwrap();
+            if inner.generation.load(Ordering::SeqCst) != generation {
+                return; // an older socket: a newer one is already current
+            }
+            out.take();
+            inner.connected.store(false, Ordering::SeqCst);
+        }
+        fire(&inner.on_disconnect);
+        if inner.closing.load(Ordering::SeqCst)
+            || !inner.auto_reconnect.load(Ordering::SeqCst)
+            || self.session().is_none()
+        {
+            inner.finish();
+            return;
+        }
+        // An attempt in progress handles this socket's end itself.
+        if inner
+            .reconnecting
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            self.reconnect_loop();
+        }
+    }
+
+    /// Resume the session with its newest token, with backoff; give up (and finish) after
+    /// [`MAX_RECONNECT_ATTEMPTS`].
+    fn reconnect_loop(&self) {
+        let inner = &self.inner;
+        let mut attempt = 0;
+        loop {
+            if attempt >= MAX_RECONNECT_ATTEMPTS || !self.pause(reconnect_delay(attempt)) {
+                inner.reconnecting.store(false, Ordering::SeqCst);
+                inner.finish();
+                return;
+            }
+            attempt += 1;
+            let Some(token) = self.session().map(|s| s.token) else {
+                continue;
+            };
+            match self
+                .open()
+                .and_then(|_| self.authenticate(json!({ "type": "auth", "token": token })))
+            {
+                Ok(session) => {
+                    inner.reconnecting.store(false, Ordering::SeqCst);
+                    // Dropped again before the flag went down: nobody else saw it, go on.
+                    if !self.is_connected()
+                        && inner
+                            .reconnecting
+                            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                    {
+                        continue;
+                    }
+                    let callbacks: Vec<SessionCallback> = inner
+                        .on_reconnect
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|(_, c)| c.clone())
+                        .collect();
+                    for callback in callbacks {
+                        let call = std::panic::AssertUnwindSafe(|| callback(&session));
+                        if std::panic::catch_unwind(call).is_err() {
+                            eprintln!("marina: a reconnect callback panicked");
+                        }
+                    }
+                    return;
+                }
+                Err(_) => {
+                    // Refused or lost: drop this socket (its end changes nothing) and wait.
+                    if let Some(out) = inner.out.lock().unwrap().take() {
+                        inner.connected.store(false, Ordering::SeqCst);
+                        let _ = out.send(Outgoing::Close); // its thread may already be gone
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sleep `wait`, waking early on `close()`. False when closing.
+    fn pause(&self, wait: Duration) -> bool {
+        let deadline = Instant::now() + wait;
+        while Instant::now() < deadline {
+            if self.inner.closing.load(Ordering::SeqCst) || self.is_closed() {
+                return false;
+            }
+            thread::sleep(
+                Duration::from_millis(20).min(deadline.saturating_duration_since(Instant::now())),
+            );
+        }
+        !(self.inner.closing.load(Ordering::SeqCst) || self.is_closed())
     }
 
     /// Enter the world under a name (2-20 letters or digits).
@@ -285,7 +474,7 @@ impl Connection {
             }
             _ => {}
         });
-        let closer = self.add_close(move || {
+        let closer = self.add_disconnect(move || {
             let _ = lost.send(Err("\u{0}lost".into()));
         });
         let outcome = self.send(&frame).and_then(|_| {
@@ -294,7 +483,7 @@ impl Connection {
             })
         });
         self.remove_waiter(waiter);
-        self.remove_close(closer);
+        self.remove_disconnect(closer);
         match outcome? {
             Ok(()) => self
                 .session()
@@ -345,14 +534,14 @@ impl Connection {
                 let _ = tx.send(Some(result.clone()));
             }
         });
-        let closer = self.add_close(move || {
+        let closer = self.add_disconnect(move || {
             let _ = lost.send(None);
         });
         let sent =
             self.send(&json!({ "type": "command", "command": line, "request_id": request_id }));
         let outcome = sent.map(|_| rx.recv_timeout(timeout.unwrap_or(self.command_timeout)));
         self.remove_waiter(waiter);
-        self.remove_close(closer);
+        self.remove_disconnect(closer);
         let frames = frames.lock().unwrap().clone();
         let fail = |reason: &str| Error::Command {
             reason: reason.into(),
@@ -428,7 +617,27 @@ impl Connection {
             .retain(|(i, _)| *i != id);
     }
 
-    /// Called once when the connection closes. Returns an id for [`Connection::remove_close`].
+    /// Called on every lost socket (the SDK may then reconnect) and on the final close.
+    pub fn add_disconnect(&self, callback: impl Fn() + Send + Sync + 'static) -> u64 {
+        let id = self.inner.id();
+        self.inner
+            .on_disconnect
+            .lock()
+            .unwrap()
+            .push((id, Arc::new(callback)));
+        id
+    }
+
+    pub fn remove_disconnect(&self, id: u64) {
+        self.inner
+            .on_disconnect
+            .lock()
+            .unwrap()
+            .retain(|(i, _)| *i != id);
+    }
+
+    /// Called once when the connection closes for good (`close()`, or reconnecting gave up).
+    /// Returns an id for [`Connection::remove_close`].
     pub fn add_close(&self, callback: impl Fn() + Send + Sync + 'static) -> u64 {
         let id = self.inner.id();
         self.inner
@@ -462,10 +671,14 @@ impl Connection {
         self.inner.waiters.lock().unwrap().retain(|(i, _)| *i != id);
     }
 
-    /// Close the socket (the server sees a normal close).
+    /// Close the socket (the server sees a normal close). It never reconnects after this.
     pub fn close(&self) {
-        if let Some(out) = self.inner.out.lock().unwrap().as_ref() {
-            let _ = out.send(Outgoing::Close); // the socket thread may already be gone
+        self.inner.closing.store(true, Ordering::SeqCst);
+        match self.inner.out.lock().unwrap().as_ref() {
+            Some(out) => {
+                let _ = out.send(Outgoing::Close); // the socket thread may already be gone
+            }
+            None => self.inner.finish(),
         }
         // Wait briefly for the socket thread to finish the close, then finish regardless.
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -476,12 +689,19 @@ impl Connection {
     }
 
     fn send(&self, frame: &Value) -> Result<()> {
+        let lost = || {
+            Error::ConnectionLost(if self.is_closed() {
+                "The connection is closed.".into()
+            } else {
+                "Connection lost; reconnecting. Retry the command.".into()
+            })
+        };
         let out = self.inner.out.lock().unwrap();
         match out.as_ref() {
             Some(tx) => tx
                 .send(Outgoing::Text(frame.to_string()))
-                .map_err(|_| Error::ConnectionLost("The connection is closed.".into())),
-            None => Err(Error::ConnectionLost("The connection is closed.".into())),
+                .map_err(|_| lost()),
+            None => Err(lost()),
         }
     }
 }

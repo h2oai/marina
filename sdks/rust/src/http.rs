@@ -169,7 +169,7 @@ impl HttpApi {
         let mut response = self
             .agent
             .run(request)
-            .map_err(|e| Error::Other(format!("Could not reach {}: {e}", self.base_url)))?;
+            .map_err(|e| Error::Transport(format!("Could not reach {}: {e}", self.base_url)))?;
         let status = response.status().as_u16();
         let retry_after = response
             .headers()
@@ -177,7 +177,10 @@ impl HttpApi {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.trim().parse::<f64>().ok())
             .map(|s| (s * 1000.0) as u64);
-        let text = response.body_mut().read_to_string().unwrap_or_default();
+        let text = response
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| Error::Transport(format!("The reply did not arrive whole: {e}")))?;
         let parsed: Value = if text.trim().is_empty() {
             Value::Null
         } else {

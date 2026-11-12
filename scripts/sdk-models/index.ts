@@ -6,6 +6,7 @@
 // `--check` fails when one is stale. Each language adds its renderer here.
 
 import { renderPythonModels } from "./python";
+import { renderRustModels } from "./rust";
 
 /** One generated file: where it goes and how to render it from the OpenAPI document. */
 export interface SdkModelOutput {
@@ -16,4 +17,5 @@ export interface SdkModelOutput {
 
 export const SDK_MODEL_OUTPUTS: SdkModelOutput[] = [
   { file: "sdks/python/src/marina/models.py", render: renderPythonModels },
+  { file: "sdks/rust/src/models.rs", render: renderRustModels },
 ];

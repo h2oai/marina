@@ -23,6 +23,11 @@ pub enum Error {
     },
     /// A coding run did not finish in time; it was stopped.
     CodingTimeout(String),
+    /// A wait ended without its answer (`tell_and_await`, `wait_for_tell`).
+    Timeout(String),
+    /// An HTTP request did not reach the server, or its reply did not arrive. Safe to retry
+    /// with the same idempotency key.
+    Transport(String),
     /// A call the SDK refused before sending anything (a bad argument).
     Invalid(String),
     /// Anything else: a process that would not start, an unreadable reply.
@@ -38,7 +43,9 @@ impl fmt::Display for Error {
             Error::ConnectionLost(m) | Error::LoginRefused(m) | Error::CodingTimeout(m) => {
                 f.write_str(m)
             }
-            Error::Invalid(m) | Error::Other(m) => f.write_str(m),
+            Error::Invalid(m) | Error::Other(m) | Error::Timeout(m) | Error::Transport(m) => {
+                f.write_str(m)
+            }
             Error::Command { reason, frames } => f.write_str(&describe(reason, frames)),
             Error::Api {
                 status,
