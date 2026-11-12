@@ -10,6 +10,9 @@ WebSocket and send JSON, you can drive Marina from any language.
   [Discover commands](#discover-commands)), or read [`docs/reference/commands.md`](../docs/reference/commands.md).
 - **Tested:** CI runs a live server and checks every message it sends against the schema, and
   every example on this page too.
+- **SDKs:** [TypeScript](../src/sdk/README.md) and [Python](../sdks/python/README.md) implement it
+  (Java and Rust are in progress). Each runs a whole coding task on a live server in CI, with every
+  coding frame checked against the schema.
 
 ## Try it in a minute
 

@@ -19,6 +19,8 @@ import { type JsonSchema, TypeSchemas } from "./ts-json-schema";
 
 const ROOT = resolve(import.meta.dir, "..");
 export const OPENAPI_FILE = resolve(ROOT, "protocol/marina.http.v1.openapi.json");
+/** The Python SDK's operation table, generated from the same operations. */
+export const PYTHON_OPERATIONS_FILE = resolve(ROOT, "sdks/python/src/marina/_operations.py");
 
 /** The SDK files whose exported types describe HTTP bodies. */
 export const OPENAPI_TYPE_SOURCES = [
@@ -254,19 +256,84 @@ export function renderOpenApi(): string {
   return `${JSON.stringify(openApiDocument(), null, 2)}\n`;
 }
 
-export function generateOpenApi(check: boolean): void {
-  const output = renderOpenApi();
+/** snake_case of an operation id: `joinSession` → `join_session`. */
+export function snakeCase(id: string): string {
+  return id.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+}
+
+/**
+ * The Python SDK's table: snake_case name → (operation id, method, path, tag, path params,
+ * query params, takes a body, needs an Idempotency-Key).
+ */
+export function renderPythonOperations(): string {
+  const rows = HTTP_OPERATIONS.map((op) => {
+    const pathParams = (op.path.match(/\{(\w+)\}/g) ?? []).map((p) => p.slice(1, -1));
+    const query = Object.keys(op.query ?? {});
+    const key = op.tag === "memory" && memoryNeedsIdempotencyKey(op.method, op.path);
+    const tuple = (items: string[]) =>
+      items.length ? `(${items.map((i) => JSON.stringify(i)).join(", ")},)` : "()";
+    return `    ${JSON.stringify(snakeCase(op.id))}: Operation(${[
+      JSON.stringify(op.id),
+      JSON.stringify(op.method),
+      JSON.stringify(op.path),
+      JSON.stringify(op.tag),
+      tuple(pathParams),
+      tuple(query),
+      op.body ? "True" : "False",
+      key ? "True" : "False",
+    ].join(", ")}),`;
+  });
+  return [
+    "# Copyright 2025-2026 H2O.ai, Inc.",
+    "# SPDX-License-Identifier: Apache-2.0",
+    `"""Every ${HTTP_API_VERSION} operation. Generated from src/protocol/http-api.ts by`,
+    'scripts/generate-openapi.ts (`bun run docs:api`); do not edit by hand."""',
+    "",
+    "from typing import NamedTuple",
+    "",
+    "",
+    "class Operation(NamedTuple):",
+    "    id: str",
+    "    method: str",
+    "    path: str",
+    "    tag: str",
+    "    path_params: tuple",
+    "    query: tuple",
+    "    body: bool",
+    "    idempotency_key: bool",
+    "",
+    "",
+    `HTTP_API_VERSION = ${JSON.stringify(HTTP_API_VERSION)}`,
+    "",
+    "OPERATIONS = {",
+    ...rows,
+    "}",
+    "",
+  ].join("\n");
+}
+
+function writeOrCheck(file: string, output: string, check: boolean, what: string): void {
   if (check) {
     let current = "";
     try {
-      current = readFileSync(OPENAPI_FILE, "utf8");
+      current = readFileSync(file, "utf8");
     } catch {
       // allow-empty-catch: a missing file is stale, reported below
     }
-    if (current !== output) throw new Error("OpenAPI document is stale; run bun run docs:api.");
+    if (current !== output) throw new Error(`${what} is stale; run bun run docs:api.`);
     return;
   }
-  writeFileSync(OPENAPI_FILE, output);
+  writeFileSync(file, output);
+}
+
+export function generateOpenApi(check: boolean): void {
+  writeOrCheck(OPENAPI_FILE, renderOpenApi(), check, "OpenAPI document");
+  writeOrCheck(
+    PYTHON_OPERATIONS_FILE,
+    renderPythonOperations(),
+    check,
+    "Python SDK operation table",
+  );
 }
 
 if (import.meta.main) generateOpenApi(process.argv.includes("--check"));
