@@ -78,7 +78,9 @@ class WebSocket:
         try:
             sock: socket.socket = socket.create_connection((host, port), timeout=timeout)
             if secure:
-                sock = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
+                context = ssl.create_default_context()
+                context.minimum_version = ssl.TLSVersion.TLSv1_2  # never TLS 1.0 / 1.1
+                sock = context.wrap_socket(sock, server_hostname=host)
         except OSError as error:
             raise WebSocketError(f"Could not reach {url}: {error}") from error
         shown = f"[{host}]" if ":" in host else host
