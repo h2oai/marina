@@ -181,6 +181,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every lint as an error, runs its unit tests, and drives a whole coding run through it on a
   live server, checking every coding frame against the schema, plus memory, routing, session
   resume and `Marina.local`.
+- **A Rust SDK.** `sdks/rust` (crate `marina-sdk`, Rust 1.88+) has the same front door:
+  `Marina::local(folder)` / `Marina::connect(url, name)`, `code().run()` with typed steps and a
+  `RunResult` that serializes with the protocol's field names, `diff`, `review`, exec approvals,
+  world commands, and every `marina.http.v1` operation by id or snake_case name through
+  `HttpApi::call`. It is a blocking API on `serde_json`, `tungstenite` and `ureq` (TLS through
+  `rustls`). Its operation table is generated with the OpenAPI document. CI builds it with
+  clippy's warnings as errors, runs its unit tests and doc examples, and drives a whole coding run
+  through it on a live server, checking every coding frame against the schema, plus memory,
+  routing, session resume and `Marina::local`.
 
 ### Changed
 
