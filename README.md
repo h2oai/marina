@@ -208,6 +208,7 @@ WebSocket), so it works with almost anything.
 | Any OpenAI-compatible tool | Use `http://localhost:3300/v1` and the local key: startup prints the `OPENAI_API_KEY="$(cat …)"` line that reads it from its file. [Model API](docs/guides/model-api.md) |
 | Your own code (TypeScript) | `await Marina.local("./my-project")`, then `marina.code.run("…")` [SDK](src/sdk/README.md) · [Agent development](docs/guides/agent-development.md) |
 | Your own code (Python) | `Marina.local("./my-project")`, then `marina.code.run("…")`, no dependencies [Python SDK](sdks/python/README.md) |
+| Your own code (Java) | `Marina.local(Path.of("my-project"))`, then `marina.code().run("…")`, no dependencies [Java SDK](sdks/java/README.md) |
 | Any language | One WebSocket and JSON for live sessions, plain HTTP for memory and the rest. A JSON Schema and an OpenAPI document, both checked by CI against a live server. [Protocol](protocol/README.md) · [HTTP API](protocol/http.md) |
 | Just want memory | `POST /mem/notes` from anything. [Memory API](docs/guides/memory-api.md) |
 

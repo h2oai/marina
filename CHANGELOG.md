@@ -172,6 +172,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HTTP operation table is generated with the OpenAPI document. CI runs its unit tests and drives a
   whole coding run through it on a live server, checking every coding frame against the schema,
   plus memory, routing, session resume and `Marina.local`.
+- **A Java SDK, with no dependencies.** `sdks/java` (`ai.h2o:marina-sdk`, package `ai.h2o.marina`,
+  Java 17+) has the same front door: `Marina.local(Path)` / `Marina.connect(url, name)`,
+  `code().run()` with typed steps and a `RunResult` record, `diff`, `review`, exec approvals,
+  world commands, and every `marina.http.v1` operation through `HttpApi.call(id, params, body)`.
+  It uses the JDK only (its HTTP and WebSocket client, plus a small JSON reader and writer). Its
+  `Operations` table is generated with the OpenAPI document. CI compiles it for Java 17 with
+  every lint as an error, runs its unit tests, and drives a whole coding run through it on a
+  live server, checking every coding frame against the schema, plus memory, routing, session
+  resume and `Marina.local`.
 
 ### Changed
 

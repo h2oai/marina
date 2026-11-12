@@ -21,6 +21,11 @@ const ROOT = resolve(import.meta.dir, "..");
 export const OPENAPI_FILE = resolve(ROOT, "protocol/marina.http.v1.openapi.json");
 /** The Python SDK's operation table, generated from the same operations. */
 export const PYTHON_OPERATIONS_FILE = resolve(ROOT, "sdks/python/src/marina/_operations.py");
+/** The Java SDK's operation table. */
+export const JAVA_OPERATIONS_FILE = resolve(
+  ROOT,
+  "sdks/java/src/main/java/ai/h2o/marina/Operations.java",
+);
 
 /** The SDK files whose exported types describe HTTP bodies. */
 export const OPENAPI_TYPE_SOURCES = [
@@ -312,6 +317,71 @@ export function renderPythonOperations(): string {
   ].join("\n");
 }
 
+/** The Java SDK's table: operation id → Operation(method, path, tag, params, body, key). */
+export function renderJavaOperations(): string {
+  const list = (items: string[]) => `List.of(${items.map((i) => JSON.stringify(i)).join(", ")})`;
+  const rows = HTTP_OPERATIONS.map((op) => {
+    const pathParams = (op.path.match(/\{(\w+)\}/g) ?? []).map((p) => p.slice(1, -1));
+    const query = Object.keys(op.query ?? {});
+    const key = op.tag === "memory" && memoryNeedsIdempotencyKey(op.method, op.path);
+    return `    add(new Operation(${[
+      JSON.stringify(op.id),
+      JSON.stringify(op.method),
+      JSON.stringify(op.path),
+      JSON.stringify(op.tag),
+      list(pathParams),
+      list(query),
+      String(Boolean(op.body)),
+      String(key),
+    ].join(", ")}));`;
+  });
+  return [
+    "// Copyright 2025-2026 H2O.ai, Inc.",
+    "// SPDX-License-Identifier: Apache-2.0",
+    "package ai.h2o.marina;",
+    "",
+    "import java.util.Collections;",
+    "import java.util.LinkedHashMap;",
+    "import java.util.List;",
+    "import java.util.Map;",
+    "",
+    "/**",
+    ` * Every ${HTTP_API_VERSION} operation, by operation id. Generated from src/protocol/http-api.ts by`,
+    " * scripts/generate-openapi.ts ({@code bun run docs:api}); do not edit by hand.",
+    " */",
+    "public final class Operations {",
+    "  private Operations() {}",
+    "",
+    "  /** One HTTP operation. */",
+    "  public record Operation(",
+    "      String id,",
+    "      String method,",
+    "      String path,",
+    "      String tag,",
+    "      List<String> pathParams,",
+    "      List<String> query,",
+    "      boolean body,",
+    "      boolean idempotencyKey) {}",
+    "",
+    `  public static final String HTTP_API_VERSION = ${JSON.stringify(HTTP_API_VERSION)};`,
+    "",
+    "  private static final Map<String, Operation> BY_ID = new LinkedHashMap<>();",
+    "",
+    "  private static void add(Operation op) {",
+    "    BY_ID.put(op.id(), op);",
+    "  }",
+    "",
+    "  static {",
+    ...rows,
+    "  }",
+    "",
+    "  /** Every operation, by id, in the order of the OpenAPI document. */",
+    "  public static final Map<String, Operation> ALL = Collections.unmodifiableMap(BY_ID);",
+    "}",
+    "",
+  ].join("\n");
+}
+
 function writeOrCheck(file: string, output: string, check: boolean, what: string): void {
   if (check) {
     let current = "";
@@ -334,6 +404,7 @@ export function generateOpenApi(check: boolean): void {
     check,
     "Python SDK operation table",
   );
+  writeOrCheck(JAVA_OPERATIONS_FILE, renderJavaOperations(), check, "Java SDK operation table");
 }
 
 if (import.meta.main) generateOpenApi(process.argv.includes("--check"));
