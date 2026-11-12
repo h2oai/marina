@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentEvent, AgentHandle } from "../../../agent/agent-types";
-import { dim } from "../../../net/ansi";
 import type { Entity, EntityId } from "../../../types";
 import { sanitizeEntityName } from "../../entity-name";
+import { coderDisplayName, describeCodingCall } from "./activity";
 import { ACTIVE_TASK_KEY, type CodeDeps, getAgentHandle } from "./shared";
 
 // Live streams from a bound coding agent → the human in Code Mode for that
@@ -73,14 +73,20 @@ export function streamSessionAgent(
       },
     });
   };
-  const emitOutput = (text: string) =>
+  const emitOutput = (text: string, extra: Record<string, unknown> = {}) =>
     notify(dispatcherId, text, {
-      code: { event: "agent_output", type: "stream", sessionId, metadata: { agent: handle.name } },
+      code: {
+        event: "agent_output",
+        type: "stream",
+        sessionId,
+        metadata: { agent: handle.name, ...extra },
+      },
     });
   const flush = () => {
     const text = buffer.trim();
     buffer = "";
-    if (text) emitOutput(`${handle.name}: ${text}`);
+    // The agent's own words; its account name is in the metadata, the reader sees "Coder".
+    if (text) emitOutput(`${coderDisplayName(handle.name)}: ${text}`, { kind: "prose" });
   };
   const unsub = handle.subscribe((ev: AgentEvent) => {
     switch (ev.type) {
@@ -92,12 +98,22 @@ export function streamSessionAgent(
             emitLifecycle(lifecycle.phase, lifecycle.detail, extra);
           }
         }
-        emitOutput(dim(`  ▸ ${formatAgentToolCall(ev.toolName, ev.args)}`));
+        {
+          // Plain words and, for a change, the change itself (src/engine/commands/code/activity.ts).
+          const activity = describeCodingCall(ev.toolName, ev.args);
+          const body = activity.diff?.length
+            ? `\n${activity.diff.map((l) => `    ${l}`).join("\n")}${activity.more ? `\n    … ${activity.more} more line${activity.more === 1 ? "" : "s"}` : ""}`
+            : "";
+          emitOutput(`  ▸ ${activity.label}${body}`, { kind: "tool", activity });
+        }
         break;
       case "tool_result":
         if (ev.isError) {
           emitLifecycle("failed", `${handle.name} hit a tool error`, { tool: ev.toolName });
-          emitOutput(`  ✗ ${ev.toolName}: ${clipLine(stringifyResult(ev.result))}`);
+          emitOutput(
+            `  ✗ ${describeCodingCall(ev.toolName, {}).label}: ${clipLine(stringifyResult(ev.result))}`,
+            { kind: "tool_error", tool: ev.toolName },
+          );
         }
         break;
       case "text_delta":
@@ -107,7 +123,7 @@ export function streamSessionAgent(
         flush();
         break;
       case "error":
-        emitOutput(`  ⚠ ${clipLine(ev.error)}`);
+        emitOutput(`  ⚠ ${clipLine(ev.error)}`, { kind: "error" });
         break;
       case "status_change":
         // The bound agent's handle died (stopped or errored out). If it was
@@ -211,16 +227,6 @@ export function stopCodeStreamsFor(entityId: EntityId): void {
     }
     codeStreams.delete(key);
   }
-}
-
-function formatAgentToolCall(toolName: string, args: Record<string, unknown>): string {
-  if (toolName === "marina_code") {
-    const action = typeof args.action === "string" ? args.action : "";
-    const detail = (args.path ?? args.query ?? args.command ?? "") as unknown;
-    const detailStr = typeof detail === "string" && detail ? ` ${clipLine(detail, 60)}` : "";
-    return `code ${action}${detailStr}`.trim();
-  }
-  return toolName;
 }
 
 function clipLine(value: unknown, max = 120): string {

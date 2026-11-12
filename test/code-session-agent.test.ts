@@ -1323,7 +1323,7 @@ describe("self-dispatch guard (bound coder cannot queue tasks to itself)", () =>
     sent.length = 0;
     await command.handler(ctx, inputFor(alice, "code do also update the docs"));
 
-    expect(sent.join("\n")).toContain("Task received");
+    expect(sent.join("\n")).toContain("is on it");
     expect(fake.attention.length).toBe(2);
   });
 });

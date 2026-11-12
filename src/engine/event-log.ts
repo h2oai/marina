@@ -84,13 +84,19 @@ export class EventLog {
         this.noteNoProvider(data);
         return;
       }
-      if (event.phase === "failed")
+      // A request its caller abandoned is not a fault: Marina's own second
+      // opinions stop waiting at a deadline, and clients disconnect.
+      if (event.phase === "failed" && event.errorKind === "cancelled")
+        this.logger.debug("model-request", "Model request cancelled by its caller", data);
+      else if (event.phase === "failed")
         this.logger.error("model-request", "Model request failed", data);
       else this.logger.info("model-request", "Model request completed", data);
       return;
     }
     if (event.type === "agent_tool_result" && event.isError) {
-      this.logger.warn("agent-tool", `Tool ${event.toolName} failed for ${event.name}`, {
+      // A refused or failed tool call is ordinary agent life: the agent reads
+      // the reason and adapts. It is recorded in the trace, not raised.
+      this.logger.info("agent-tool", `Tool ${event.toolName} failed for ${event.name}`, {
         traceId: event.traceId,
         spanId: event.spanId,
         agentName: event.name,

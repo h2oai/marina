@@ -1533,7 +1533,9 @@ export async function proxyToUpstream(
       memoryReceipt: traceOptions!.memoryReceipt,
       surface,
       startedAt,
-      errorKind,
+      // The caller hung up (a second opinion past its deadline, a closed client):
+      // the upstream call was aborted on its behalf, not failed by the provider.
+      errorKind: !response.ok && clientSignal?.aborted ? "cancelled" : errorKind,
       ...(traceOptions!.outputCap !== undefined ? { outputCap: traceOptions!.outputCap } : {}),
     });
     // A reply whose cap went to reasoning is a coded error, never an empty 200

@@ -553,7 +553,31 @@ its progress. The expected lifecycle is `received → inspect → plan → patch
 complete`. The agent may phrase its messages differently, but a completion must identify changed
 paths and successful checks. It must not claim success from a proposed patch alone.
 
-### 4. Inspect or steer while it works
+### 4. Watch, steer, and read the result
+
+While the coder works you see one line per step in plain words (`Read paginate.js`, `Run bun
+test`), and every edit shows the change itself, removed lines red and added green. The input
+rule shows that it is working, for how long, and its latest step. When checks run they report in
+one line (`✓ checks passed on a snapshot of the change`). When it finishes, after its own
+explanation, one block says how it ended:
+
+```text
+──── Done · 2 files changed (+9 −1) · checks passed · 24s · $0.075 ────
+
+2 files · +9 −1
+  paginate.js       +1 −1
+  paginate.test.js  +8 −0
+
+The change is in your files now.
+  /diff  see it again
+  /review approve task_run_…  keep it and record your approval
+  /review reject task_run_…  record that it is not right
+  undo it: git restore paginate.js paginate.test.js
+Type a follow-up to keep going.
+```
+
+The time and cost are this task's own; the checks ran on a frozen snapshot of the change, not
+on files still being edited. A blocked or stopped run says why in the same place.
 
 At the same `❯` prompt, these are safe to paste:
 

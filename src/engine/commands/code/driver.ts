@@ -12,6 +12,7 @@ import { getErrorMessage } from "../../errors";
 import { parseModifiers } from "../../parse-input";
 import { checkGateForExecution, grant, recordGateExecution } from "../../safety-gates";
 import { parseDuration } from "../format-duration";
+import { coderDisplayName } from "./activity";
 import { bindSessionWriter, crewPlan, crewSupport, recruitCodingAgent } from "./crew";
 import { startSession } from "./session";
 import {
@@ -355,9 +356,10 @@ export async function doCode(
     ctx.send(
       eid,
       [
-        success(`Task received: ${agentName} is on it.`),
-        dim(`"${task.length > 80 ? `${task.slice(0, 77)}...` : task}"`),
-        dim("It explores, edits, and runs checks autonomously — streaming below. Type to steer."),
+        success(`${coderDisplayName(agentName)} is on it.`),
+        dim(
+          "Each step and every change shows below; checks run on a snapshot before it reports. Type to steer, ctrl+c to interrupt.",
+        ),
       ].join("\n"),
     );
   } catch (err) {

@@ -1117,8 +1117,10 @@ export class Engine {
     //    importance, standing, hygiene, retention, rank progression, …).
     this.tickScheduler.runDue(this.tickCount);
 
-    // Brief heartbeat: send compass to subscribed entities
+    // Brief heartbeat: send compass to subscribed entities — not to one in Code
+    // Mode, whose terminal is a coding session (`brief` on request still works).
     for (const eid of this.briefManager.getReadySubscribers(this.tickCount)) {
+      if (this.entities.get(eid)?.properties.active_modal === "code") continue;
       this.sendBrief(eid);
     }
 

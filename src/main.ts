@@ -261,7 +261,8 @@ if (isSovereign()) {
       "every principal that can log in. Every action is still audited. Unset it to bring the gates back.",
   );
 } else if (TRUST.profile === "local" && isLocalUngated()) {
-  logger.warn(
+  // The default on a person's own machine: a notice, not a warning.
+  logger.info(
     "trust",
     "LOCAL profile: gates are off for this operator, and agents can manage keys without a prompt. " +
       "An agent's host shell and arbitrary host commands still wait for your approval " +

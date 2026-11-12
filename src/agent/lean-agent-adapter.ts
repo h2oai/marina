@@ -3123,7 +3123,8 @@ export class LeanAgentAdapter implements AgentHandle {
     )
       return false;
     this.runYielded = true;
-    this.log.warn(
+    // The cap is the designed end of a run, not a fault: info, not warn.
+    this.log.info(
       LEAN_AGENT_LOG_CATEGORY,
       `reached a per-run cap (${this.currentPromptTurns} turns, ${this.currentRunToolCalls} tools); results journaled, yielding until the next cycle`,
       { agent: this.name },
