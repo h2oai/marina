@@ -1,0 +1,19 @@
+[package]
+name = "marina-sdk"
+version = "0.8.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Marina for Rust: run coding tasks, send commands and use the HTTP APIs from your code."
+license = "Apache-2.0"
+repository = "https://github.com/h2oai/marina"
+readme = "README.md"
+keywords = ["marina", "agents", "coding", "sdk"]
+
+[lib]
+name = "marina_sdk"
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+ureq = "3.5.2"

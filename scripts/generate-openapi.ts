@@ -21,6 +21,8 @@ const ROOT = resolve(import.meta.dir, "..");
 export const OPENAPI_FILE = resolve(ROOT, "protocol/marina.http.v1.openapi.json");
 /** The Python SDK's operation table, generated from the same operations. */
 export const PYTHON_OPERATIONS_FILE = resolve(ROOT, "sdks/python/src/marina/_operations.py");
+/** The Rust SDK's operation table. */
+export const RUST_OPERATIONS_FILE = resolve(ROOT, "sdks/rust/src/operations.rs");
 /** The Java SDK's operation table. */
 export const JAVA_OPERATIONS_FILE = resolve(
   ROOT,
@@ -382,6 +384,67 @@ export function renderJavaOperations(): string {
   ].join("\n");
 }
 
+/** The Rust SDK's table: every operation with its snake_case name. */
+export function renderRustOperations(): string {
+  const list = (items: string[]) => `&[${items.map((i) => JSON.stringify(i)).join(", ")}]`;
+  const rows = HTTP_OPERATIONS.flatMap((op) => {
+    const pathParams = (op.path.match(/\{(\w+)\}/g) ?? []).map((p) => p.slice(1, -1));
+    const query = Object.keys(op.query ?? {});
+    const key = op.tag === "memory" && memoryNeedsIdempotencyKey(op.method, op.path);
+    return [
+      "    Operation {",
+      `        id: ${JSON.stringify(op.id)},`,
+      `        name: ${JSON.stringify(snakeCase(op.id))},`,
+      `        method: ${JSON.stringify(op.method)},`,
+      `        path: ${JSON.stringify(op.path)},`,
+      `        tag: ${JSON.stringify(op.tag)},`,
+      `        path_params: ${list(pathParams)},`,
+      `        query: ${list(query)},`,
+      `        body: ${Boolean(op.body)},`,
+      `        idempotency_key: ${key},`,
+      "    },",
+    ];
+  });
+  return [
+    "// Copyright 2025-2026 H2O.ai, Inc.",
+    "// SPDX-License-Identifier: Apache-2.0",
+    `//! Every ${HTTP_API_VERSION} operation. Generated from src/protocol/http-api.ts by`,
+    "//! scripts/generate-openapi.ts (`bun run docs:api`); do not edit by hand.",
+    "",
+    "/// One HTTP operation.",
+    "#[derive(Debug, Clone, Copy, PartialEq, Eq)]",
+    "pub struct Operation {",
+    "    /// The OpenAPI operation id (`joinSession`).",
+    "    pub id: &'static str,",
+    "    /// The same in snake_case (`join_session`).",
+    "    pub name: &'static str,",
+    "    pub method: &'static str,",
+    "    pub path: &'static str,",
+    "    /// `memory`, `routing`, `investigations` or `panels`.",
+    "    pub tag: &'static str,",
+    "    pub path_params: &'static [&'static str],",
+    "    pub query: &'static [&'static str],",
+    "    /// It takes a JSON body.",
+    "    pub body: bool,",
+    "    /// It needs an `Idempotency-Key` header.",
+    "    pub idempotency_key: bool,",
+    "}",
+    "",
+    `pub const HTTP_API_VERSION: &str = ${JSON.stringify(HTTP_API_VERSION)};`,
+    "",
+    "/// Every operation, in the order of the OpenAPI document.",
+    "pub static OPERATIONS: &[Operation] = &[",
+    ...rows,
+    "];",
+    "",
+    "/// An operation by its id or its snake_case name.",
+    "pub fn find(id_or_name: &str) -> Option<&'static Operation> {",
+    "    OPERATIONS.iter().find(|op| op.id == id_or_name || op.name == id_or_name)",
+    "}",
+    "",
+  ].join("\n");
+}
+
 function writeOrCheck(file: string, output: string, check: boolean, what: string): void {
   if (check) {
     let current = "";
@@ -405,6 +468,7 @@ export function generateOpenApi(check: boolean): void {
     "Python SDK operation table",
   );
   writeOrCheck(JAVA_OPERATIONS_FILE, renderJavaOperations(), check, "Java SDK operation table");
+  writeOrCheck(RUST_OPERATIONS_FILE, renderRustOperations(), check, "Rust SDK operation table");
 }
 
 if (import.meta.main) generateOpenApi(process.argv.includes("--check"));
