@@ -19,18 +19,18 @@ import { setEndpointConfig } from "../src/net/model/model-endpoint";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import * as wire from "../src/protocol/wire";
+import type { MarinaClient } from "../src/sdk/client";
 import {
   budgetArgument,
   CODING_ACTIVITY_KINDS,
   type CodeEvent,
+  type CodingActivity,
   codeEventOf,
   MarinaCoding,
-  type CodingActivity,
   RUN_OUTCOMES,
   type RunResult,
   VERIFICATIONS,
 } from "../src/sdk/coding";
-import type { MarinaClient } from "../src/sdk/client";
 import { Marina, serverUrls } from "../src/sdk/marina";
 import type { Perception } from "../src/sdk/protocol";
 import type { EntityId } from "../src/types";
