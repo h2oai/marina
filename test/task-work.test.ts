@@ -514,6 +514,17 @@ describe("optional shared task work", () => {
     ).toThrow("Quotation");
   });
 
+  test("a group task's creator and claimant reach its work without joining the group", () => {
+    // Seeded project groups have no members; `task claim` admits anyone, so the
+    // claimant's own submission feedback must not be refused.
+    fixture.db.createGroup({ id: "seeded", name: "seeded", leaderId: "system" });
+    raw().run("UPDATE tasks SET group_id='seeded' WHERE id=?", [taskId]);
+    expect(() => work.show(taskId, worker)).not.toThrow();
+    expect(() => work.completionFeedback(taskId, worker)).not.toThrow();
+    expect(() => work.show(taskId, owner)).not.toThrow();
+    expect(() => work.show(taskId, peer)).toThrow("not accessible");
+  });
+
   test("work records do not weaken group access or the existing as-of evidence fence", async () => {
     fixture.db.createGroup({ id: "team", name: "Team", leaderId: owner.id });
     fixture.db.addGroupMember("team", owner.id);
