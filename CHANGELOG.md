@@ -163,6 +163,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when its stdin closes, so it never outlives the program that started it. Every SDK's
   `Marina.local` runs it. The protocol guide documents it, and the `/` prefix a program puts on
   its commands so Code Mode never takes one as a task.
+- **A Python SDK, with no dependencies.** `sdks/python` (`from marina import Marina`) has the same
+  front door as the TypeScript SDK: `Marina.local(folder)` / `Marina.connect(url, name=…)`,
+  `code.run()` with typed steps and a `RunResult`, `diff`, `review`, exec approvals, world
+  commands that Code Mode never takes as tasks, and every `marina.http.v1` operation as a method
+  (`marina.routing.discover()`, `marina.memory(credential).remember(space=…, body=…)`). It uses the
+  standard library only, including its own WebSocket client, and needs Python 3.10 or newer. Its
+  HTTP operation table is generated with the OpenAPI document. CI runs its unit tests and drives a
+  whole coding run through it on a live server, checking every coding frame against the schema,
+  plus memory, routing, session resume and `Marina.local`.
 
 ### Changed
 
