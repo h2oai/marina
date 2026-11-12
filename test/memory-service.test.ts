@@ -323,7 +323,8 @@ it("cuts an index input past the provider's per-input limit and labels the job",
   const long = await api(route("/records"), "POST", { content: "a long record ".repeat(20) });
   const short = await api(route("/records"), "POST", { content: "tiny" });
   expect(await service.runIndexJobs()).toBe(2);
-  expect(embedded).toEqual(["a long recor", "tiny"]);
+  // Jobs created in the same millisecond may be claimed in either order.
+  expect(embedded.toSorted()).toEqual(["a long recor", "tiny"]);
   const job = (id: string) =>
     db
       .memoryRepository()
