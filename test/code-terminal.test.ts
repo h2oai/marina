@@ -1758,3 +1758,41 @@ it("uses observed hints in scrollback without dispatching before Enter or comple
     output.destroy();
   }
 });
+
+it("a world-only view sends world commands and refuses coding controls without sending them", async () => {
+  const output: string[] = [];
+  const requests: string[] = [];
+  const view = new CodeConsole({
+    agent: {
+      getSession: () => null,
+      command: async (text: string) => {
+        requests.push(text);
+        return [];
+      },
+    } as unknown as MarinaAgent,
+    url: "http://local.test",
+    root: "",
+    directory,
+    connected: true,
+    worldOnly: true,
+    harness: { version: 1, agent: "marina" },
+    store: new HarnessStore(directory),
+    finish: () => {},
+  });
+  view.write = (text) => {
+    output.push(text);
+  };
+  await view.start(false);
+  // No coding session is selected or set up.
+  expect(requests).toEqual([]);
+  await view.submit("/world task list");
+  expect(requests).toEqual(["/task list"]);
+  for (const control of ["/task fix it", "/diff", "/cost", "/model x", "/agents"]) {
+    await view.submit(control);
+    expect(output.at(-1)).toContain("needs a coding session");
+  }
+  expect(requests).toEqual(["/task list"]);
+  await view.submit("/help");
+  expect(output.at(-1)).toContain("no coding session");
+  expect(output.at(-1)).not.toContain("/task");
+});

@@ -164,7 +164,7 @@ export class WorkspaceCodeEditor implements CodeEditor {
         {
           component: line(
             () =>
-              `F1 help · F2 layout · F3 mode: ${MODES[this.state?.mode ?? "coding"].label} · F6 Coding/World · F7 requests · F8 panel · Ctrl+D exit`,
+              `F1 help · F2 layout · F3 mode: ${MODES[this.state?.mode ?? "coding"].label} · ${this.options.worldOnly ? "F6 World" : "F6 Coding/World"} · F7 requests · F8 panel · Ctrl+D exit`,
           ),
           basis: 1,
           visible: ({ height }) => (height ?? 0) >= 10,
@@ -214,7 +214,9 @@ export class WorkspaceCodeEditor implements CodeEditor {
       }
       const view = matchesKey(data, "f6")
         ? this.focusView === "world"
-          ? "coding"
+          ? options.worldOnly
+            ? "world"
+            : "coding"
           : "world"
         : matchesKey(data, "f7")
           ? "approvals"

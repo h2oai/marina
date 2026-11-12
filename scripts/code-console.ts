@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getErrorMessage } from "../src/engine/errors";
 import type { CommandOptions, MarinaAgent, Perception } from "../src/sdk/client";
+import { worldEssentials } from "./code-controls";
 import { colorizeDiff, type DiffPayload, diffColorEnabled, diffPayloadFor } from "./code-diff";
 import { CodeDiscovery } from "./code-discovery";
 import { type CodingHarness, codingAgent, type HarnessStore } from "./code-harness";
@@ -25,6 +26,7 @@ import {
   type CodeTerminalOptions,
   formatCodePerception,
   isWorldInput,
+  NO_CODING,
   QUIT_INPUTS,
   terminalEssentials,
   terminalHelp,
@@ -54,6 +56,11 @@ export interface CodeConsoleOptions {
   finish: (code: number) => void;
   /** Attached to an existing world. Source and execution belong to that server. */
   connected?: boolean;
+  /**
+   * A world view with no coding session (`marina connect --tui`): the World and the
+   * use-case boards only. Coding controls are refused, never sent.
+   */
+  worldOnly?: boolean;
   sessionId?: string;
   tui?: boolean;
   /** First use-case mode for --tui (default coding). */
@@ -66,6 +73,9 @@ export interface CodeConsoleOptions {
   /** Where plain (non-terminal) output goes; default stdout. `-p --json` uses stderr. */
   plainOutput?: NodeJS.WritableStream;
 }
+
+/** What a world-only view runs locally; everything else needs a coding session. */
+const WORLD_ONLY_VERBS = ["/world", "/live", "/view", "/help", "/panel", "/dashboard"];
 
 export class CodeConsole {
   private terminal?: CodeTerminal;
@@ -608,6 +618,7 @@ export class CodeConsole {
         views: interactive,
         tui: this.options.tui,
         connected: this.options.connected,
+        worldOnly: this.options.worldOnly,
         completions: () => [
           ...this.discovery.suggestions(this.selected ? undefined : this.sessionId),
           ...[...(this.native?.agents.values() ?? [])]
@@ -633,7 +644,9 @@ export class CodeConsole {
         ],
         panelInput: (input) => this.panels?.input(input),
         viewChanged: (view) => this.panels?.setActive(view === "panel"),
-        location: `${this.options.connected ? "Server" : "Local"} workspace · ${this.options.root}`,
+        location: this.options.worldOnly
+          ? `World · ${this.options.url}`
+          : `${this.options.connected ? "Server" : "Local"} workspace · ${this.options.root}`,
         statusLine: () => this.liveStatusLine(),
         ...(this.options.mode ? { mode: this.options.mode } : {}),
         modeChanged: (mode) => {
@@ -664,6 +677,12 @@ export class CodeConsole {
     }
     if (interactive && (!this.options.welcomed || this.terminal?.currentMode !== "coding"))
       this.write(MODES[this.terminal?.currentMode ?? "coding"].hint);
+    if (this.options.worldOnly) {
+      this.write(
+        "World view: no coding session. F3 cycles modes; closing this terminal leaves the world running.",
+      );
+      return;
+    }
     if (this.options.connected) {
       this.terminal?.setTarget(`marina:${this.sessionId}`);
       this.write(
@@ -821,9 +840,17 @@ export class CodeConsole {
     const space = text.search(/\s/);
     const verb = space < 0 ? text : text.slice(0, space);
     const argument = space < 0 ? "" : text.slice(space + 1).trim();
+    if (this.options.worldOnly && !WORLD_ONLY_VERBS.includes(verb)) {
+      this.write(`${verb} needs a coding session. ${NO_CODING}`);
+      return;
+    }
     if (verb === "/view") {
       if (this.terminal) this.terminal.selectView(argument);
       else this.write("Focused views require an interactive terminal; /world remains available.");
+      return;
+    }
+    if (verb === "/help" && this.options.worldOnly) {
+      this.write(worldEssentials());
       return;
     }
     if (verb === "/help") {

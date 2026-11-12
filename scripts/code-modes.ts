@@ -127,12 +127,23 @@ export function parseMode(name: string | undefined): WorkspaceMode | undefined {
     : undefined;
 }
 
-export function nextMode(mode: WorkspaceMode): WorkspaceMode {
-  return WORKSPACE_MODES[(WORKSPACE_MODES.indexOf(mode) + 1) % WORKSPACE_MODES.length]!;
+/** The modes a workspace offers: a world-only one (`marina connect --tui`) has no coding. */
+export function modesFor(worldOnly = false): readonly WorkspaceMode[] {
+  return worldOnly ? WORKSPACE_MODES.filter((mode) => mode !== "coding") : WORKSPACE_MODES;
 }
 
-export function modeUsage(): string {
-  return `Modes: ${WORKSPACE_MODES.map((mode) => `${mode} (${MODES[mode].describe})`).join("; ")}. /mode <name> or F3.`;
+/** The first mode of a world-only workspace when none (or coding) is asked for. */
+export const WORLD_DEFAULT_MODE: WorkspaceMode = "operate";
+
+export function nextMode(mode: WorkspaceMode, worldOnly = false): WorkspaceMode {
+  const modes = modesFor(worldOnly);
+  return modes[(modes.indexOf(mode) + 1) % modes.length]!;
+}
+
+export function modeUsage(worldOnly = false): string {
+  return `Modes: ${modesFor(worldOnly)
+    .map((mode) => `${mode} (${MODES[mode].describe})`)
+    .join("; ")}. /mode <name> or F3.`;
 }
 
 /**

@@ -656,3 +656,38 @@ it("--mode picks the first mode and implies --tui", () => {
     mode: "operate",
   });
 });
+
+it("a world-only workspace has no Coding: boards only, World composer, coding refused", async () => {
+  const modes: string[] = [];
+  using f = workspace(undefined, {
+    worldOnly: true,
+    modeChanged: (mode) => modes.push(mode),
+    board: (mode) => [`board-${mode}`],
+  });
+  f.screen.columns = 120;
+  f.screen.rows = 30;
+  f.screen.resize();
+  // No mode asked for: it opens on operate, never coding.
+  expect(f.terminal.currentMode).toBe("operate");
+  await until(() => f.screen.text().includes("board-operate"));
+  expect(f.screen.text()).toContain("F6 World");
+  expect(f.screen.text()).not.toContain("F6 Coding/World");
+  expect(f.screen.text()).toContain("● World  ·  Requests");
+  expect(f.screen.text()).not.toContain("Coding  ·");
+  // F6 stays in the World: plain text is still a world command.
+  f.screen.send("\x1b[17~");
+  f.screen.send("look\r");
+  expect(f.lines).toEqual(["/world look"]);
+  f.screen.send("\x1b[200~/view coding\x1b[201~\r");
+  await until(() => f.screen.text().includes("no coding session"));
+  f.screen.send("\x1b[200~/mode coding\x1b[201~\r");
+  expect(f.terminal.currentMode).toBe("operate");
+  // F3 from the last board wraps to operate, skipping coding.
+  f.screen.send("\x1b[200~/mode admin\x1b[201~\r");
+  await until(() => f.terminal.currentMode === "admin");
+  f.screen.send("\x1bOR");
+  await until(() => f.terminal.currentMode === "operate");
+  expect(modes).not.toContain("coding");
+  expect(nextMode("admin", true)).toBe("operate");
+  expect(nextMode("admin")).toBe("coding");
+});

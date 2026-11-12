@@ -4,7 +4,14 @@
 import type { Terminal } from "@earendil-works/pi-tui";
 import { isWorldInput, TERMINAL_COMMANDS } from "./code-controls";
 import type { CodeEditor, CodeEditorOptions } from "./code-editor";
-import { MODES, modeUsage, nextMode, parseMode, type WorkspaceMode } from "./code-modes";
+import {
+  MODES,
+  modeUsage,
+  nextMode,
+  parseMode,
+  WORLD_DEFAULT_MODE,
+  type WorkspaceMode,
+} from "./code-modes";
 import type { PanelInput, TerminalPanelState } from "./code-panel-form";
 import { terminalText } from "./code-presentation";
 import { ReadlineCodeEditor } from "./code-readline";
@@ -48,6 +55,11 @@ export interface CodeTerminalOptions {
   /** The status the first draw shows (default `ready`). */
   status?: string;
   connected?: boolean;
+  /**
+   * A world-only workspace (`marina connect --tui`): there is no coding session, so
+   * the Coding conversation and the coding mode are not offered.
+   */
+  worldOnly?: boolean;
   completions?: CodeEditorOptions["completions"];
   /** Terminal device injection for renderer tests; no world/session authority. */
   screen?: Terminal;
@@ -60,6 +72,10 @@ export interface CodeTerminalOptions {
   /** Draws the mode's live board at a width; re-read on every frame. */
   board?: (mode: WorkspaceMode, width: number) => string[];
 }
+
+/** What a world-only workspace says when coding is asked of it. */
+export const NO_CODING =
+  "This is a world view with no coding session. For coding, run marina --tui in a project folder, or marina attach --tui.";
 
 /** One routing/approval controller for both renderers. A view never owns a world action. */
 export class CodeTerminal {
@@ -88,6 +104,8 @@ export class CodeTerminal {
   constructor(private options: CodeTerminalOptions) {
     if (options.status) this.status = options.status;
     if (options.mode) this.mode = options.mode;
+    if (options.worldOnly && this.mode === "coding") this.mode = WORLD_DEFAULT_MODE;
+    if (options.worldOnly) this.returnView = "world";
     const input = options.input ?? process.stdin;
     const output = options.output ?? process.stderr;
     this.tty = !!input.isTTY && !!output.isTTY;
@@ -101,6 +119,7 @@ export class CodeTerminal {
       input,
       output,
       connected: options.connected,
+      worldOnly: options.worldOnly,
       completions: options.completions,
       panelInput: options.panelInput,
       line: (text) => this.line(text),
@@ -182,10 +201,14 @@ export class CodeTerminal {
     }
     if (/^\/mode(?:\s|$)/.test(line.trimStart())) {
       const name = line.trim().slice(5).trim();
-      const mode = name ? parseMode(name) : nextMode(this.mode);
+      const worldOnly = !!this.options.worldOnly;
+      const mode = name ? parseMode(name) : nextMode(this.mode, worldOnly);
       if (!this.workspace)
         this.print("Modes require marina --tui. /live draws the same boards here.");
-      else if (!mode) this.print(modeUsage());
+      else if (!mode || (worldOnly && mode === "coding"))
+        this.print(
+          `${worldOnly && mode === "coding" ? `${NO_CODING} ` : ""}${modeUsage(worldOnly)}`,
+        );
       else this.enterMode(mode);
       return;
     }
@@ -259,6 +282,10 @@ export class CodeTerminal {
       );
       return false;
     }
+    if (name === "coding" && this.options.worldOnly) {
+      this.print(NO_CODING);
+      return false;
+    }
     if (name === "approvals" && !this.question) {
       this.print("No pending input requests. Your conversation and draft remain selected.");
       return false;
@@ -300,7 +327,7 @@ export class CodeTerminal {
         : undefined,
       status: this.status,
       badge: this.views?.badge(questions),
-      navigation: this.views?.navigation(questions),
+      navigation: this.views?.navigation(questions, this.options.worldOnly),
       layout: this.layout,
       conversations: this.workspace
         ? {
