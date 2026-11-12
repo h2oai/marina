@@ -315,8 +315,8 @@ that answers, and the world knows it is a reply:
 
 ## Also available over HTTP
 
-The WebSocket is for live sessions. These use plain HTTPS with `Authorization: Bearer <token>`:
-- memory: `/v1/memory`, see the [memory API guide](../docs/guides/memory-api.md);
+The WebSocket is for live sessions. Memory, participant routing, investigations and published
+panels are plain HTTPS: see the [HTTP API guide](http.md) and its OpenAPI document,
+[`marina.http.v1.openapi.json`](marina.http.v1.openapi.json) (served at `GET /api/openapi`). Also:
 - an OpenAI-compatible model endpoint: `/v1`, see the [model API guide](../docs/guides/model-api.md);
-- participant routing: `/api/routing`;
 - what this server offers: `GET /api/connect`.
