@@ -68,10 +68,10 @@ main() {
   bun="$(ensure_bun "$(tr -d '[:space:]' <.bun-version)")"
 
   step "3/5" "Installing packages (a minute or two)"
-  "$bun" install --no-progress >/dev/null || "$bun" install
+  "$bun" install --no-env-file --no-progress >/dev/null 2>&1 || "$bun" install --no-env-file
 
   step "4/5" "Building the dashboard"
-  "$bun" run dashboard:build >/dev/null 2>&1 || "$bun" run dashboard:build
+  "$bun" run --no-env-file dashboard:build >/dev/null 2>&1 || "$bun" run --no-env-file dashboard:build
 
   step "5/5" "Putting marina on your PATH"
   "$bun" --no-env-file scripts/setup-cli.ts >/dev/null
@@ -175,7 +175,8 @@ have_git() {
 fetch_marina() {
   local repo="$1" ref="$2" dir="$3"
   if [ -d "$dir/.git" ]; then
-    if have_git && git -C "$dir" pull --ff-only --quiet origin "$ref"; then
+    if have_git && git -C "$dir" -c advice.diverging=false pull --ff-only --quiet origin "$ref" \
+      >/dev/null 2>&1; then
       say "  Updated to the latest version."
     else
       say "  Could not update; keeping the version already here."
