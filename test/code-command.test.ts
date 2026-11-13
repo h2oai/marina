@@ -2272,7 +2272,9 @@ describe("code command", () => {
     expect(attention[0]).toContain("Use the marina_code tool when it is available.");
     expect(attention[0]).toContain("files/read/search/diff");
     expect(attention[0]).toContain("verificationMode=candidate");
-    expect(attention[0]).toContain("inspect its result before submitting a summary");
+    // No verification requirement: the coder chooses its checks; nothing demands a snapshot.
+    expect(attention[0]).toContain("Run the tests and checks you judge useful");
+    expect(attention[0]).not.toContain("inspect its result before submitting a summary");
     expect(attention[0]).toContain("Long-running app launch is disabled on the Marina host");
     expect(helperEntity.properties.active_modal).toBe("code");
     expect(helperEntity.properties.coding_session_id).toBe(sessionId);

@@ -370,7 +370,7 @@ export async function doCode(
       [
         success(`${coderDisplayName(agentName)} is on it.`),
         dim(
-          "Each step and every change shows below; checks run on a snapshot before it reports. Type to steer, ctrl+c to interrupt.",
+          `Each step and every change shows below;${verificationRequirement ? " checks run on a snapshot before it reports;" : ""} type to steer, ctrl+c to interrupt.`,
         ),
       ].join("\n"),
     );

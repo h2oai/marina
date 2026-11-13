@@ -509,7 +509,7 @@ export async function startVerification(
             ? [`${candidate ? "Candidate verification" : "Verification"}: ${state.verification}.`]
             : []),
           ...(state?.verificationReason ? [state.verificationReason] : []),
-          `Inspect the completed receipt: code show ${completed.id} (marina_code action=show, artifactId=${completed.id}).${candidate ? " Any later source or test edit requires fresh candidate verification before submission." : ""}`,
+          `Inspect the completed receipt: code show ${completed.id} (marina_code action=show, artifactId=${completed.id}).${candidate && run && codingRunMetadata(run).verificationRequirement ? " Any later source or test edit requires fresh candidate verification before submission." : ""}`,
         ].join("\n"),
         {
           event: "verification_finished",
