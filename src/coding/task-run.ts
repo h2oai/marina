@@ -473,7 +473,7 @@ export async function assessCodingVerification(
   if (!verification)
     return {
       ...result,
-      verificationReason: `No required checks recorded. Run ${meta.verificationRequirement === "delivery" ? "code verify delivery manifest:<path>" : meta.verificationRequirement === "checks" ? "code verify" : "code verify candidate"}, inspect its result, then submit a summary.`,
+      verificationReason: `No required checks recorded. Run ${meta.verificationRequirement === "delivery" ? "code verify delivery -- <manifest JSON>" : meta.verificationRequirement === "checks" ? "code verify" : "code verify candidate"}, inspect its result, then submit a summary.`,
     };
   if (verification.kind === "verification_request" && verification.status === "running")
     return {
@@ -484,7 +484,7 @@ export async function assessCodingVerification(
   const candidateRetry = candidateVerificationRetry(evidence.verificationOptions);
   const retry =
     evidence.delivery && typeof evidence.delivery === "object"
-      ? `code verify delivery manifest:${(evidence.delivery as DeliveryEvidence).manifestPath}`
+      ? `code verify delivery -- ${(evidence.delivery as DeliveryEvidence).manifestContent ?? "<manifest JSON>"}`
       : meta.verificationRequirement === "checks" && !evidence.candidateId
         ? candidateRetry.replace("code verify candidate", "code verify")
         : candidateRetry;
@@ -550,7 +550,13 @@ export async function assessCodingVerification(
       };
     try {
       const workspace = new LocalWorkspace(session.worktree_path ?? session.workspace_root);
-      const manifest = await readDeliveryManifest(workspace, delivery.manifestPath);
+      const source =
+        delivery.manifestPath ??
+        (typeof delivery.manifestContent === "string"
+          ? { json: delivery.manifestContent }
+          : undefined);
+      if (source === undefined) throw new Error("Delivery manifest evidence is unavailable.");
+      const manifest = await readDeliveryManifest(workspace, source);
       const current = await deliveryFingerprint(workspace, manifest.manifest.files);
       const latestSession = db.getCodingSession(run.session_id);
       if (
@@ -585,7 +591,7 @@ export async function assessCodingVerification(
       ...result,
       verification: "unbound" as const,
       verificationReason:
-        "This task requires delivery verification. List the deliverable files and checks in a JSON manifest, then use code verify delivery manifest:<path>.",
+        "This task requires delivery verification. Pass the deliverable files, checks and requirements as inline JSON with code verify delivery -- <manifest JSON> (marina_code verificationMode=delivery, manifestJson). Do not create a bookkeeping manifest in the workspace.",
     };
   if (!evidence.candidateId && evidence.workspaceEventId !== meta.workspaceEventId)
     return {

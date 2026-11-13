@@ -1188,7 +1188,7 @@ export async function recordCodingNote(
           meta.verificationRequirement === "candidate"
             ? "code verify candidate"
             : meta.verificationRequirement === "delivery"
-              ? "code verify delivery manifest:<path>"
+              ? "code verify delivery -- <manifest JSON>"
               : "code verify",
           "code status",
           `code show ${artifact.id}`,
@@ -1238,7 +1238,7 @@ function requirementsRefusal(coverage: RequirementCoverage): string {
   return [
     "Summary saved as progress; task remains active. Delivery checks passed, but these stated requirements have no passing check that observes them:",
     ...missing.map((text, index) => `${index + 1}. ${text}`),
-    "Add checks that observe each one (measure the timing, ordering or output it names, against the delivered files), map them in the manifest's requirements, run code verify delivery manifest:<path> again, then resubmit.",
+    "Add checks that observe each one (measure the timing, ordering or output it names, against the delivered files), map them in the manifest's requirements, run code verify delivery -- <manifest JSON> again, then resubmit.",
     'Mark a requirement {"text":…,"notCheckable":"<why>"} only if no finite check can observe it; that is recorded. The next submission proceeds and reports anything still unverified.',
   ].join("\n");
 }

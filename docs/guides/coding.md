@@ -705,7 +705,7 @@ the session diff and the agent's summary. The exit code says what you can rely o
 `--verification <mode>` sets what a one-shot task must verify before it can submit: `checks`
 (the project's own checks), `candidate` (a captured Git snapshot), or `delivery` (default, or
 `MARINA_CODE_VERIFICATION` — a JSON manifest of output files and checks, run alone in a clean
-directory with `code verify delivery manifest:<path>`). The mode is the task's `code do verification:<mode>`
+directory with `code verify delivery -- <manifest JSON>`). The mode is the task's `code do verification:<mode>`
 requirement; agents still choose the implementation and the checks.
 
 **Time budget.** A one-shot hands its coder a budget slightly inside `MARINA_CODE_TASK_TIMEOUT_MS`
@@ -895,8 +895,8 @@ Use `verification:candidate` when you require source-bound evidence.
 
 For a package or set of files that must work away from the active workspace, use
 `code do verification:delivery -- <task>`. The worker can choose its implementation and
-checks; submission requires current delivery evidence. To verify manually, write a JSON
-manifest such as `delivery.json`:
+checks; submission requires current delivery evidence. To verify manually, pass the manifest
+JSON inline to Marina; no bookkeeping file is needed in the project. The declaration has this shape:
 
 ```json
 {
@@ -934,8 +934,26 @@ requirement was observed, `marina -p` exits `0` and names the not-machine-checka
 stderr. A checklist with no observed requirement at all stays `unverified`. Other verification
 modes are unchanged.
 
-Run `code verify delivery manifest:delivery.json`, then inspect the returned receipt with
-`code show <id>`. Marina copies only the listed regular files into a clean directory and
+Run `code verify delivery -- <manifest JSON>`, with the JSON after `--` preserved as written.
+For example:
+
+```text
+code verify delivery -- {"files":["report.ts","helper.ts","report.test.ts"],"checks":["bun test report.test.ts"],"requirements":[{"text":"the report total is 11","checks":[0]}]}
+```
+
+With `marina_code` (action `verify`) or `marina_code_verify`, set `verificationMode: "delivery"`
+and `manifestJson` to the JSON object or its encoded JSON string. Put verification options before
+`--`, for example `code verify delivery dependencies:auto -- <manifest JSON>`.
+
+Inspect the returned receipt with `code show <id>`. The verification evidence saves the manifest
+content and its digest, and `code show` displays the declaration for review. Inline declarations
+stay in Marina's evidence, leaving the project's files and Git status untouched by bookkeeping.
+Existing callers can still use `code verify delivery manifest:delivery.json` (tool parameter
+`manifest: "delivery.json"`) for a manifest already in the project. Supply exactly one source.
+The path form rereads the manifest during capture and submission to detect changes; a manifest
+file is copied into the clean directory only if explicitly included in `files`.
+
+Marina copies only the listed regular files into a clean directory and
 runs those finite commands using the session's configured host or mount-sync container runner. Missing
 companion files therefore cannot be supplied accidentally by the active workspace. Checks use
 the runner's environment and the selected dependency preparation; this is file isolation, not a new security sandbox or a
@@ -1246,7 +1264,7 @@ Npm projects can use `dependencies:npm` or `dependencies:auto` with a captured v
 development dependencies, with private user/global config and a disposable cache. Only
 integrity-locked public npm packages are supported. Workspace links, project `.npmrc`,
 shrinkwrap overrides and captured `node_modules` are refused. The same preparation and
-failure reporting apply to `code verify delivery manifest:<path> dependencies:auto`.
+failure reporting apply to `code verify delivery dependencies:auto -- <manifest JSON>`.
 
 The source tree does not certify the external environment, services or dependencies, and the
 temporary directory is **not a security sandbox**. Host-local checks retain their existing trust

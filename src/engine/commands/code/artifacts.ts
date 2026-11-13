@@ -159,6 +159,10 @@ export function showArtifact(
     receiptResult?.session_id === session.id && receiptResult.kind === "verification"
       ? receiptResult.content_text
       : undefined;
+  const evidence = parseJsonObject(
+    (resultText !== undefined ? receiptResult! : artifact).metadata_json,
+  );
+  const delivery = evidence.delivery as Record<string, unknown> | undefined;
   sendCode(
     ctx,
     eid,
@@ -174,6 +178,9 @@ export function showArtifact(
         ? [`Result: code show ${receipt.resultArtifactId}`]
         : []),
       ...(resultText ? [resultText] : []),
+      ...(typeof delivery?.manifestContent === "string"
+        ? [`Delivery manifest (declared JSON):\n${delivery.manifestContent}`]
+        : []),
     ].join("\n"),
     {
       artifactId: artifact.id,

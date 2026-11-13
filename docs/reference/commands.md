@@ -3387,6 +3387,12 @@ Effect: execute.
 Effect: execute.
 
 
+### `code verify delivery -- <json>`
+
+Effect: execute.
+
+- `field-0` (`json`): json, required.
+
 ### `code verify delivery manifest:<path>`
 
 Effect: execute.

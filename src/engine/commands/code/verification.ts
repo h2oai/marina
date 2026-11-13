@@ -6,6 +6,7 @@ import { candidateFingerprint, observeCandidate } from "../../../coding/candidat
 import { parseCommandArgv } from "../../../coding/command-argv";
 import {
   captureDelivery,
+  type DeliveryManifestSource,
   deliveryFingerprint,
   prepareDeliveryMount,
   readDeliveryManifest,
@@ -49,7 +50,7 @@ export async function startVerification(
   deps: CodeDeps & { db: MarinaDB },
   candidate = false,
   options: VerificationOptions = resolveVerificationOptions(),
-  deliveryManifest?: string,
+  deliveryManifest?: DeliveryManifestSource,
 ): Promise<void> {
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
