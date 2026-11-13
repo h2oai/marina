@@ -262,18 +262,31 @@ function startupFiles(env: Env): string[] {
  * any other folder (`~/.bun/bin`, `~/.local/bin`: other programs may need it)
  * is kept, and so is its marker.
  */
-export function pathEditsFor(file: string, text: string, home: string): PathEdit | undefined {
+export function pathEditsFor(
+  file: string,
+  text: string,
+  home: string,
+  emptyAfter: (dir: string) => boolean = () => false,
+): PathEdit | undefined {
   const lines = text.split("\n");
   const drop: number[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (lines[i]!.trim() !== "# Added by Marina setup") continue;
     const next = lines[i + 1] ?? "";
-    if (!namesFolder(next, home)) continue;
+    // A folder in the home, or one an older setup added that holds nothing
+    // once Marina's link is gone (no Bun or anything else in it).
+    const folder = pathLineFolder(next);
+    if (!namesFolder(next, home) && !(folder && emptyAfter(folder))) continue;
     if (i > 0 && lines[i - 1]!.trim() === "") drop.push(i - 1);
     drop.push(i, i + 1);
   }
   if (!drop.length) return undefined;
   return { file, lines: drop, text: drop.map((n) => lines[n]!) };
+}
+
+/** The folder a setup PATH line adds (`export PATH="<dir>:$PATH"`, fish `fish_add_path <dir>`). */
+export function pathLineFolder(line: string): string | undefined {
+  return /export PATH="([^":]+):\$PATH"/.exec(line)?.[1] ?? /fish_add_path\s+(\S+)/.exec(line)?.[1];
 }
 
 /** Whether `line` names `folder` itself or something inside it (not `folder-other`). */
@@ -431,7 +444,14 @@ export function planUninstall(
       plan.remove.push({ path, bytes: pathBytes(path), kind: "old" });
   for (const file of startupFiles(env)) {
     if (!existsSync(file)) continue;
-    const edit = pathEditsFor(file, readFileSync(file, "utf8"), home);
+    const emptyAfter = (dir: string) => {
+      try {
+        return readdirSync(dir).every((name) => plan.links.includes(join(dir, name)));
+      } catch {
+        return true;
+      }
+    };
+    const edit = pathEditsFor(file, readFileSync(file, "utf8"), home, emptyAfter);
     if (edit) plan.pathEdits.push(edit);
   }
   return plan;
@@ -491,6 +511,14 @@ export function afterwordFor(plan: UninstallPlan, env: Env = process.env): strin
     lines.push(
       `Bun (${bun}) is still installed: other programs may use it. If you installed it only for Marina: rm -rf ${bun}`,
     );
+  const cache = join(bun, "install", "cache");
+  if (existsSync(cache)) {
+    const size = pathBytes(cache);
+    if (size > 50 * 1024 ** 2)
+      lines.push(
+        `Bun's package cache (${cache}, ${formatSize(size)}) may still hold packages an older Marina setup installed. Clear it with: bun pm cache rm`,
+      );
+  }
   const branches = new Map<string, Set<string>>();
   for (const w of plan.worktrees)
     if (w.branch.startsWith("marina/"))

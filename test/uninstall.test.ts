@@ -67,6 +67,9 @@ describe("PATH lines", () => {
     ].join("\n");
     const edit = pathEditsFor("/rc", text, home)!;
     expect(edit.lines).toEqual([1, 2, 3]);
+    // An older setup's line for a folder left empty once Marina's link goes: removed too.
+    const withEmpty = pathEditsFor("/rc", text, home, (dir) => dir === `${user}/.bun/bin`)!;
+    expect(withEmpty.lines).toEqual([1, 2, 3, 4, 5, 6]);
     expect(namesFolder(`fish_add_path ${home}/bin`, home)).toBe(true);
     expect(namesFolder(`export PATH="${home}-other/bin"`, home)).toBe(false);
   });
