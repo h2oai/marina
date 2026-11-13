@@ -24,7 +24,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ContainerWorkspace, resolveContainerRunner } from "../src/coding/container-workspace";
-import { HOST_GIT_CONFIG_ARGS, hostGitArgv, hostGitEnv } from "../src/coding/host-git";
+import {
+  HOST_GIT_CONFIG_ARGS,
+  hostGitArgv,
+  hostGitDriverOverrides,
+  hostGitEnv,
+} from "../src/coding/host-git";
 import { LocalWorkspace, runCapture } from "../src/coding/local-workspace";
 import { prepareAgentWorkspace } from "../src/routing/agent-workspace";
 import { captureReviewSnapshot } from "../src/routing/review-snapshot";
@@ -300,5 +305,125 @@ describe("hostGitArgv / hostGitEnv", () => {
     } finally {
       delete process.env.MARINA_TEST_SERVER_SECRET;
     }
+  });
+});
+
+describe("host git never runs the repository's content drivers", () => {
+  // A repository config may name content drivers (a clean filter such as
+  // nbstripout's, a textconv, a merge driver) whose programs read files from
+  // the work tree, which workspace code can write. Host git hashes, diffs and
+  // merges work-tree content with them switched off.
+  let repo: string;
+  let driverMarker: string;
+  const fired = () => existsSync(driverMarker);
+  beforeEach(() => {
+    repo = join(scratch, "drivers");
+    mkdirSync(repo);
+    driverMarker = join(scratch, "DRIVER");
+    gitInit(repo);
+    writeFileSync(join(repo, ".gitattributes"), "*.nb filter=nbs diff=t merge=m\n");
+    writeFileSync(join(repo, "n.nb"), "cell\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "init");
+    appendFileSync(
+      join(repo, ".git", "config"),
+      '[filter "nbs"]\n\tclean = sh conv.sh\n\tsmudge = sh conv.sh\n' +
+        '[diff "t"]\n\ttextconv = sh conv.sh\n\tcommand = sh conv.sh\n' +
+        '[merge "m"]\n\tdriver = sh conv.sh %O %A %B\n',
+    );
+    // Written by workspace code: the program the configured drivers run.
+    writeFileSync(
+      join(repo, "conv.sh"),
+      `echo driver >> "${driverMarker}"\nif [ -f "$1" ]; then cat "$1"; else cat; fi\n`,
+    );
+    // Same content, new mtime: git must hash the file again (through the clean filter).
+    writeFileSync(join(repo, "n.nb"), "cell\n");
+    const later = new Date(Date.now() + 60_000);
+    utimesSync(join(repo, "n.nb"), later, later);
+    writeFileSync(join(repo, "other.nb"), "new\n");
+  });
+
+  it("the drivers are live for git hardened without them (the test is meaningful)", () => {
+    Bun.spawnSync(hostGitArgv(["git", "diff", "--name-only", "HEAD", "--"]), {
+      cwd: repo,
+      env: hostGitEnv(),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: GIT_SYNC_TIMEOUT_MS,
+    });
+    expect(fired()).toBe(true);
+  });
+
+  it("changedPaths, diff, allowlisted status and show never run them; hashing still works", async () => {
+    const ws = new LocalWorkspace(repo);
+    const changed = await ws.changedPaths();
+    expect(changed).toContain("other.nb");
+    expect(changed).not.toContain("n.nb");
+    const diff = await ws.diff();
+    expect(diff.exitCode).toBe(0);
+    expect((await ws.run(["git", "status", "--short"])).exitCode).toBe(0);
+    await runCapture(["git", "show", "--textconv", "HEAD"], repo, 65_536);
+    await runCapture(["git", "log", "-p", "-1"], repo, 65_536);
+    expect(fired()).toBe(false);
+  });
+
+  it("the container patch-sync diff (pendingDiff) never runs them", async () => {
+    const ws = new ContainerWorkspace(
+      repo,
+      resolveContainerRunner(
+        { image: "docker.io/library/alpine:latest", sync: "patch" },
+        {},
+        () => "/usr/bin/podman",
+      ),
+    );
+    expect(await ws.pendingDiff()).toContain("other.nb");
+    expect(fired()).toBe(false);
+  });
+
+  it("a merge through a configured merge driver reports a conflict instead of running it", () => {
+    git(repo, "checkout", "-q", "-b", "other");
+    writeFileSync(join(repo, "n.nb"), "theirs\n");
+    git(repo, "commit", "-qam", "theirs");
+    git(repo, "checkout", "-q", "-");
+    writeFileSync(join(repo, "n.nb"), "ours\n");
+    git(repo, "commit", "-qam", "ours");
+    rmSync(driverMarker, { force: true });
+    const merge = Bun.spawnSync(hostGitArgv(["git", "merge", "-q", "other"], repo), {
+      cwd: repo,
+      env: hostGitEnv({
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t",
+      }),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: GIT_SYNC_TIMEOUT_MS,
+    });
+    expect(merge.exitCode).not.toBe(0);
+    expect(fired()).toBe(false);
+  });
+
+  it("hostGitDriverOverrides switches off each named driver, and diff.external when set", () => {
+    appendFileSync(join(repo, ".git", "config"), "[diff]\n\texternal = sh conv.sh\n");
+    const args = hostGitDriverOverrides(repo);
+    for (const value of [
+      "filter.nbs.clean=",
+      "filter.nbs.smudge=",
+      "filter.nbs.process=",
+      "filter.nbs.required=false",
+    ])
+      expect(args).toContain(value);
+    // Every program is absolute: git resolves a bare name through PATH.
+    for (const pattern of [
+      /^diff\.t\.textconv=\/(usr\/)?bin\/cat$/,
+      /^diff\.t\.command=\/(usr\/)?bin\/true$/,
+      /^diff\.external=\/(usr\/)?bin\/true$/,
+      /^merge\.m\.driver=\/(usr\/)?bin\/false$/,
+    ])
+      expect(args.some((a) => pattern.test(a))).toBe(true);
+    expect(hostGitDriverOverrides(scratch)).toEqual([]);
+    git(repo, "config", "filter.a=b.clean", "x");
+    expect(() => hostGitDriverOverrides(repo)).toThrow(/cannot be overridden safely/);
   });
 });
