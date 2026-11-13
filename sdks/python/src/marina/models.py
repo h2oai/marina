@@ -32,7 +32,7 @@ A2UIComponent = TypedDict(
     "A2UIComponent",
     {
         "id": "str",
-        "component": "A2UIComponentType",
+        "component": "Union[str, A2UIComponentType]",
         "child": "NotRequired[str]",
         "children": "NotRequired[list[str]]",
     },
