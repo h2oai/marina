@@ -17,6 +17,7 @@ import {
 import type { RoutingEventInput, RoutingSession } from "../src/sdk/routing-types";
 import { nativeEditDiff, readCurrentFile } from "./code-diff";
 import type { CodingHarness } from "./code-harness";
+import { nativeActivityStep, readyLines } from "./native-activity";
 import { residentSupervisorOptions } from "./supervise";
 
 export interface TerminalAgent {
@@ -144,14 +145,22 @@ export class NativeTerminal {
       if (!this.stopping) await Bun.sleep(this.options.intervalMs ?? 1000);
     }
   }
-  private flush() {
+  /**
+   * Write buffered agent text. Only whole lines go out unless `final` (a status
+   * change, a step line, the turn's end or a quiet pause), so a sentence is
+   * never split across terminal lines by the timer.
+   */
+  private flush(final = true) {
     clearTimeout(this.outputTimer);
     this.outputTimer = undefined;
     for (const [id, text] of this.output) {
-      if (text)
-        this.options.write(`[${this.agents.get(id)?.session.label ?? id}] ${text.trimEnd()}`);
+      const { ready, rest } = readyLines(text, final);
+      if (ready.trim())
+        this.options.write(`[${this.agents.get(id)?.session.label ?? id}] ${ready.trimEnd()}`);
+      if (rest) this.output.set(id, rest);
+      else this.output.delete(id);
     }
-    this.output.clear();
+    if (this.output.size) this.outputTimer = setTimeout(() => this.flush(true), 1500);
   }
   private event(session: RoutingSession, event: RoutingEventInput) {
     const payload = record(event.payload);
@@ -179,9 +188,14 @@ export class NativeTerminal {
       for (const line of digestLines(payload.text))
         this.options.write(`[${session.label}] ← ${line}`);
     } else if (event.kind === "output" && typeof payload.text === "string") {
+      // A command's own output stays in Streams; the terminal shows the agent's words and steps.
+      if (payload.method === "item/commandExecution/outputDelta") {
+        for (const listener of this.listeners) listener();
+        return;
+      }
       this.output.set(session.id, (this.output.get(session.id) ?? "") + payload.text);
       if ((this.output.get(session.id)?.length ?? 0) > 8000) this.flush();
-      else this.outputTimer ??= setTimeout(() => this.flush(), 100);
+      else this.outputTimer ??= setTimeout(() => this.flush(false), 100);
     } else if (event.kind === "delivery.accepted" || event.kind === "delivery.error") {
       this.deliveries.set(
         String(payload.messageId),
@@ -215,16 +229,16 @@ export class NativeTerminal {
     ) {
       const agent = this.agents.get(session.id);
       if (agent) agent.failure = `Native turn ${String(record(payload.turn).status)}`;
-    } else if (
-      event.kind.startsWith("native.") &&
-      !["native.assistant", "native.user"].includes(event.kind)
-    ) {
-      // Compact activity in the terminal; complete native payloads stay in Streams.
-      if (/tool|item\/started|item\/completed|result|agent_settled/.test(event.kind))
-        this.options.write(
-          `[${session.label}] ${event.kind.slice(7)}${typeof payload.toolName === "string" ? ` · ${payload.toolName}` : ""}`,
-        );
+    } else if (event.kind.startsWith("native.") && event.kind !== "native.user") {
+      // One plain step per action, as Marina's own coder shows (Claude Code's tool
+      // uses arrive inside `assistant` messages); complete native payloads stay in Streams.
+      const step = nativeActivityStep(event.kind, payload, this.agents.get(session.id)?.state.cwd);
+      if (step) {
+        this.flush();
+        for (const line of step.split("\n")) this.options.write(`[${session.label}] * ${line}`);
+      }
     }
+
     for (const listener of this.listeners) listener();
   }
   private async approval(session: RoutingSession, payload: Record<string, unknown>) {
