@@ -172,6 +172,89 @@ describe("attribution of a failed gate", () => {
     expect(attributeFailure({ change, base: same, again: same }).kind).toBe("preexisting");
   });
 
+  it("[E1] reads a header with spaces or over 400 characters; an unknown header ends the file", () => {
+    const long = `${"deep/".repeat(90)}x.test.ts`;
+    const out = [
+      "a.test.ts:",
+      "error: boom",
+      "(fail) one [0.1ms]",
+      "my tests/b.test.ts:",
+      "error: boom",
+      "(fail) two [0.1ms]",
+      `${long}:`,
+      "error: boom",
+      "(fail) three [0.1ms]",
+    ].join("\n");
+    expect(digestOutput(out, "/repo", 1).identities.map((identity) => identity.file)).toEqual([
+      "a.test.ts",
+      "my tests/b.test.ts",
+      long,
+    ]);
+    // A header this parser cannot read: the failure after it has no file, never a.test.ts's.
+    const unknown = digestOutput(
+      [
+        "a.test.ts:",
+        "error: boom",
+        "(fail) one [0.1ms]",
+        "weird/suite.feature:",
+        "error: boom",
+        "(fail) two [0.1ms]",
+      ].join("\n"),
+      "/repo",
+      1,
+    );
+    expect(unknown.identities[1]!.file).toBeUndefined();
+    expect(
+      attributeFailure({
+        change: unknown,
+        base: failed(
+          bun({
+            "a.test.ts": [
+              ["one", "boom"],
+              ["two", "boom"],
+            ],
+          }),
+        ),
+      }).kind,
+    ).toBe("inconclusive");
+  });
+
+  it("[E2] sums failure counts across runner invocations in one step", () => {
+    const first = `${bun({ "a.test.ts": [["one", "boom"]] })}\n\n 0 pass\n 1 fail\n`;
+    const second = "b.test.ts:\n\n 0 pass\n 1 fail\n"; // a failure this output never names
+    const digest = digestOutput(`${first}\n${second}`, "/repo", 1);
+    expect(digest.incomplete).toBe("the runner counted 2 failures but named 1");
+    expect(digestOutput(first, "/repo", 1).incomplete).toBeUndefined();
+  });
+
+  it("[E3] keeps the values after standalone Expected:/Received: headings in the signature", () => {
+    const run = (received: string) =>
+      digestOutput(
+        `a.test.ts:\nerror: expect(received).toEqual(expected)\n\nExpected:\n  [1, 2]\nReceived:\n  ${received}\n\n      at <anonymous> (/repo/a.test.ts:3:9)\n(fail) x [0.1ms]\n`,
+        "/repo",
+        1,
+      );
+    const change = run("[1]");
+    expect(change.identities[0]!.signature).toBe(
+      "error: expect(received).toEqual(expected) | Expected: | [1, 2] | Received: | [1]",
+    );
+    const base = { passed: false, digest: run("[2]") };
+    expect(attributeFailure({ change, base, again: base }).kind).toBe("inconclusive");
+  });
+
+  it("[E4] keeps literal [Nms] values inside an assertion's signature", () => {
+    const run = (value: string) =>
+      digestOutput(
+        `a.test.ts:\nerror: expect(received).toBe(expected)\n\nExpected: "[2ms]"\nReceived: "${value}"\n\n(fail) x [0.12ms]\n`,
+        "/repo",
+        1,
+      );
+    const change = run("[5ms]");
+    expect(change.identities[0]!.signature).toContain('Received: "[5ms]"');
+    const base = { passed: false, digest: run("[9ms]") };
+    expect(attributeFailure({ change, base, again: base }).kind).toBe("inconclusive");
+  });
+
   it("[R8] bounds a line with no newline and marks the digest incomplete", () => {
     const digester = new FailureDigester("/repo");
     const mib = "x".repeat(1024 * 1024);

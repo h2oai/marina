@@ -13,6 +13,7 @@ import { LocalWorkspace } from "../src/coding/local-workspace";
 import { resolveVerificationOptions } from "../src/coding/verification-plan";
 import { compareWorkspaceState, observeWorkspaceState } from "../src/coding/workspace-state";
 import { planVerification } from "../src/engine/commands/code/exec";
+import { changedDependencyManifests } from "../src/engine/commands/code/verification";
 import type { CodingSessionRow } from "../src/persistence/database";
 import { git as gitIn } from "./git-helpers";
 
@@ -122,5 +123,34 @@ describe("the no-change baseline", () => {
     expect(existsSync(marker)).toBe(false);
     expect(observed.preexisting?.sample).toContain("a.txt");
     rmSync(marker, { force: true });
+  });
+});
+
+describe("dependency manifests between base and change", () => {
+  it("[E5] counts every workspace, package-manager and lock file", () => {
+    writeFileSync(join(root, "a.txt"), "a\n");
+    commit();
+    const base = git("rev-parse", "HEAD").trim();
+    const files = [
+      "pnpm-workspace.yaml",
+      ".pnpmfile.cjs",
+      ".npmrc",
+      "bunfig.toml",
+      ".yarnrc",
+      ".yarnrc.yml",
+      "uv.lock",
+      "poetry.lock",
+      "Pipfile",
+      "Pipfile.lock",
+      "go.work",
+      "go.work.sum",
+      "Gemfile",
+      "Gemfile.lock",
+    ];
+    for (const file of files) writeFileSync(join(root, file), "x\n");
+    writeFileSync(join(root, "notes.md"), "not a manifest\n");
+    git("add", "-A");
+    const tree = git("write-tree").trim();
+    expect(changedDependencyManifests(root, base, tree).sort()).toEqual([...files].sort());
   });
 });

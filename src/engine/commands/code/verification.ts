@@ -710,6 +710,12 @@ function runScratchTmp(checkout: string): string {
 /** Files that decide what a project's dependencies are. */
 const DEPENDENCY_FILES = new Set([
   "package.json",
+  "pnpm-workspace.yaml",
+  ".pnpmfile.cjs",
+  ".npmrc",
+  "bunfig.toml",
+  ".yarnrc",
+  ".yarnrc.yml",
   "bun.lock",
   "bun.lockb",
   "package-lock.json",
@@ -725,6 +731,10 @@ const DEPENDENCY_FILES = new Set([
   "setup.cfg",
   "go.mod",
   "go.sum",
+  "go.work",
+  "go.work.sum",
+  "Gemfile",
+  "Gemfile.lock",
   "Cargo.toml",
   "Cargo.lock",
   "pom.xml",
