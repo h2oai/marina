@@ -66,7 +66,26 @@ const LOCATION = /([\w@./-]+\.(?:[cm]?[jt]sx?|py|go|rs|java|kt)):(\d+)/;
  * runner collects: `*.test.*`, `*_test.*`, `*.spec.*`, `*_spec.*` (JS/TS, any module flavour);
  * go test files are `*_test.go`.
  */
-const FILE_HEADER = /^([\w@./-]+[._](?:test|spec)\.[cm]?[jt]sx?|[\w@./-]+_test\.go):$/;
+const TEST_FILE = /(?:[._](?:test|spec)\.[cm]?[jt]sx?|_test\.go)$/;
+/** A line that looks like a file header: `<path with an extension>:`, any length or spaces. */
+const HEADER_LIKE = /\.[A-Za-z0-9]{1,8}$/;
+/** Error headings that end in a colon but are part of the error, not a file header. */
+const ERROR_HEADING = /^\s*(?:[-+]\s*)?(?:Expected|Received|Actual|Difference|Diff)\b[^:]*:$/i;
+
+/**
+ * A file header, as bun prints it before a test file's results: the test file's path and a
+ * colon, whatever its length or spaces. `undefined`: not a header; `null`: it looks like one
+ * (a path with an extension) but is not a test file this parser knows, so the file identity
+ * is unknown from here on.
+ */
+function fileHeader(full: string): string | null | undefined {
+  const trimmed = full.trim();
+  if (!trimmed.endsWith(":") || ERROR_HEADING.test(trimmed)) return undefined;
+  const path = trimmed.slice(0, -1);
+  if (/^\s|^(?:error|warning|info|note)\b/i.test(path)) return undefined;
+  if (TEST_FILE.test(path)) return path;
+  return HEADER_LIKE.test(path) ? null : undefined;
+}
 /** Output that says something failed outside any named test (setup, load or build). */
 const UNNAMED_FAILURE: Array<[RegExp, string]> = [
   [
@@ -132,11 +151,14 @@ export class FailureDigester {
 
   private normalise(text: string): string {
     const root = this.root?.replace(/\/$/, "");
-    return (root ? text.split(`${root}/`).join("") : text)
-      .replace(SNAPSHOT_PREFIX, "")
-      .replace(/\[[\d.]+m?s\]/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
+    return (
+      (root ? text.split(`${root}/`).join("") : text)
+        .replace(SNAPSHOT_PREFIX, "")
+        // Never a timing: a "[2ms]" inside an assertion's values is part of the failure. The
+        // runner's own timings follow a test name on its result line, which is not signed.
+        .replace(/\s+/g, " ")
+        .trim()
+    );
   }
 
   private line(raw: string): void {
@@ -156,17 +178,18 @@ export class FailureDigester {
     }
     this.errorBlock(full);
     for (const [pattern, why] of UNNAMED_FAILURE) if (pattern.test(full)) this.incomplete ??= why;
+    // One count per runner invocation; a step can run several (`bun test a; bun test b`).
     const fails = FAIL_COUNT.exec(full);
-    if (fails) this.failCount = Number(fails[1]);
+    if (fails) this.failCount = (this.failCount ?? 0) + Number(fails[1]);
     const errors = ERROR_COUNT.exec(full);
     if (errors && Number(errors[1]) > 0)
       this.incomplete ??= `${errors[1]} error(s) outside any named test`;
     if (SUMMARY.test(full.trim())) this.inSummary = true;
-    // Paths are short: matching them on the display-length line keeps every line linear
-    // (these patterns backtrack quadratically on a long run of path characters).
-    const header = full.length <= MAX_LINE ? FILE_HEADER.exec(full.trim()) : null;
-    if (header) {
-      this.file = this.relative(header[1]!);
+    const header = fileHeader(full);
+    if (header !== undefined) {
+      // An unparseable header ends the current file: later failures have no file, and the
+      // digest is incomplete rather than attributing them to the previous file.
+      this.file = header === null ? undefined : this.relative(header);
       this.inSummary = false;
       // A new file: an error left over from the last one belongs to no failure here.
       this.pendingError = undefined;
@@ -202,7 +225,9 @@ export class FailureDigester {
       return;
     }
     if (!this.errorOpen || !this.pendingError) return;
-    if (/^\s+at |^\s*\d+ \| |^\((?:fail|pass)\) |^\S.*:$/.test(full)) {
+    // The stack, a code frame, a result line or a file header ends the block; an error's own
+    // headings (`Expected:`, `Received:`) do not, and the value lines after them are kept.
+    if (/^\s+at |^\s*\d+ \| |^\((?:fail|pass)\) /.test(full) || fileHeader(full) !== undefined) {
       this.errorOpen = false;
       return;
     }
