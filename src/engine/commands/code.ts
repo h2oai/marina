@@ -109,6 +109,7 @@ import {
   publishCodingRun,
   reviewCodingRun,
 } from "./code/task-run";
+import { trialCode } from "./code/trial";
 import { startVerification } from "./code/verification";
 import { seeWorkspaceFile } from "./code/visual";
 import {
@@ -514,6 +515,9 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   write: async (c) => {
     await writeWorkspaceFile(c.ctx, c.eid, c.entity, c.deps, c.rawAfterSub);
   },
+  trial: async (c) => {
+    await trialCode(c.ctx, c.eid, c.entity, c.deps, c.args);
+  },
 };
 
 export function codeCommand(deps: CodeDeps): CommandDef {
@@ -727,6 +731,11 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       { syntax: "code worktree merge", effect: "read" },
       { syntax: "code worktree off", effect: "write" },
       { syntax: "code worktree on", effect: "write" },
+      {
+        syntax:
+          "code trial benchmark:<name> cap:<usd> [limit:<n>] [replicates:<n>] [model:<id>] [seed:<n>]",
+        effect: "execute",
+      },
       { syntax: "code worktree status", effect: "read" },
       { syntax: "code write <path> <content>", effect: "write" },
       { syntax: "code writer [<agent>]", effect: "write" },
@@ -868,6 +877,8 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         if (
           HOST_ROOT_EXEC_SUBCOMMANDS.has(canonicalSub) &&
           canonicalSub !== "runner" &&
+          // A trial reads the session's worktree; it never edits one into being.
+          canonicalSub !== "trial" &&
           !inspectOnly
         ) {
           const sessionId =

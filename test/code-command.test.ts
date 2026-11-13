@@ -3612,6 +3612,54 @@ describe("code worktree (per-session isolation)", () => {
     }
   });
 
+  it("code trial refuses until there is a change to this Marina's own source to measure", async () => {
+    const repo = makeRepoWithCommit();
+    const other = wtTempDir("marina-trial-other-root-");
+    try {
+      const entity = makeAgentEntity("u_trial", "Trialer");
+      db.saveEntity(entity);
+      grant(db, entity.id, "code.exec");
+      const sent: string[] = [];
+      const runner = {
+        start: () => ({ id: "x", configHash: "x" }),
+        done: async () => {},
+        list: () => [{ name: "smoke" }] as never,
+        datasetReady: (name: string) => name === "smoke",
+      };
+      const make = (marinaRoot: string) =>
+        codeCommand({
+          db,
+          getEntity: (id) => (id === entity.id ? entity : undefined),
+          workspaceRegistry: new WorkspaceRegistry({ defaultRoot: repo, roots: [repo] }),
+          getConnectionProtocol: () => "websocket",
+          marinaRoot,
+          benchmarkRunner: runner,
+        });
+      const ctx = testRoomContext(sent);
+      const last = () => stripAnsi(sent.at(-1) ?? "");
+      await make(repo).handler(ctx, inputFor(entity, "code start Trial"));
+      await make(repo).handler(ctx, inputFor(entity, "code trial benchmark:smoke"));
+      expect(last()).toContain("Usage: code trial");
+      await make(other).handler(ctx, inputFor(entity, "code trial benchmark:smoke cap:1"));
+      expect(last()).toContain("this Marina's own source");
+      await make(repo).handler(ctx, inputFor(entity, "code trial benchmark:smoke cap:1"));
+      expect(last()).toContain("Nothing to trial yet");
+      await make(repo).handler(ctx, inputFor(entity, "code write fresh.txt\nchange\n"));
+      await make(repo).handler(ctx, inputFor(entity, "code trial benchmark:nope cap:1"));
+      expect(last()).toContain('Unknown benchmark "nope"');
+      await make(repo).handler(
+        ctx,
+        inputFor(entity, "code trial benchmark:smoke cap:1 replicates:9"),
+      );
+      expect(last()).toContain("replicates must be 1–5");
+    } finally {
+      const wt = db.listCodingSessions("Trialer", 1)[0]?.worktree_path;
+      if (wt) git(repo, "worktree", "remove", "--force", wt);
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
   it("an ordinary repository is not isolated automatically", async () => {
     const repo = makeRepoWithCommit();
     const other = wtTempDir("marina-wt-other-root-");

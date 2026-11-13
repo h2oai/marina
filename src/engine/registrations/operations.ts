@@ -199,6 +199,7 @@ export function registerOperationCommands(engine: Engine): void {
     codeCommand({
       // Sessions on this server's own checkout edit in a worktree, never the live tree.
       marinaRoot: MARINA_ROOT,
+      benchmarkRunner: engine.benchmarkRunner,
       describeVisual: (source, question, entity) =>
         describeVisual(engine, source, {
           question,
