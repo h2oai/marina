@@ -67,7 +67,7 @@ export function withSnapshotModifier(command: string, snapshotId: string): strin
  * --no-textconv`, `diff --no-index` included.
  */
 async function git(cwd: string, args: string[]): Promise<string> {
-  const [cmd, ...argv] = hostGitArgv(["git", ...args]);
+  const [cmd, ...argv] = hostGitArgv(["git", ...args], cwd);
   const { stdout } = await exec(cmd!, argv, {
     cwd,
     env: hostGitEnv(),

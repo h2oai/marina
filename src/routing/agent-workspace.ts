@@ -42,7 +42,7 @@ export async function prepareAgentWorkspace(
   if (mode === "shared") return { cwd: source, dirty: false };
   // Hardened host git: the workspace's own config cannot run hooks or monitors.
   const git = (args: string[]) => {
-    const [cmd, ...argv] = hostGitArgv(["git", ...args]);
+    const [cmd, ...argv] = hostGitArgv(["git", ...args], source);
     return exec(cmd!, argv, { cwd: source, env: hostGitEnv(), maxBuffer: 1_048_576 });
   };
   const top = (await git(["rev-parse", "--show-toplevel"])).stdout.trim();

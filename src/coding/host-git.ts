@@ -23,6 +23,7 @@
  * flags are the second layer and also cover host runners.
  */
 
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -73,17 +74,89 @@ export function hostGitEnv(extra: Record<string, string> = {}): Record<string, s
   };
 }
 
+/** A passthrough textconv: an absolute `cat` (never resolved through PATH), else the shell builtin. */
+const PASSTHROUGH_TEXTCONV =
+  ["/usr/bin/cat", "/bin/cat"].find((path) => existsSync(path)) ?? "true";
+
+/**
+ * `-c` overrides that switch off every content driver the repository's config
+ * names (filters, diff textconv / external commands, merge drivers). Git runs
+ * those programs with the work tree as cwd whenever it hashes, diffs or merges
+ * work-tree content, so they are inert in host git:
+ * - `filter.<n>.clean|smudge|process` empty and `required=false`: no program
+ *   runs and content is hashed as stored;
+ * - `diff.<n>.textconv` an absolute `cat` (a passthrough), `diff.<n>.command`
+ *   and `diff.external` the shell builtin `true`;
+ * - `merge.<n>.driver` the shell builtin `false`, so a merge that would use
+ *   it reports a conflict instead of running anything.
+ * Driver names come from `git config --get-regexp`, which reads configuration
+ * (including its includes) without running anything. Global and system config
+ * are already off for host git (`hostGitEnv`). A driver name git's `-c` syntax
+ * cannot carry fails closed.
+ */
+export function hostGitDriverOverrides(cwd: string): string[] {
+  const probe = Bun.spawnSync(
+    ["git", ...HOST_GIT_CONFIG_ARGS, "config", "--null", "--get-regexp", "^(filter|diff|merge)\\."],
+    { cwd, env: hostGitEnv(), stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+  );
+  // 1: no such keys; anything else (not a repository, unreadable config)
+  // means the real git command reads no drivers either, or fails the same way.
+  if (probe.exitCode !== 0) return [];
+  const filters = new Set<string>();
+  const diffs = new Set<string>();
+  const merges = new Set<string>();
+  let external = false;
+  for (const entry of probe.stdout.toString().split("\0")) {
+    const newline = entry.indexOf("\n");
+    const key = newline < 0 ? entry : entry.slice(0, newline);
+    const firstDot = key.indexOf(".");
+    const lastDot = key.lastIndexOf(".");
+    if (firstDot < 0) continue;
+    const section = key.slice(0, firstDot).toLowerCase();
+    if (section !== "filter" && section !== "diff" && section !== "merge") continue;
+    if (firstDot === lastDot) {
+      if (section === "diff" && key.slice(lastDot + 1).toLowerCase() === "external")
+        external = true;
+      continue;
+    }
+    const name = key.slice(firstDot + 1, lastDot);
+    if (/[=\n\0]/.test(name))
+      throw new Error(
+        "A git driver name in this repository's config cannot be overridden safely; refused.",
+      );
+    if (section === "filter") filters.add(name);
+    else if (section === "diff") diffs.add(name);
+    else if (section === "merge") merges.add(name);
+  }
+  const args: string[] = [];
+  for (const name of filters)
+    for (const setting of ["clean=", "smudge=", "process=", "required=false"])
+      args.push("-c", `filter.${name}.${setting}`);
+  for (const name of diffs)
+    args.push(
+      "-c",
+      `diff.${name}.textconv=${PASSTHROUGH_TEXTCONV}`,
+      "-c",
+      `diff.${name}.command=true`,
+    );
+  if (external) args.push("-c", "diff.external=true");
+  for (const name of merges) args.push("-c", `merge.${name}.driver=false`);
+  return args;
+}
+
 /** Whether an argv starts a git process. */
 export function isGitArgv(argv: readonly string[]): boolean {
   return argv[0] === "git";
 }
 
 /**
- * `["git", sub, ...args]` → `["git", -c overrides..., sub, ...args]`.
+ * `["git", sub, ...args]` → `["git", -c overrides..., sub, ...args]`; given
+ * the `cwd` git will run in, the repository's content drivers are switched off
+ * too (`hostGitDriverOverrides`).
  * Porcelain `diff` also runs external diff and textconv drivers by default;
  * those are switched off. Idempotent: an already-hardened argv is unchanged.
  */
-export function hostGitArgv(argv: readonly string[]): string[] {
+export function hostGitArgv(argv: readonly string[], cwd?: string): string[] {
   if (!isGitArgv(argv)) return [...argv];
   if (argv[1] === "-c" && argv[2] === HOST_GIT_CONFIG_ARGS[1]) return [...argv];
   const rest = argv.slice(1);
@@ -91,5 +164,8 @@ export function hostGitArgv(argv: readonly string[]): string[] {
     const extra = ["--no-ext-diff", "--no-textconv"].filter((flag) => !rest.includes(flag));
     rest.splice(1, 0, ...extra);
   }
-  return ["git", ...HOST_GIT_CONFIG_ARGS, ...rest];
+  // With the directory git will run in, also switch off the content drivers
+  // that directory's repository config names.
+  const drivers = cwd === undefined ? [] : hostGitDriverOverrides(cwd);
+  return ["git", ...HOST_GIT_CONFIG_ARGS, ...drivers, ...rest];
 }

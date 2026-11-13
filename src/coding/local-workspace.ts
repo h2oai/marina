@@ -1515,7 +1515,7 @@ export async function runWorkspaceCommand(
   // Host git never honours repository-planted fsmonitor / hooks / diff drivers
   // (src/coding/host-git.ts); everything else gets the scrubbed Code Mode env.
   const git = isGitArgv(cmd);
-  const argv = git ? hostGitArgv(cmd) : cmd;
+  const argv = git ? hostGitArgv(cmd, cwd) : cmd;
   const env: Record<string, string> = git
     ? hostGitEnv(environment)
     : {
@@ -1630,7 +1630,7 @@ export async function runCapture(
 ): Promise<{ content: string; truncated: boolean; exitCode: number; totalBytes?: number }> {
   assertHostExecAllowed(hostExecForbidden); // chokepoint: telnet-origin never spawns
   const git = isGitArgv(cmd);
-  const argv = git ? hostGitArgv(cmd) : cmd;
+  const argv = git ? hostGitArgv(cmd, cwd) : cmd;
   const env: Record<string, string> = git
     ? hostGitEnv(environment)
     : {

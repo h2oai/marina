@@ -16,7 +16,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { HOST_GIT_CONFIG_ARGS, hostGitEnv } from "./host-git";
+import { HOST_GIT_CONFIG_ARGS, hostGitDriverOverrides, hostGitEnv } from "./host-git";
 
 export const CANDIDATE_POLICY = "git-working-bytes-v1";
 const MAX_FILES = 8192;
@@ -48,16 +48,19 @@ async function git(
   index?: string,
   allowFailure = false,
 ) {
-  const child = Bun.spawn(["git", ...HOST_GIT_CONFIG_ARGS, ...args], {
-    cwd,
-    env: hostGitEnv(index ? { GIT_INDEX_FILE: index } : {}),
-    stdin:
-      input === undefined
-        ? "ignore"
-        : new Blob([typeof input === "string" ? input : new Uint8Array(input)]),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const child = Bun.spawn(
+    ["git", ...HOST_GIT_CONFIG_ARGS, ...hostGitDriverOverrides(cwd), ...args],
+    {
+      cwd,
+      env: hostGitEnv(index ? { GIT_INDEX_FILE: index } : {}),
+      stdin:
+        input === undefined
+          ? "ignore"
+          : new Blob([typeof input === "string" ? input : new Uint8Array(input)]),
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
   const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
   const read = async (stream: ReadableStream<Uint8Array>) => {
     const chunks: Uint8Array[] = [];
