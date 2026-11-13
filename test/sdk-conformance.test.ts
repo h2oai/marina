@@ -62,6 +62,33 @@ export const LANGUAGES: Language[] = [
       args,
     ],
   },
+  {
+    id: "rust",
+    name: "rsdriver",
+    build: async () => {
+      const cargo = Bun.spawn(
+        [
+          process.env.MARINA_TEST_CARGO ?? "cargo",
+          "build",
+          "--examples",
+          "--manifest-path",
+          join(ROOT, "sdks/rust/Cargo.toml"),
+        ],
+        { cwd: ROOT, stdout: "pipe", stderr: "pipe" },
+      );
+      const [stderr, code] = await Promise.all([new Response(cargo.stderr).text(), cargo.exited]);
+      if (code !== 0) throw new Error(`cargo build failed:\n${stderr}`);
+    },
+    argv: (scenario, url, args) => [
+      join(
+        process.env.CARGO_TARGET_DIR ?? join(ROOT, "sdks/rust/target"),
+        "debug/examples/conformance",
+      ),
+      scenario,
+      url,
+      args,
+    ],
+  },
 ];
 
 function check(schema: TSchema, value: unknown, what: string): void {
