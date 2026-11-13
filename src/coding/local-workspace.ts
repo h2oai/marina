@@ -50,6 +50,12 @@ export interface WorkspaceDiff {
 }
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const MAX_RUN_TIMEOUT_MS = 300_000;
+/**
+ * The ceiling for a step that asks for more than {@link MAX_RUN_TIMEOUT_MS}: a
+ * verification's full suite under its budget (MARINA_CODE_VERIFY_FULL_BUDGET,
+ * `budget:`). The container runner's ceiling, so a budget means the same on both.
+ */
+const MAX_BUDGETED_RUN_TIMEOUT_MS = 1_800_000;
 
 const SKIP_DIRS = new Set([".git", ".turbo", ".vite", "coverage", "dist", "node_modules", "tmp"]);
 const SHELL_METACHARACTERS = /[;&|`$()><\n\r\\]/;
@@ -865,7 +871,7 @@ export class LocalWorkspace implements WorkspaceRuntime {
     return runWorkspaceCommand(
       normalized,
       this.root,
-      Math.min(timeoutMs, MAX_RUN_TIMEOUT_MS),
+      Math.min(timeoutMs, MAX_BUDGETED_RUN_TIMEOUT_MS),
       maxBytes,
       this.hostExecForbidden,
     );
