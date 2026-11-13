@@ -18,14 +18,15 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 /**
- * {@code marina.http.v1}: memory, routing, investigations and panels over HTTP.
+ * {@code marina.http.v1}: memory, routing, investigations and panels over HTTP, untyped (the
+ * typed methods are in {@link Http}).
  *
  * <p>Every operation in protocol/marina.http.v1.openapi.json is called by its operation id, with
  * path and query parameters by name and the JSON body:
  *
  * <pre>{@code
  * marina.routing().call("discover");
- * HttpApi memory = marina.memory(credential);
+ * HttpApi memory = marina.memory(credential).http();
  * Object space = memory.call("createSpace", Map.of(), Map.of("name", "notes"));
  * memory.call("remember", Map.of("space", id), Map.of("content", "Deploys run from main"));
  * }</pre>

@@ -5,6 +5,7 @@
 // (protocol/marina.http.v1.openapi.json). `bun run docs:api` writes every output and
 // `--check` fails when one is stale. Each language adds its renderer here.
 
+import { JAVA_MODELS } from "./java";
 import { renderPythonModels } from "./python";
 import { renderRustModels } from "./rust";
 
@@ -18,4 +19,5 @@ export interface SdkModelOutput {
 export const SDK_MODEL_OUTPUTS: SdkModelOutput[] = [
   { file: "sdks/python/src/marina/models.py", render: renderPythonModels },
   { file: "sdks/rust/src/models.rs", render: renderRustModels },
+  JAVA_MODELS,
 ];

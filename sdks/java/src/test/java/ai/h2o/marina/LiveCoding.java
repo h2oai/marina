@@ -72,7 +72,7 @@ public final class LiveCoding {
       report.put("discover", marina.routing().call("discover"));
       report.put("capability_count", Json.array(marina.capabilities().get("commands")).size());
 
-      HttpApi memory = marina.memory(credential);
+      Http.MemoryApi memory = marina.memory(credential);
       String space = String.valueOf(Json.object(memory.call("createSpace", Map.of(), Map.of("name", "jspace"))).get("id"));
       Object first = memory.call("remember", Map.of("space", space), Map.of("content", "Deploys run from main"), "j-1");
       Object again = memory.call("remember", Map.of("space", space), Map.of("content", "Deploys run from main"), "j-1");

@@ -87,7 +87,7 @@ afterAll(() => rmSync(classes, { recursive: true, force: true }));
 describe("Java SDK: offline", () => {
   it("passes its own unit tests", async () => {
     const result = await java("SdkTest");
-    expect(result.stderr).toContain("OK 7 tests");
+    expect(result.stderr).toContain("OK 12 tests");
     expect(result.code).toBe(0);
   }, 60_000);
 

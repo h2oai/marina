@@ -89,6 +89,45 @@ export const LANGUAGES: Language[] = [
       args,
     ],
   },
+  (() => {
+    // Compiled once (main + test sources) into a temporary folder, removed at exit.
+    let classes = "";
+    const java = process.env.MARINA_TEST_JAVA ?? "java";
+    return {
+      id: "java",
+      name: "javadriver",
+      build: async () => {
+        classes = mkdtempSync(join(tmpdir(), "marina-conformance-java-"));
+        process.on("exit", () => rmSync(classes, { recursive: true, force: true }));
+        const sdk = join(ROOT, "sdks/java/src");
+        const sources = [...new Bun.Glob("**/*.java").scanSync(sdk)].map((f) => join(sdk, f));
+        const javac = Bun.spawnSync(
+          [
+            process.env.MARINA_TEST_JAVAC ?? "javac",
+            "--release",
+            "17",
+            "-Xlint:all",
+            "-Werror",
+            "-d",
+            classes,
+            ...sources,
+          ],
+          { stdout: "pipe", stderr: "pipe" },
+        );
+        if (javac.exitCode !== 0)
+          throw new Error(`javac failed:\n${javac.stdout.toString()}${javac.stderr.toString()}`);
+      },
+      argv: (scenario: string, url: string, args: string) => [
+        java,
+        "-cp",
+        classes,
+        "ai.h2o.marina.Conformance",
+        scenario,
+        url,
+        args,
+      ],
+    };
+  })(),
 ];
 
 function check(schema: TSchema, value: unknown, what: string): void {
