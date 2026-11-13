@@ -324,7 +324,7 @@ export function renderRunResult(r: RunResult): string {
         ? "checks passed"
         : r.verification === "failed"
           ? "checks failed"
-          : r.verification
+          : r.verification && r.verification !== "missing"
             ? `checks ${r.verification}`
             : "no checks recorded";
   const took = [

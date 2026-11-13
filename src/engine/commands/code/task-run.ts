@@ -234,7 +234,12 @@ export function publishCodingRun(deps: CodeDeps & { db: MarinaDB }, run: CodingA
   const detail = submitted
     ? meta.unverifiedAcceptance
       ? `Task #${meta.taskId} accepted by its owner without verified evidence: ${meta.unverifiedAcceptance.reason}. Recorded verification: ${meta.verification}.`
-      : `Task #${meta.taskId} submitted for review${meta.budgetForced ? (meta.budgetForced.reason === "spend" ? " when the model budget ran out (budget-forced best effort, submitted without a model call)" : " at its deadline (budget-forced best effort)") : ""}. Recorded verification: ${meta.verification}.`
+      : `Task #${meta.taskId} submitted for review${meta.budgetForced ? (meta.budgetForced.reason === "spend" ? " when the model budget ran out (budget-forced best effort, submitted without a model call)" : " at its deadline (budget-forced best effort)") : ""}.${
+          // A task with no verification requirement that recorded none says nothing about it.
+          !meta.verificationRequirement && (!meta.verification || meta.verification === "missing")
+            ? ""
+            : ` Recorded verification: ${meta.verification}.`
+        }`
     : `Task #${meta.taskId} ${run.status}: ${meta.reason === "agent_died" ? "Worker stopped before submitting." : meta.reason}`;
   const assumptions = (meta.assumptions ?? []).map(({ text, source }) => ({ text, source }));
   const payload = {

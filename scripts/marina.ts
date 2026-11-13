@@ -95,7 +95,9 @@ export type Dispatch =
       mode?: WorkspaceMode;
       verbose?: boolean;
       allowUnverified?: boolean;
-      /** One-shot verification requirement (`code do verification:<mode>`); default by folder (`printVerification`). */
+      /** `--verify`: the one-shot must pass Marina's verification (default by folder, `printVerification`). */
+      verify?: boolean;
+      /** One-shot verification requirement (`code do verification:<mode>`); implies `--verify`. */
       verification?: PrintVerification;
       /** The coder's thinking level (`MARINA_CODE_THINKING` for the folder server). */
       thinking?: string;
@@ -273,6 +275,7 @@ export function parseDispatch(
   let verbose: boolean | undefined;
   let allowUnverified: boolean | undefined;
   let verification: PrintVerification | undefined;
+  let verify: boolean | undefined;
   let thinking: string | undefined;
   let sandbox: boolean | undefined;
   let driver: CodeDriverName | undefined;
@@ -330,6 +333,10 @@ export function parseDispatch(
     }
     if (arg === "--json") {
       json = true;
+      continue;
+    }
+    if (arg === "--verify") {
+      verify = true;
       continue;
     }
     if (arg === "--verification") {
@@ -391,7 +398,11 @@ export function parseDispatch(
     dir = arg;
   }
   // The one-shot result flags shape a -p run only.
-  if ((allowUnverified || json || verification || driver) && print === undefined && !taskFromStdin)
+  if (
+    (allowUnverified || json || verification || verify || driver) &&
+    print === undefined &&
+    !taskFromStdin
+  )
     return {
       kind: "usage-error",
       arg: allowUnverified
@@ -400,7 +411,9 @@ export function parseDispatch(
           ? "--json"
           : verification
             ? "--verification"
-            : "--driver",
+            : verify
+              ? "--verify"
+              : "--driver",
     };
   if (Object.keys(connected).length) {
     if (
@@ -441,6 +454,7 @@ export function parseDispatch(
     ...(verbose ? { verbose } : {}),
     ...(allowUnverified ? { allowUnverified } : {}),
     ...(json ? { json } : {}),
+    ...(verify ? { verify } : {}),
     ...(verification ? { verification } : {}),
     ...(thinking ? { thinking } : {}),
     ...(sandbox ? { sandbox } : {}),
@@ -527,11 +541,19 @@ Options:
   --profile <dialect>         Marina command dialect: marina, claude, codex, pi
   --harness <name-or-path>    saved harness or explicit portable JSON file
                               /harness save <name> remembers a folder's default
-  -p, --print <task>           dispatch one coding task, await completion, then exit
-  --allow-unverified           with -p: exit 0 for completed work that was not verified
-                               (still reported on stderr)
-  --verification <mode>        with -p: what the task must verify before it can submit
-                               (default MARINA_CODE_VERIFICATION, else by folder):
+  -p, --print <task>           dispatch one coding task, await completion, then exit.
+                               Like claude -p / codex exec: the coder runs whatever
+                               tests it judges useful and ends with its summary and the
+                               changed files; Marina adds no verification of its own
+  --verify                     with -p: Marina verifies the result before it counts:
+                               the task must pass its verification to submit, a result
+                               that is not verified exits 3, and a native --agent turn
+                               is checked with the repository's gates afterwards
+  --allow-unverified           with --verify: exit 0 for completed work that was not
+                               verified (still reported on stderr)
+  --verification <mode>        with -p, implies --verify: what the task must verify
+                               before it can submit (MARINA_CODE_VERIFICATION sets it
+                               too; with --verify alone, by folder):
                                candidate (default in a Git repository with a detected
                                test runner: the repository's own type-check, lint and
                                tests on a snapshot, relevant tests then the full suite,
@@ -567,12 +589,14 @@ loosen that only in an interactive local terminal you own; without a TTY they ar
 refused and the session stays allowlist-only.
 
 Exit codes (one-shot -p):
-  0  task completed and verified (its required verification passed; session diff
-     printed). A native agent's turn (--agent claude|codex|pi) is verified the same
-     way: the repository's gates on a snapshot of the folder after the turn
-  3  task completed but was not verified (the reason is printed; --allow-unverified
-     makes this 0), including a task that changed no files (status no_changes,
-     reason "nothing to verify")
+  0  task completed (status done: the changed files and the coder's summary are
+     printed; nothing is claimed verified). With --verify: completed and verified
+     (its required verification passed). A native agent's turn (--agent
+     claude|codex|pi) under --verify is verified the same way: the repository's
+     gates on a snapshot of the folder after the turn
+  3  --verify only: task completed but was not verified (the reason is printed;
+     --allow-unverified makes this 0), including a task that changed no files
+     (status no_changes, reason "nothing to verify")
   1  task failed (the agent died mid-task, the run was stopped, or it ended
      blocked); edits already made stay and are listed. A block over an
      interpretation is answered automatically and recorded as an assumption
@@ -585,7 +609,8 @@ Environment:
                                connected coding otherwise uses that account's server-bound cache
   MARINA_CODE_FRESH=1          same as --fresh
   MARINA_CODE_TASK_TIMEOUT_MS  one-shot task timeout in ms (default 600000; 1200000 when
-                               the repository's gates verify the task)
+                               --verify runs the repository's gates)
+  MARINA_CODE_VERIFICATION     with -p: checks | candidate | delivery, as --verification
   ANTHROPIC_API_KEY, ...       an LLM provider key so agents can think`;
 
 // ── version ──────────────────────────────────────────────────────────────────
@@ -1033,6 +1058,7 @@ if (import.meta.main) {
         mode: dispatch.mode,
         verbose: dispatch.verbose,
         allowUnverified: dispatch.allowUnverified,
+        verify: dispatch.verify,
         verification: dispatch.verification,
         thinking: dispatch.thinking,
         sandbox: dispatch.sandbox,

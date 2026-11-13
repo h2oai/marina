@@ -140,7 +140,8 @@ describe("candidate-bound coding verification", () => {
     expect(artifact("verification").content_text).toContain("passed");
     expect(artifact("verification").content_text).not.toContain("Check output");
     expect(output.map((p) => p.data.text).join("\n")).toContain("Candidate verification: passed.");
-    expect(output.map((p) => p.data.text).join("\n")).toContain(
+    // No task requires verification here, so the receipt prescribes none.
+    expect(output.map((p) => p.data.text).join("\n")).not.toContain(
       "Any later source or test edit requires fresh candidate verification",
     );
     expect(artifact("command_output").content_text).toContain("2 pass");

@@ -88,11 +88,17 @@ export interface CodeSessionOptions {
   dangerouslyAllowAll?: boolean;
   /** Print startup details (database, endpoints, federation address). */
   verbose?: boolean;
-  /** `-p`: exit 0 for completed work that was not verified (it is still reported). */
+  /** `-p --verify`: exit 0 for completed work that was not verified (it is still reported). */
   allowUnverified?: boolean;
   /**
-   * `-p` only: the verification the task must pass (`code do verification:<mode>`);
-   * default `MARINA_CODE_VERIFICATION`, else `delivery`.
+   * `-p --verify`: Marina verifies the result (`printVerification`). Without it, and without
+   * `verification` or `MARINA_CODE_VERIFICATION`, a one-shot runs like `claude -p`: the coder
+   * checks what it judges useful and the run ends with its summary, never claimed verified.
+   */
+  verify?: boolean;
+  /**
+   * `-p` only: the verification the task must pass (`code do verification:<mode>`); implies
+   * `verify`. Default `MARINA_CODE_VERIFICATION`, else by folder.
    */
   verification?: "checks" | "candidate" | "delivery";
   /** The coder's thinking level, passed to the folder server as `MARINA_CODE_THINKING`. */
@@ -158,19 +164,24 @@ export function repositoryGates(
 }
 
 /**
- * A one-shot's verification requirement: the flag, else `MARINA_CODE_VERIFICATION`
- * (checks | candidate | delivery), else `candidate` for a Git repository with a detected
- * test runner (verified = the repository's own gates passed on a snapshot) and `delivery`
- * for anything else (every stated requirement observed by a check, or reported unverified).
+ * A one-shot's verification requirement, or none. By default there is none: like `claude -p`
+ * or `codex exec`, the coder runs whatever checks it judges useful and the run ends with its
+ * summary. Marina verifies only when asked: the flag, else `MARINA_CODE_VERIFICATION`
+ * (checks | candidate | delivery), else under `--verify` (`verify`) `candidate` for a Git
+ * repository with a detected test runner (verified = the repository's own gates passed on a
+ * snapshot) and `delivery` for anything else (every stated requirement observed by a check,
+ * or reported unverified).
  */
 export function printVerification(
   flag: CodeSessionOptions["verification"],
   env: NodeJS.ProcessEnv = process.env,
   dir?: string,
-): "checks" | "candidate" | "delivery" {
+  verify = false,
+): "checks" | "candidate" | "delivery" | undefined {
   if (flag) return flag;
   const v = env.MARINA_CODE_VERIFICATION?.trim().toLowerCase();
   if (v === "checks" || v === "candidate" || v === "delivery") return v;
+  if (!verify) return undefined;
   return dir !== undefined && repositoryGates(dir).ok ? "candidate" : "delivery";
 }
 
@@ -381,8 +392,12 @@ export function notCheckableRequirements(coverage: CodeRequirementCoverage | und
   );
 }
 
-/** `marina -p` exit codes. A no-change answer completed but verified nothing: 3. */
+/**
+ * `marina -p` exit codes. By default completed work is `done` (0). Under `--verify` a
+ * no-change answer completed but verified nothing: 3.
+ */
 export const PRINT_EXIT = {
+  done: 0,
   verified: 0,
   failed: 1,
   timeout: 2,
@@ -395,22 +410,38 @@ export const REQUIREMENTS_NOT_MAPPED =
   "Verified on the repository's gates; requirements not mapped (no stated requirement was mapped to a check that observes it).";
 
 /**
- * The one-shot outcome: completed and verified is success (0); completed without passing
+ * The one-shot outcome. Failed is 1, timed out 2. By default (`verify` false) completed work
+ * is `done` (0), as with `claude -p`: Marina claims nothing about verification it did not
+ * run, and a budget-forced submission is named in a notice.
+ *
+ * Under `--verify`: completed and verified is success (0); completed without passing
  * verification is 3, and so is a no-change answer (status `no_changes`: nothing was
  * verified because nothing changed), unless the caller accepts unverified work
- * (`--allow-unverified`, then 0 with the same notice); failed is 1, timed out 2. A
- * budget-forced submission follows the same rule: verified only when its checks passed.
+ * (`--allow-unverified`, then 0 with the same notice). A budget-forced submission follows
+ * the same rule: verified only when its checks passed.
  */
 export function printOutcome(
   end: CodeLifecycleEnd | "timeout" | undefined,
   allowUnverified = false,
+  verify = true,
 ): {
-  status: "verified" | "no_changes" | "unverified" | "failed" | "timeout";
+  status: "done" | "verified" | "no_changes" | "unverified" | "failed" | "timeout";
   exitCode: number;
   notice?: string;
 } {
   if (end === "timeout") return { status: "timeout", exitCode: PRINT_EXIT.timeout };
   if (!end || end.phase === "failed") return { status: "failed", exitCode: PRINT_EXIT.failed };
+  if (!verify)
+    return end.budgetForced
+      ? {
+          status: "done",
+          exitCode: PRINT_EXIT.done,
+          notice:
+            end.budgetForced.reason === "spend"
+              ? "Submitted when the model spend budget ran out (best effort)."
+              : "Submitted at the task's deadline (best effort).",
+        }
+      : { status: "done", exitCode: PRINT_EXIT.done };
   if (end.verification === "not_applicable")
     return {
       status: "no_changes",
@@ -443,22 +474,32 @@ export function printOutcome(
   };
 }
 
-/** The one JSON object `marina -p --json` prints last on stdout; `exitCode` is the process's. */
+/**
+ * The one JSON object `marina -p --json` prints last on stdout; `exitCode` is the process's.
+ * Without `--verify` (`verify` false) it carries no verification fields: nothing was verified
+ * by Marina, so nothing is claimed.
+ */
 export function printResultJson(
   outcome: ReturnType<typeof printOutcome>,
   end: CodeLifecycleEnd | undefined,
   files: Array<{ path: string; added: number; removed: number }>,
   durationMs: number,
+  verify = true,
 ) {
   return {
     status: outcome.status,
     exitCode: outcome.exitCode,
-    verification: end?.verification ?? null,
-    verificationReason: end?.verificationReason ?? null,
+    summary: end?.summary ?? null,
+    ...(verify
+      ? {
+          verification: end?.verification ?? null,
+          verificationReason: end?.verificationReason ?? null,
+        }
+      : {}),
     reason: end?.detail ?? end?.reason ?? null,
     assumptions: end?.assumptions ?? [],
     budgetForced: end?.budgetForced ?? null,
-    requirements: end?.requirements ?? null,
+    ...(verify ? { requirements: end?.requirements ?? null } : {}),
     taskId: end?.taskId ?? null,
     runId: end?.runId ?? null,
     files,
@@ -1421,6 +1462,13 @@ export async function runCodeSession(
     return;
   }
   const started = Date.now();
+  // A one-shot is verified by Marina only when asked (`--verify`, `--verification`,
+  // `MARINA_CODE_VERIFICATION`); otherwise it ends like `claude -p`, with the coder's answer.
+  const printRequirement =
+    opts.print !== undefined
+      ? printVerification(opts.verification, process.env, dir, opts.verify)
+      : undefined;
+  const verifying = printRequirement !== undefined;
   /** The one-shot result: a notice on stderr, the JSON object last on stdout. */
   const finishPrint = async (
     outcome: ReturnType<typeof printOutcome>,
@@ -1442,6 +1490,7 @@ export async function runCodeSession(
                 ? []
                 : workingTreeFileStats(dir),
             Date.now() - started,
+            verifying,
           ),
         )}\n`,
       );
@@ -1450,6 +1499,21 @@ export async function runCodeSession(
   };
 
   if (opts.print !== undefined && harness.agent !== "marina") {
+    if (!verifying) {
+      // A native turn ends like the runtime's own one-shot: its answer, the changed files.
+      const timeout = printTimeoutMs(undefined);
+      try {
+        await sessionConsole.task(opts.print, true, timeout);
+      } catch (error) {
+        console.error(String(error));
+        await finishPrint(
+          /timed out/i.test(String(error)) ? printOutcome("timeout") : printOutcome(undefined),
+        );
+        return;
+      }
+      await finishPrint(printOutcome({ phase: "completed" }, false, false), { phase: "completed" });
+      return;
+    }
     // What the folder held before the turn: a turn that changes nothing has nothing to verify.
     const baseline = await observeWorkspaceState(dir);
     const gates = repositoryGates(dir);
@@ -1490,8 +1554,8 @@ export async function runCodeSession(
   }
 
   // One-shot mode (`marina -p "<task>"`): dispatch, stream, await the terminal
-  // lifecycle signal, then exit — 0 verified or no changes, 3 completed but not verified,
-  // 1 failed, 2 timeout (`printOutcome`).
+  // lifecycle signal, then exit — 0 done, 1 failed, 2 timeout; under --verify 0 verified,
+  // 3 completed but not verified or no changes (`printOutcome`).
   if (opts.print !== undefined) {
     const task = opts.print.trim();
     if (!task) {
@@ -1499,7 +1563,7 @@ export async function runCodeSession(
       await finishPrint(printOutcome(undefined));
       return;
     }
-    const verification = printVerification(opts.verification, process.env, dir);
+    const verification = printRequirement;
     const timeoutMs = printTimeoutMs(verification);
     // Arm the waiter BEFORE dispatching so a fast completion can't slip past.
     const outcome = agent.waitForMessage(
@@ -1550,14 +1614,18 @@ export async function runCodeSession(
     if (!terminal || terminal.phase === "failed") {
       const why = terminal?.detail ?? terminal?.reason;
       console.error(`Task failed${why ? `: ${why}` : "."}`);
-      await finishPrint(printOutcome(terminal), terminal, await sessionDiff());
+      await finishPrint(
+        printOutcome(terminal, opts.allowUnverified, verifying),
+        terminal,
+        await sessionDiff(),
+      );
       return;
     }
     // Completed: show the session diff, then the durable summary text.
     const diff = await sessionDiff();
     if (terminal.summary)
       (opts.json ? process.stderr : process.stdout).write(`\n${terminal.summary}\n`);
-    await finishPrint(printOutcome(terminal, opts.allowUnverified), terminal, diff);
+    await finishPrint(printOutcome(terminal, opts.allowUnverified, verifying), terminal, diff);
   }
 }
 
