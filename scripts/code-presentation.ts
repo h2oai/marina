@@ -117,7 +117,9 @@ export function workerActivityLabel(meta: {
             ? "paused · spend cap"
             : meta.workerPauseKind === "upstream-errors"
               ? "paused · upstream errors"
-              : "paused";
+              : meta.workerPauseKind === "storage"
+                ? "paused · storage full"
+                : "paused";
       break;
     case "waiting":
       label = "worker waiting";

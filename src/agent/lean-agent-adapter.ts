@@ -85,6 +85,7 @@ import {
   isSpendRefusal,
   recordSpend,
 } from "../engine/spend-ledger";
+import { storageRefusal } from "../engine/storage-budget";
 import { isLocalProfile } from "../engine/trust-profile";
 import { lessonsMode, residentLessonsMode } from "../learning/modes";
 import {
@@ -519,7 +520,7 @@ export interface SpendGuard {
 
 /** Why an autonomous loop is currently not calling the model. */
 export interface AgentPauseState {
-  kind: "budget" | "spend-cap" | "upstream-errors" | "provider-auth" | "route-limit";
+  kind: "budget" | "spend-cap" | "upstream-errors" | "provider-auth" | "route-limit" | "storage";
   reason: string;
   since: number;
   /** Wall-clock when the pause lifts on its own; undefined = until the cause clears. */
@@ -3433,6 +3434,26 @@ export class LeanAgentAdapter implements AgentHandle {
           await this.pauseSleep(5000);
           continue;
         }
+
+        // The storage budget (src/engine/storage-budget.ts): over the cap after
+        // cleanup, or the disk below its floor. No model call, no writes; it
+        // lifts when an hourly pass (or a restart) finds room again.
+        const storageFull = storageRefusal();
+        if (storageFull) {
+          if (this.pause?.kind !== "storage") {
+            this.enterPause("storage", storageFull);
+            this.log.warn(LEAN_AGENT_LOG_CATEGORY, `${storageFull} — pausing until there is room`, {
+              agent: this.name,
+            });
+            this.emitEvent({ type: "error", error: storageFull, context: "storage" });
+            this.notifySpawner(
+              `I've paused: ${storageFull}. I'll resume on my own once there is room; \`readiness\` shows what is using it.`,
+            );
+          }
+          await this.pauseSleep(SPEND_CAP_POLL_MS);
+          continue;
+        }
+        if (this.pause?.kind === "storage") this.clearPause("storage has room again — resuming");
 
         // Rolling-hour spend ceiling (per agent and runtime-wide). Same shape as
         // the budget pause — connected, inspectable, no model call — but it
