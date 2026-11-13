@@ -7,12 +7,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -216,5 +218,31 @@ describe("marina uninstall", () => {
     const plan = planUninstall({ env });
     expect(plan.remove.some((r) => r.path === clone)).toBe(false);
     expect(plan.keep.some((k) => k.path === clone)).toBe(true);
+  });
+});
+
+describe("the uninstall plan reads session worktrees with hardened git", () => {
+  it("--dry-run's dirty check never runs the repository's content filter", () => {
+    const repo = join(user, "code", "nb");
+    mkdirSync(repo, { recursive: true });
+    git(repo, "init", "-q");
+    const mark = join(user, "filter-ran");
+    const filter = join(user, "filter.sh");
+    writeFileSync(filter, `#!/bin/sh\necho ran > ${mark}\ncat\n`);
+    chmodSync(filter, 0o755);
+    writeFileSync(join(repo, ".gitattributes"), "*.nb filter=f\n");
+    writeFileSync(join(repo, "a.nb"), "same\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-qm", "a");
+    git(repo, "config", "filter.f.clean", filter);
+    const worktree = join(home, "worktrees", "def", "s2");
+    mkdirSync(join(home, "worktrees", "def"), { recursive: true });
+    git(repo, "worktree", "add", "-q", "-b", "marina/session-s2", worktree);
+    // Same bytes, new mtime: a plain status would hash the file through the filter.
+    writeFileSync(join(worktree, "a.nb"), "same\n");
+    utimesSync(join(worktree, "a.nb"), new Date(2001, 1, 1), new Date(2001, 1, 1));
+    const plan = planUninstall({ env });
+    expect(plan.worktrees).toMatchObject([{ repo, branch: "marina/session-s2", dirty: false }]);
+    expect(existsSync(mark)).toBe(false);
   });
 });

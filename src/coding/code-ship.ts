@@ -15,7 +15,7 @@
 import { join } from "node:path";
 import type { CodeTrialResult, GitRunner } from "./code-trial";
 import { snapshotCommit } from "./code-trial";
-import { HOST_GIT_CONFIG_ARGS } from "./host-git";
+import { gitConfigEnv, HOST_GIT_CONFIG_ARGS, hostGitDriverOverrides, hostGitEnv } from "./host-git";
 
 export interface ShipCommandResult {
   exitCode: number;
@@ -52,6 +52,12 @@ export interface ShipSpec {
   holdForPerson?: boolean;
   /** Scratch directory for the snapshot's temporary index. */
   scratch: string;
+  /**
+   * The change's tree, already staged with the repository's content filters
+   * inside the session's sandbox (`SandboxWorkspace.snapshotTree`). Absent:
+   * host git stages it with every content driver switched off.
+   */
+  stagedTree?: string;
 }
 
 export interface ShipResult {
@@ -63,10 +69,13 @@ export interface ShipResult {
 const SHIPPABLE = new Set(["candidate-wins", "no-measurable-difference"]);
 
 /** Why this change cannot ship on this trial, or null. */
-export function shipRefusal(git: GitRunner, spec: Pick<ShipSpec, "tree" | "trial" | "scratch">) {
+export function shipRefusal(
+  git: GitRunner,
+  spec: Pick<ShipSpec, "tree" | "trial" | "scratch" | "stagedTree">,
+) {
   if (!SHIPPABLE.has(spec.trial.verdict))
     return `The last trial (${spec.trial.id}) was ${spec.trial.verdict}; nothing ships on it.`;
-  const now = snapshotCommit(git, spec.tree, spec.scratch);
+  const now = snapshotCommit(git, spec.tree, spec.scratch, spec.stagedTree);
   const treeOf = (sha: string) => git(spec.tree, ["rev-parse", `${sha}^{tree}`]).stdout;
   if (treeOf(now) !== treeOf(spec.trial.candidate.sha))
     return `The change moved since trial ${spec.trial.id}. Run code trial again on this change.`;
@@ -113,9 +122,32 @@ function must(run: ShipRunner, cwd: string, argv: string[]): string {
 }
 
 /**
+ * The environment for `push` and `gh`: the operator's own (their credentials
+ * and SSH settings publish the change), plus `GIT_CONFIG_*` entries that bind
+ * every git process either starts in the work tree: no hooks (directory or
+ * config), no fsmonitor, no content drivers, no submodule recursion, no
+ * signing. `gh pr create` runs `git status` there, which would otherwise run
+ * the repository's clean filters on files the session wrote.
+ */
+export function publishEnv(
+  tree: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const base: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env))
+    if (value !== undefined && !key.startsWith("GIT_CONFIG_")) base[key] = value;
+  const keep = new Set(["credential.helper=", "core.sshCommand=false", "core.pager=cat"]);
+  const pairs: string[] = [];
+  for (let i = 0; i < HOST_GIT_CONFIG_ARGS.length; i += 2)
+    if (!keep.has(HOST_GIT_CONFIG_ARGS[i + 1]!)) pairs.push("-c", HOST_GIT_CONFIG_ARGS[i + 1]!);
+  return { ...base, ...gitConfigEnv([...pairs, ...hostGitDriverOverrides(tree, base)]) };
+}
+
+/**
  * Commit, push and open the pull request. `git` runs hardened (no hooks,
  * no repository-supplied drivers); `push` and `gh` run with the operator's
- * own credentials, since publishing is theirs to authorize.
+ * own credentials, since publishing is theirs to authorize, and with the
+ * same hooks and drivers switched off (`publishEnv`).
  */
 export function shipChange(
   run: {
@@ -126,8 +158,16 @@ export function shipChange(
   },
   spec: ShipSpec,
 ): ShipResult {
-  const hardened = (argv: string[]) => ["git", ...HOST_GIT_CONFIG_ARGS, ...argv];
-  must(run.git, spec.tree, hardened(["add", "-A"]));
+  const hardened = (argv: string[]) => [
+    "git",
+    ...HOST_GIT_CONFIG_ARGS,
+    ...hostGitDriverOverrides(spec.tree),
+    ...argv,
+  ];
+  if (spec.stagedTree !== undefined) {
+    if (!/^[a-f0-9]{40,64}$/.test(spec.stagedTree)) throw new Error("Invalid staged tree.");
+    must(run.git, spec.tree, hardened(["read-tree", spec.stagedTree]));
+  } else must(run.git, spec.tree, hardened(["add", "-A"]));
   must(run.git, spec.tree, [
     ...hardened([
       "-c",
@@ -142,7 +182,7 @@ export function shipChange(
       `Measured by Marina code trial ${spec.trial.id} (${spec.trial.verdict}). Work by ${spec.author}.`,
     ]),
   ]);
-  const commit = must(run.git, spec.tree, ["git", "rev-parse", "HEAD"]);
+  const commit = must(run.git, spec.tree, hardened(["rev-parse", "HEAD"]));
   must(run.push, spec.tree, [
     "git",
     "-c",
@@ -179,10 +219,36 @@ export function shipChange(
   return { commit, url, queued };
 }
 
-/** Run argv on the host with the operator's environment (for push and gh). */
+/** Run argv on the host with the operator's environment (for push and gh: see `publishEnv`). */
 export function operatorRunner(env: NodeJS.ProcessEnv = process.env): ShipRunner {
   return (cwd, argv) => {
     const r = Bun.spawnSync(argv, { cwd, env, stdout: "pipe", stderr: "pipe" });
+    return { exitCode: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() };
+  };
+}
+
+/** Run argv on the host with the operator's credentials and git's executables off. */
+export function publishRunner(env: NodeJS.ProcessEnv = process.env): ShipRunner {
+  return (cwd, argv) => {
+    const r = Bun.spawnSync(argv, {
+      cwd,
+      env: publishEnv(cwd, env),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { exitCode: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() };
+  };
+}
+
+/** Hardened host git for the work tree (`hostGitEnv`: none of the person's or server's config). */
+export function hostGitRunner(extra: Record<string, string> = {}): ShipRunner {
+  return (cwd, argv) => {
+    const r = Bun.spawnSync(argv, {
+      cwd,
+      env: hostGitEnv(extra),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     return { exitCode: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() };
   };
 }

@@ -206,9 +206,11 @@ export async function removeSessionWorktree(
     }
   }
 
-  const args = ["git", "worktree", "remove"];
-  if (opts.force) args.push("--force");
-  args.push(path);
+  // Always --force: the clean check above is ours (hardened host git run IN the worktree, so
+  // its own config.worktree drivers are switched off too). Without it git would re-check the
+  // worktree's status itself, with driver overrides discovered from the repository root only,
+  // and run a filter defined in that worktree's config.worktree on whatever the session wrote.
+  const args = ["git", "worktree", "remove", "--force", path];
   const res = await runGit(repoRoot, args, hostExecForbidden).catch(
     logRejection(logger, "code", "git worktree remove failed", { fallback: null }),
   );

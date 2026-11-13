@@ -10,8 +10,9 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  hostGitRunner,
   operatorIdentity,
-  operatorRunner,
+  publishRunner,
   SHIP_SCRATCH,
   type ShipHost,
   type ShipRunner,
@@ -19,7 +20,7 @@ import {
   shipRefusal,
 } from "../../../coding/code-ship";
 import { type CodeTrialResult, type GitRunner, snapshotCommit } from "../../../coding/code-trial";
-import { HOST_GIT_CONFIG_ARGS } from "../../../coding/host-git";
+import { HOST_GIT_CONFIG_ARGS, hostGitDriverOverrides } from "../../../coding/host-git";
 import { protectedChanges, protectedHold } from "../../../coding/protected-paths";
 import { isLiveMarinaCheckout } from "../../../coding/self-checkout";
 import { scratchRoot } from "../../../config/data-dir";
@@ -30,23 +31,25 @@ import { getErrorMessage } from "../../errors";
 import { principalOf } from "../../gate-context";
 import { parseModifiers, splitOnTerminator } from "../../parse-input";
 import { isSovereign } from "../../trust-profile";
+import { publishExposureRefusal, sandboxExposureNotice, sandboxStagedTree } from "./runner";
 import { type CodeDeps, resolveSession, sendCode } from "./shared";
 import { CODE_TRIAL_ARTIFACT_KIND } from "./trial";
 
 export const CODE_SHIP_ARTIFACT_KIND = "code_ship";
 export const CODE_SHIP_USAGE = "Usage: code ship [merge] [-- <title>]";
 
+// Work-tree git runs hardened on the host (none of the person's or the server's config);
+// push and gh keep the operator's credentials with git's executables switched off.
 const hostShip = (): ShipHost => {
-  const run = operatorRunner();
-  return { git: run, push: run, gh: run, ghAvailable: () => !!Bun.which("gh") };
+  const publish = publishRunner();
+  return { git: hostGitRunner(), push: publish, gh: publish, ghAvailable: () => !!Bun.which("gh") };
 };
 
 const asGitRunner =
   (run: ShipRunner): GitRunner =>
   (cwd, argv, env) => {
-    const r = env
-      ? operatorRunner({ ...process.env, ...env })(cwd, ["git", ...HOST_GIT_CONFIG_ARGS, ...argv])
-      : run(cwd, ["git", ...HOST_GIT_CONFIG_ARGS, ...argv]);
+    const hardened = ["git", ...HOST_GIT_CONFIG_ARGS, ...hostGitDriverOverrides(cwd), ...argv];
+    const r = env ? hostGitRunner(env)(cwd, hardened) : run(cwd, hardened);
     return { exitCode: r.exitCode, stdout: r.stdout.trim(), stderr: r.stderr.trim() };
   };
 
@@ -163,17 +166,26 @@ export async function shipCode(
   const trial = JSON.parse(latest.metadata_json) as CodeTrialResult;
   const scratch = resolve(SHIP_SCRATCH(scratchRoot(), session.id));
   const git = asGitRunner(host.git);
+  const publishRefusal = await publishExposureRefusal(deps.db, session);
+  if (publishRefusal) {
+    const exposed = await sandboxExposureNotice(deps.db, session);
+    refuseCommand(ctx, eid, exposed ? `${publishRefusal}\n${exposed}` : publishRefusal);
+    return;
+  }
   let refusal: string | null;
+  let stagedTree: string | undefined;
   try {
     mkdirSync(scratch, { recursive: true });
+    // A sandboxed session with content filters: staged inside its sandbox, never by host git.
+    stagedTree = await sandboxStagedTree(deps.db, session, deps.hostExecForbidden === true);
     refusal =
-      shipRefusal(git, { tree: session.worktree_path, trial, scratch }) ??
+      shipRefusal(git, { tree: session.worktree_path, trial, scratch, stagedTree }) ??
       shipVerificationRefusal(
         deps.db,
         session.id,
         git(session.worktree_path, [
           "rev-parse",
-          `${snapshotCommit(git, session.worktree_path, scratch)}^{tree}`,
+          `${snapshotCommit(git, session.worktree_path, scratch, stagedTree)}^{tree}`,
         ]).stdout,
       );
   } catch (error) {
@@ -209,7 +221,7 @@ export async function shipCode(
   const tell = (line: string) => deps.notify?.(eid, line);
   const work = (async () => {
     const result = shipChange(
-      { ...host, identity: operatorIdentity(session.workspace_root, host.git) },
+      { ...host, identity: operatorIdentity(session.workspace_root) },
       {
         tree: session.worktree_path!,
         branch: session.worktree_branch!,
@@ -221,6 +233,7 @@ export async function shipCode(
         scratch,
         protectedFiles,
         holdForPerson,
+        ...(stagedTree ? { stagedTree } : {}),
       },
     );
     deps.db.createCodingArtifact({
@@ -251,6 +264,7 @@ export async function shipCode(
     tell(`ship failed: ${getErrorMessage(error)}`);
   });
   deps.trackBackground?.(work);
+  const exposed = await sandboxExposureNotice(deps.db, session);
   sendCode(
     ctx,
     eid,
@@ -260,7 +274,7 @@ export async function shipCode(
         : merge
           ? " It will be queued to merge."
           : ""
-    }`,
+    }${exposed ? `\n${exposed}` : ""}`,
     {
       event: "code_ship_started",
       sessionId: session.id,

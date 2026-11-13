@@ -1436,7 +1436,10 @@ an alternate index, without changing your index, staging choices, branch or HEAD
 deletions, executable modes, binary files and internal relative symlinks are represented.
 Git stat caches and `assume-unchanged` flags cannot hide source edits. The Git working-tree root
 must be the session root; sparse checkouts, unresolved merges, submodules, filters/LFS, encoding
-or ident attributes, escaping symlinks and non-UTF-8/newline paths are refused explicitly.
+or ident attributes, escaping symlinks and non-UTF-8/newline paths are refused explicitly. In the
+bubblewrap sandbox runner, a repository with content filters is supported: git inside the sandbox
+stages the files, so the tree holds the filtered blobs your git would commit, while the copy the
+checks run on and the source hash keep the raw bytes.
 
 The `candidate` artifact records the tree, base commit, repository, capture policy, source hash
 and retained ref. Each command receipt names the candidate and temporary execution directory;
@@ -1778,13 +1781,28 @@ code workspace runner local                   # back to the host allowlist (if a
 - **Held in place**: each submodule's `.git` (nested and uninitialised ones too) and anything your
   git config runs from inside the tree — a hooks directory such as husky's `.husky/`, an
   fsmonitor, filter, diff or merge drivers, `!` aliases — are read-only inside the sandbox and
-  cannot be moved. Every key of every git config file is checked. A setting that builds a path at
-  run time (`$`, backticks) in a section git may run, or reaches into the tree through shell
-  syntax, a symlink, or a path that does not exist yet, is refused; the message names the key and
-  the file, never the value. Content drivers (filters such as nbstripout, diff textconv or
-  external commands, merge drivers) are refused, because they can read work-tree files they do not
-  name; git-lfs's own filters are allowed. A server `PATH` with a relative entry (such as
+  cannot be moved. Every key of every git config file is checked. A setting that reaches into the
+  tree through shell syntax, a symlink, or a path that does not exist yet is refused; the message
+  names the key and the file, never the value. A server `PATH` with a relative entry (such as
   `node_modules/.bin`) is refused too; this checks the server's PATH, not your shell's.
+- **Content drivers and settings with shell expansion are supported.** A repository that uses
+  nbstripout (or any clean/smudge filter, diff textconv or external command, or merge driver) and
+  settings that build a path at run time (`$`, backticks: a `mergetool.<x>.cmd`, a credential
+  helper, `core.editor`, a `!` alias) work in the sandbox. Marina's own git work that needs a
+  filter — the session diff, the list of changed files, `code verify candidate`'s tree, and the
+  snapshot `code trial` and `code ship` commit — runs git **inside the sandbox** with the
+  repository's drivers and your own driver definitions and attributes, so a notebook is diffed and
+  committed exactly as your git would (outputs stripped). Git on the host never runs a driver, a
+  configured hook or a shell-expanded setting. Your own git does run them later, on your computer,
+  with the work tree as their directory, and such a program can read files it does not name (as
+  `python -m nbstripout` imports from the current directory). So `code workspace runner` and the
+  start line name those settings, and when the session ends (`code done`, the end of `marina
+  --sandbox`) and in `code ship` Marina lists every file the session created or changed — ignored
+  files too — for you to review before you run git in that folder. `code ship` will not push for a
+  sandboxed session when the push itself would use a credential helper, SSH or askpass command with
+  shell expansion; push it yourself. git-lfs's own filters are neither reported nor run in the
+  sandbox (an LFS file is staged as stored, as before). Still refused: `ext::` remote URLs (they
+  run a command on your fetch or push) and a git config that includes a file from the tree.
 - **Projects with git hooks**: if the repository already has hooks (pre-commit, husky,
   `hook.<name>.command`), Marina says so at start and with every result. Those hooks run code from
   the work tree on your next commit, so review the changes before committing. If a command still changed a submodule's `.git`, it fails, nothing is

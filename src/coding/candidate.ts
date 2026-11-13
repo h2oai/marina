@@ -108,9 +108,40 @@ function credentialPath(path: string) {
     );
 }
 
+/**
+ * Blobs a repository's content filters produced for each path, staged by git
+ * INSIDE a sandbox (`SandboxWorkspace.stagedEntries`): `path → oid`, every oid
+ * already in the repository. Host git never runs a filter.
+ */
+export type StagedBlobs = ReadonlyMap<string, string>;
+
+export interface CandidateCaptureOptions {
+  /**
+   * Stages the work tree with the repository's filters (inside the sandbox) and returns its
+   * blobs. With it, filter / ident / encoding attributes are supported: the tree takes the
+   * staged blobs. It is called under the capture's root lock before the source is scanned and
+   * again after the confirming scan; the two must agree, so a change between staging and
+   * scanning fails the capture instead of pairing older staged blobs with newer bytes.
+   */
+  stage?: () => Promise<StagedBlobs>;
+}
+
+function sameBlobs(a: StagedBlobs, b: StagedBlobs): boolean {
+  if (a.size !== b.size) return false;
+  for (const [path, oid] of a) if (b.get(path) !== oid) return false;
+  return true;
+}
+
 /** Enumerate the operator index without refreshing or modifying it, then read actual bytes.
- * No stat cache, ignore bit, watcher or Marina event can substitute for content. */
-async function scan(inputRoot: string, destination?: string) {
+ * No stat cache, ignore bit, watcher or Marina event can substitute for content.
+ * `attributes: "refuse"` (a capture building its tree from raw bytes) refuses paths whose
+ * committed content git would convert; a fingerprint-only scan ("ignore") reads raw bytes
+ * either way. */
+async function scan(
+  inputRoot: string,
+  destination?: string,
+  attributes: "refuse" | "ignore" = "refuse",
+) {
   const root = await realpath(inputRoot);
   const top = (await git(root, ["rev-parse", "--show-toplevel"])).text.trim();
   if ((await realpath(top)) !== root)
@@ -146,17 +177,19 @@ async function scan(inputRoot: string, destination?: string) {
     )
       throw new Error("Candidate capture refuses an unsafe or newline-containing path.");
   }
-  const attributes = await git(
-    root,
-    ["check-attr", "-z", "--stdin", "filter", "working-tree-encoding", "ident"],
-    names.map((name) => `${name}\0`).join(""),
-  );
-  const attrs = attributes.text.split("\0");
-  for (let i = 2; i < attrs.length; i += 3)
-    if (!["unspecified", "unset", ""].includes(attrs[i]!))
-      throw new Error(
-        "Candidate capture does not yet support Git filters, LFS, ident or encoding attributes.",
-      );
+  if (attributes === "refuse") {
+    const checked = await git(
+      root,
+      ["check-attr", "-z", "--stdin", "filter", "working-tree-encoding", "ident"],
+      names.map((name) => `${name}\0`).join(""),
+    );
+    const attrs = checked.text.split("\0");
+    for (let i = 2; i < attrs.length; i += 3)
+      if (!["unspecified", "unset", ""].includes(attrs[i]!))
+        throw new Error(
+          "Candidate capture does not yet support Git filters, LFS, ident or encoding attributes outside the sandbox runner.",
+        );
+  }
   const fingerprint = createHash("sha256");
   const entries: { path: string; mode: string }[] = [];
   let bytes = 0;
@@ -258,7 +291,7 @@ export async function candidateFingerprint(
   root: string,
   expectedBase?: string | null,
 ): Promise<string> {
-  const current = await scan(root);
+  const current = await scan(root, undefined, "ignore");
   if (expectedBase !== undefined && current.baseCommit !== expectedBase)
     throw new Error("Candidate base commit changed during verification.");
   return current.fingerprint;
@@ -281,7 +314,7 @@ export async function observeCandidate(candidate: CandidateIdentity): Promise<st
   if (retained !== candidate.commit || tree !== candidate.tree)
     throw new Error("Retained candidate identity changed.");
   await git(candidate.repository, ["cat-file", "-e", `${candidate.tree}^{tree}`]);
-  const current = await scan(candidate.repository);
+  const current = await scan(candidate.repository, undefined, "ignore");
   if (current.baseCommit !== candidate.baseCommit)
     throw new Error("Candidate base commit changed. Reverify against the intended base.");
   return current.fingerprint;
@@ -289,14 +322,20 @@ export async function observeCandidate(candidate: CandidateIdentity): Promise<st
 
 /** Capture actual working bytes in an alternate index and pin their tree for review.
  * A private materialization is owned by the caller; its disposal never touches source. */
-export async function captureGitCandidate(root: string, repository = root) {
+export async function captureGitCandidate(
+  root: string,
+  repository = root,
+  options: CandidateCaptureOptions = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), "marina-candidate-"));
   const materialized = join(directory, "source");
   const index = join(directory, "index");
   let retained: { repository: string; ref: string; commit: string } | undefined;
   try {
     await mkdir(materialized);
-    const source = await scan(root, materialized);
+    const staged = options.stage ? await options.stage() : undefined;
+    const attributes = staged ? "ignore" : "refuse";
+    const source = await scan(root, materialized, attributes);
     repository = await realpath(repository);
     if (
       (
@@ -314,8 +353,11 @@ export async function captureGitCandidate(root: string, repository = root) {
       throw new Error(
         `Candidate retention reached ${MAX_PINS} pinned trees. Retire reviewed candidate refs before capturing more.`,
       );
-    const confirmed = await scan(root);
+    const confirmed = await scan(root, undefined, attributes);
     if (confirmed.fingerprint !== source.fingerprint || confirmed.baseCommit !== source.baseCommit)
+      throw new Error("Source changed during candidate capture. Retry after the writer settles.");
+    // Staged again after both scans: a change after the first staging shows up here.
+    if (staged && options.stage && !sameBlobs(staged, await options.stage()))
       throw new Error("Source changed during candidate capture. Retry after the writer settles.");
     await git(repository, ["read-tree", "--empty"], undefined, index);
     const regular = source.entries.filter((entry) => entry.mode !== "120000");
@@ -334,7 +376,10 @@ export async function captureGitCandidate(root: string, repository = root) {
     let cursor = 0;
     const indexEntries: string[] = [];
     for (const entry of source.entries) {
-      const oid =
+      const stagedOid = staged?.get(entry.path);
+      if (staged && !stagedOid)
+        throw new Error("Source changed during candidate capture. Retry after the writer settles.");
+      const raw =
         entry.mode === "120000"
           ? (
               await git(
@@ -344,6 +389,8 @@ export async function captureGitCandidate(root: string, repository = root) {
               )
             ).text.trim()
           : hashes[cursor++]!;
+      // The repository's filters decide a regular file's committed blob (staged in the sandbox).
+      const oid = stagedOid && entry.mode !== "120000" ? stagedOid : raw;
       if (!/^[a-f0-9]{40,64}$/.test(oid)) throw new Error("Git returned an invalid blob identity.");
       indexEntries.push(`${entry.mode} ${oid}\t${entry.path}\0`);
     }

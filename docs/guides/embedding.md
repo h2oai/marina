@@ -36,7 +36,7 @@ atomically, removed on a clean exit):
   "mcpUrl": "http://127.0.0.1:42083/mcp",
   "pid": 336698,
   "apiKey": "mk_local_…",
-  "version": "0.9.0",
+  "version": "0.8.0",
   "world": "research",
   "startedAt": "2026-10-18T01:28:53.032Z",
   "idleShutdownMs": 900000

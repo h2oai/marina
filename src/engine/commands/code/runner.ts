@@ -36,10 +36,15 @@ import type { WorkspaceRuntime } from "../../../coding/local-workspace";
 import { LocalWorkspace } from "../../../coding/local-workspace";
 import {
   codeSandboxMode,
+  type GitExposure,
+  gitExposureStartNotice,
   gitHooksNotice,
   SANDBOX_RUN_NOTE,
   type SandboxTamperError,
   SandboxWorkspace,
+  sandboxExposureNoticeFor,
+  sandboxExposureScope,
+  sandboxExposuresFor,
   sandboxHooksFor,
   UnavailableSandboxWorkspace,
 } from "../../../coding/sandbox-workspace";
@@ -496,6 +501,8 @@ export function handleRunner(
       lines.push(dim(SANDBOX_RUN_NOTE));
       const hooks = sandboxHooksFor(sessionRoot(session));
       if (hooks.length) lines.push(gitHooksNotice(hooks));
+      const exposed = gitExposureStartNotice(sandboxExposuresFor(sessionRoot(session)));
+      if (exposed) lines.push(exposed);
       try {
         new SandboxWorkspace(sessionRoot(session));
       } catch (error) {
@@ -921,14 +928,88 @@ export function runnerSummary(
     case "host":
       return "Runner: host (allowlisted commands; code run allowlist)";
     case "sandbox": {
-      const hooks = sandboxHooksFor(sessionRoot(session));
-      return `Runner: local OS sandbox (bubblewrap): any command, no network, home hidden${hooks.length ? `\n${gitHooksNotice(hooks)}` : ""}`;
+      const root = sessionRoot(session);
+      const hooks = sandboxHooksFor(root);
+      const exposed = gitExposureStartNotice(sandboxExposuresFor(root));
+      return `Runner: local OS sandbox (bubblewrap): any command, no network, home hidden${hooks.length ? `\n${gitHooksNotice(hooks)}` : ""}${exposed ? `\n${exposed}` : ""}`;
     }
     case "container":
       return `Runner: container ${runner.config.image}`;
     default:
       return `Runner: unavailable: ${runner.reason}`;
   }
+}
+
+/**
+ * For a session whose commands run in the sandbox: the files it created or
+ * changed that the person's own git could hand to a content driver or a
+ * shell-expanded setting (`gitExposureReport`), or null when none applies.
+ * Shown when the session ends and by `code ship`.
+ */
+export async function sandboxExposureNotice(
+  db: Pick<MarinaDB, "listCodingArtifacts">,
+  session: CodingSessionRow,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  if (session.execution_target !== "local") return null;
+  if (effectiveRunner(sessionRunnerSetting(db, session.id), env).kind !== "sandbox") return null;
+  return sandboxExposureNoticeFor(sessionRoot(session), session.created_at);
+}
+
+/**
+ * For `code trial` / `code ship`: the session's work tree staged from HEAD
+ * INSIDE its sandbox, when the repository's content filters decide what is
+ * committed; undefined when the session is not sandboxed or has no filters
+ * (host git stages it then, every driver switched off).
+ */
+export async function sandboxStagedTree(
+  db: MarinaDB,
+  session: CodingSessionRow,
+  hostExecForbidden = false,
+): Promise<string | undefined> {
+  if (session.execution_target !== "local") return undefined;
+  const ws = applySessionRunner(new LocalWorkspace(sessionRoot(session)), db, session);
+  if (ws instanceof UnavailableSandboxWorkspace) ws.assertExecutionReady();
+  if (!(ws instanceof SandboxWorkspace)) return undefined;
+  ws.setHostExecForbidden(hostExecForbidden);
+  if (ws.contentFilters().length === 0) return undefined;
+  return ws.snapshotTree();
+}
+
+/**
+ * Settings `code ship`'s push would run with the operator's own configuration
+ * that use shell expansion (credential helpers, SSH and askpass commands,
+ * remote pack programs, signing): Marina cannot show what they reach, so it
+ * does not run them for a sandboxed session; the person pushes.
+ */
+export async function publishExposureRefusal(
+  db: Pick<MarinaDB, "listCodingArtifacts">,
+  session: CodingSessionRow,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  if (session.execution_target !== "local") return null;
+  if (effectiveRunner(sessionRunnerSetting(db, session.id), env).kind !== "sandbox") return null;
+  let exposures: GitExposure[];
+  try {
+    exposures = (await sandboxExposureScope(sessionRoot(session))).exposures;
+  } catch {
+    exposures = sandboxExposuresFor(sessionRoot(session));
+  }
+  const keys = [
+    ...new Set(
+      exposures
+        .filter(
+          (exposure) =>
+            exposure.kind === "shell-expansion" &&
+            /^(credential\.|core\.(sshcommand|askpass)$|ssh\.|gpg\.|remote\..+\.(receivepack|uploadpack)$)/i.test(
+              exposure.key,
+            ),
+        )
+        .map((exposure) => exposure.key),
+    ),
+  ];
+  if (keys.length === 0) return null;
+  return `code ship pushes with your git settings ${keys.join(", ")}, which use shell expansion; Marina does not run them for a sandboxed session, because what they reach in the work tree cannot be shown. Review the session's files, then commit, push and open the pull request yourself.`;
 }
 
 /** The root a session's commands run in (its worktree when one is bound). */

@@ -3,11 +3,13 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -158,5 +160,34 @@ describe("worktree manager", () => {
       hostExecForbidden: true,
     });
     expect(created).toBeNull();
+  });
+});
+
+describe("removal never runs a filter from the worktree's own config", () => {
+  it("a config.worktree clean filter does not run when a clean worktree is removed", async () => {
+    const repo = tempDir("marina-wt-drv-");
+    const aux = tempDir("marina-wt-drv-aux-");
+    const mark = join(aux, "filter-ran");
+    const filter = join(aux, "filter.sh");
+    writeFileSync(filter, `#!/bin/sh\necho ran > ${mark}\ncat\n`);
+    chmodSync(filter, 0o755);
+    gitInit(repo);
+    writeFileSync(join(repo, ".gitattributes"), "*.nb filter=wt\n");
+    writeFileSync(join(repo, "a.nb"), "same\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "init");
+    const wt = await createSessionWorktree(repo, "drv1");
+    expect(wt).not.toBeNull();
+    // Only the worktree's own config names the filter; the repository root's does not.
+    git(repo, "config", "extensions.worktreeConfig", "true");
+    git(wt!.path, "config", "--worktree", "filter.wt.clean", filter);
+    // Same bytes, new mtime: git must hash the file again to call it clean.
+    writeFileSync(join(wt!.path, "a.nb"), "same\n");
+    utimesSync(join(wt!.path, "a.nb"), new Date(2001, 1, 1), new Date(2001, 1, 1));
+    expect(await worktreeHasChanges(wt!.path)).toBe(false);
+    expect(existsSync(mark)).toBe(false);
+    const removed = await removeSessionWorktree(repo, wt!.path);
+    expect(removed.removed).toBe(true);
+    expect(existsSync(mark)).toBe(false);
   });
 });

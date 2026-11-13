@@ -18,6 +18,7 @@ import { refuseCommand } from "../../command-response";
 import { getErrorMessage } from "../../errors";
 import { parseModifiers } from "../../parse-input";
 import { dailyCapRefusal } from "../../spend-ledger";
+import { sandboxStagedTree } from "./runner";
 import { type CodeDeps, resolveSession, sendCode } from "./shared";
 
 export const CODE_TRIAL_ARTIFACT_KIND = "code_trial";
@@ -128,6 +129,14 @@ export async function trialCode(
   }
 
   const id = `trial_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  // A sandboxed session with content filters stages its change inside its sandbox.
+  let candidateTreeId: string | undefined;
+  try {
+    candidateTreeId = await sandboxStagedTree(deps.db, session, deps.hostExecForbidden === true);
+  } catch (error) {
+    refuseCommand(ctx, eid, `Could not stage the change: ${getErrorMessage(error)}`);
+    return;
+  }
   const spec = {
     id,
     repoRoot: session.workspace_root,
@@ -139,6 +148,7 @@ export async function trialCode(
     model: v.model ?? "marina",
     upstreamModel: upstream,
     capUsd: v.cap,
+    ...(candidateTreeId ? { candidateTreeId } : {}),
   };
   const tell = (line: string) => {
     if (deps.notify) deps.notify(eid, line);

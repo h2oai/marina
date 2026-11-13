@@ -19,9 +19,9 @@ bun run pack:sdk
 Then install that tarball in your own project with any package manager:
 
 ```bash
-bun add /path/to/Marina/dist/sdk/marina-agent-sdk-0.9.0.tgz
-npm install /path/to/Marina/dist/sdk/marina-agent-sdk-0.9.0.tgz
-pnpm add /path/to/Marina/dist/sdk/marina-agent-sdk-0.9.0.tgz
+bun add /path/to/Marina/dist/sdk/marina-agent-sdk-0.8.0.tgz
+npm install /path/to/Marina/dist/sdk/marina-agent-sdk-0.8.0.tgz
+pnpm add /path/to/Marina/dist/sdk/marina-agent-sdk-0.8.0.tgz
 ```
 
 The package ships ESM JavaScript plus TypeScript declarations and runs under Bun or Node (with

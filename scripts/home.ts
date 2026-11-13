@@ -26,6 +26,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
+import { hostGitArgv, hostGitEnv } from "../src/coding/host-git";
 import { legacyLocations, marinaHome } from "../src/config/marina-home";
 import { acquireDatabaseLease } from "../src/persistence/database-lease";
 
@@ -111,7 +112,12 @@ export function isSetupInstall(dir: string): boolean {
   if (!isMarinaCode(dir)) return false;
   if (!existsSync(join(dir, ".git"))) return true;
   const git = (...args: string[]) =>
-    spawnSync("git", ["-C", dir, ...args], { encoding: "utf8", timeout: 10_000 });
+    spawnSync("git", hostGitArgv(["git", ...args], dir).slice(1), {
+      cwd: dir,
+      env: hostGitEnv(),
+      encoding: "utf8",
+      timeout: 10_000,
+    });
   const status = git("status", "--porcelain", "--untracked-files=no");
   if (status.status !== 0 || status.stdout.trim()) return false;
   // No commits of its own: HEAD is on the upstream branch, or is what setup.sh
@@ -351,8 +357,12 @@ function gitWorktrees(home: string): WorktreeRecord[] {
         branch: head.startsWith("ref: refs/heads/") ? head.slice(16) : "(detached)",
       };
       if (records.length < DIRTY_CHECK_LIMIT)
+        // Hardened host git: a session wrote in this worktree, and a plain `status` would run
+        // its fsmonitor, configured hooks or content filters (src/coding/host-git.ts).
         record.dirty =
-          spawnSync("git", ["-C", path, "status", "--porcelain"], {
+          spawnSync("git", hostGitArgv(["git", "status", "--porcelain"], path).slice(1), {
+            cwd: path,
+            env: hostGitEnv(),
             encoding: "utf8",
             timeout: 10_000,
           }).stdout?.trim() !== "";
@@ -590,7 +600,11 @@ export function applyUninstall(plan: UninstallPlan, opts: { keepData?: boolean }
   if (!opts.keepData)
     for (const repo of repos)
       if (existsSync(repo))
-        spawnSync("git", ["-C", repo, "worktree", "prune"], { timeout: 30_000 });
+        spawnSync("git", hostGitArgv(["git", "worktree", "prune"], repo).slice(1), {
+          cwd: repo,
+          env: hostGitEnv(),
+          timeout: 30_000,
+        });
   for (const edit of plan.pathEdits)
     try {
       const lines = readFileSync(edit.file, "utf8").split("\n");

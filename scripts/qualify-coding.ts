@@ -18,6 +18,7 @@ import type { AgentEvent } from "../src/agent/agent-types";
 import { operatorStatusOf } from "../src/agent/lean-agent-adapter";
 import { costFromTokens, defaultModelPrice } from "../src/agent/provider-cost";
 import { BUN_PREPARATION_POLICY } from "../src/coding/candidate-dependencies";
+import { hostGitArgv } from "../src/coding/host-git";
 import { LocalWorkspace } from "../src/coding/local-workspace";
 import type { ProjectInstructions } from "../src/coding/project-instructions";
 import { codingRunMetadata } from "../src/coding/task-run";
@@ -312,7 +313,8 @@ export function codingWorkspaceInstructionEvidence(
 }
 
 export async function runCodingQualificationProcess(command: string[], cwd: string) {
-  const child = Bun.spawn(command, {
+  // Git here runs in the root a coding session worked in: hardened like Marina's host git.
+  const child = Bun.spawn(command[0] === "git" ? hostGitArgv(command, cwd) : command, {
     cwd,
     stdin: "ignore",
     stdout: "pipe",
