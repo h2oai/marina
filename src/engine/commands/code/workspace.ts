@@ -10,6 +10,7 @@ import {
   loadProjectInstructions,
   projectInstructionMetadata,
 } from "../../../coding/project-instructions";
+import { isLiveMarinaCheckout } from "../../../coding/self-checkout";
 import { WorkspaceRegistry } from "../../../coding/workspace-registry";
 import {
   createSessionWorktree,
@@ -39,6 +40,58 @@ import {
 } from "./shared";
 
 export { detectPackageScripts, recommendedVerify } from "../../../coding/project-detection";
+
+/**
+ * A session whose working tree is the source this Marina server runs from never
+ * edits it in place. Before its first edit, run or dispatched task it is bound
+ * to a managed worktree on its own `marina/session-*` branch, so the running
+ * server is untouched and the change is a branch to verify, trial and merge.
+ * Returns the session to use, or null after a refusal (nothing changed).
+ */
+export async function isolateLiveMarinaCheckout(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+): Promise<CodingSessionRow | null> {
+  if (session.execution_target !== "local") return session;
+  const root = session.worktree_path ?? session.workspace_root;
+  const live = deps.marinaRoot
+    ? isLiveMarinaCheckout(root, deps.marinaRoot, false)
+    : isLiveMarinaCheckout(root);
+  if (!live) return session;
+  const created = await createSessionWorktree(session.workspace_root, session.id, {
+    hostExecForbidden: deps.hostExecForbidden === true,
+  });
+  if (!created) {
+    refuseCommand(
+      ctx,
+      eid,
+      "This session works on the running Marina's own source, and an isolated worktree could not be created (git error). Nothing changed. Check the checkout, then retry or run code worktree on.",
+    );
+    return null;
+  }
+  deps.db.updateCodingSession(session.id, {
+    worktreePath: created.path,
+    worktreeBranch: created.branch,
+  });
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind: "worktree_enabled",
+    payload: { path: created.path, branch: created.branch, auto: true, reason: "live-marina" },
+  });
+  const updated = deps.db.getCodingSession(session.id) ?? session;
+  updateCodeContext(entity, deps.db, updated);
+  ctx.send(
+    eid,
+    dim(
+      `Marina's own source: this session works on branch ${created.branch} at ${created.path}. The running server is untouched.`,
+    ),
+  );
+  return updated;
+}
 
 /**
  * Auto-remove a session's worktree on close IF it has no uncommitted changes

@@ -374,6 +374,16 @@ Worktree sessions use the worktree's instructions. Sandbox sessions report that 
 instructions were not loaded; inspect the actual execution workspace. Repository instructions
 never grant execution permission. Native external runtimes keep their own instruction loaders.
 
+### Working on Marina's own source
+
+When a session's folder is the checkout the running Marina server was started from, Code Mode
+never edits that tree in place. Before the session's first edit, run or dispatched task, Marina
+binds it to an isolated Git worktree on its own `marina/session-*` branch and says so. The running
+server keeps serving its own code; the change is a branch you verify, try and merge like any other.
+Reading (`code read`, `code search`, `code diff`) stays on the checkout until then. A fork, a second
+clone or a linked worktree is an ordinary repository and is not isolated automatically. If the
+worktree cannot be created, the command is refused and nothing changes.
+
 ## Code inside an existing world
 
 Use connected coding when your Marina already contains conversations, agents and ongoing
