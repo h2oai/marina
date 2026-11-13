@@ -24,9 +24,9 @@ import { isLiveMarinaCheckout } from "../../../coding/self-checkout";
 import { scratchRoot } from "../../../config/data-dir";
 import type { MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
-import { principalKind } from "../../challenges";
 import { refuseCommand } from "../../command-response";
 import { getErrorMessage } from "../../errors";
+import { principalOf } from "../../gate-context";
 import { parseModifiers, splitOnTerminator } from "../../parse-input";
 import { isSovereign } from "../../trust-profile";
 import { type CodeDeps, resolveSession, sendCode } from "./shared";
@@ -67,7 +67,8 @@ export async function shipCode(
     refuseCommand(ctx, eid, parsed.errors[0] ?? CODE_SHIP_USAGE);
     return;
   }
-  if (principalKind(entity) !== "person" && !isSovereign()) {
+  // Person or agent, failing closed to agent (src/engine/gate-context.ts).
+  if (principalOf(entity.id) !== "person" && !isSovereign()) {
     refuseCommand(
       ctx,
       eid,
