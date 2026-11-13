@@ -21,7 +21,7 @@ import { parseModifiers } from "../../parse-input";
 import { reassignWriter } from "./crew";
 import { clearSessionExecMode } from "./exec";
 import { formatProfileTry } from "./profiles";
-import { runnerSummary } from "./runner";
+import { runnerSummary, sandboxExposureNotice } from "./runner";
 import {
   ACTIVE_MODAL_KEY,
   ACTIVE_SESSION_KEY,
@@ -904,6 +904,8 @@ export async function completeSession(
     payload: { artifactId: artifact.id, summary: text },
   });
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+  // Before the worktree is cleaned up: what the person's own git could run (sandbox sessions).
+  const exposureNote = sandboxExposureNotice(deps.db, session);
   const worktreeNote = await cleanupSessionWorktree(deps, entity, session);
   sendCode(
     ctx,
@@ -912,6 +914,7 @@ export async function completeSession(
       success(`Coding session completed: ${session.id}`),
       `Artifact: ${artifact.id}`,
       worktreeNote ?? "",
+      exposureNote ?? "",
       dim("Use: code show last | code tree | code branch <title>"),
     ]
       .filter(Boolean)

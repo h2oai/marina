@@ -170,7 +170,7 @@ async function codex(options: AgentOptions): Promise<ManagedAgent> {
     await transport.request({
       method: "initialize",
       params: {
-        clientInfo: { name: "marina", version: "0.9.0" },
+        clientInfo: { name: "marina", version: "0.8.0" },
         capabilities: { experimentalApi: false },
       },
     });

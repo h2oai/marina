@@ -30,7 +30,7 @@ import {
   freeLoopbackPort,
   startChildMarina,
 } from "../world/child-marina";
-import { HOST_GIT_CONFIG_ARGS } from "./host-git";
+import { HOST_GIT_CONFIG_ARGS, hostGitDriverOverrides, hostGitEnv } from "./host-git";
 
 export type TrialArm = "base" | "candidate";
 export type TrialVerdict =
@@ -55,6 +55,12 @@ export interface CodeTrialSpec {
   capUsd: number;
   /** The model this Marina serves the builds' default model with; default `marina/default`. */
   upstreamModel?: string;
+  /**
+   * The candidate's tree, already staged with the repository's content filters
+   * (a sandbox session stages inside its sandbox: `SandboxWorkspace.snapshotTree`).
+   * Absent: host git stages it, with every content driver switched off.
+   */
+  candidateTreeId?: string;
 }
 
 export interface TrialArmResult {
@@ -110,14 +116,18 @@ export function trialGroup(id: string, arm: TrialArm): string {
   return `trial:${id}:${arm}`;
 }
 
-// The trees are agent-written: no hooks, no repository-supplied drivers, no submodules.
-const hostGit: GitRunner = (cwd, argv, env) => {
-  const result = Bun.spawnSync(["git", ...HOST_GIT_CONFIG_ARGS, ...argv], {
-    cwd,
-    env: { ...process.env, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+// The trees are agent-written: no hooks, no repository-supplied drivers, no submodules,
+// and none of the person's own (global) configuration or the server's environment.
+export const trialHostGit: GitRunner = (cwd, argv, env) => {
+  const result = Bun.spawnSync(
+    ["git", ...HOST_GIT_CONFIG_ARGS, ...hostGitDriverOverrides(cwd), ...argv],
+    {
+      cwd,
+      env: hostGitEnv(env),
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
   return {
     exitCode: result.exitCode,
     stdout: result.stdout.toString().trim(),
@@ -147,15 +157,27 @@ function must(git: GitRunner, cwd: string, argv: string[], env?: Record<string, 
  * touching its index: a temporary index takes every tracked and untracked
  * (not ignored) file, and the commit's parent is the tree's HEAD.
  */
-export function snapshotCommit(git: GitRunner, tree: string, scratch: string): string {
-  const index = join(scratch, "candidate.index");
-  const env = { GIT_INDEX_FILE: index };
-  must(git, tree, ["read-tree", "HEAD"], env);
-  must(git, tree, ["add", "-A"], env);
-  const treeId = must(git, tree, ["write-tree"], env);
+export function snapshotCommit(
+  git: GitRunner,
+  tree: string,
+  scratch: string,
+  /** A tree already staged with the repository's content filters (see `CodeTrialSpec`). */
+  stagedTree?: string,
+): string {
+  let treeId: string;
+  if (stagedTree !== undefined) {
+    if (!/^[a-f0-9]{40,64}$/.test(stagedTree)) throw new Error("Invalid staged tree.");
+    treeId = must(git, tree, ["rev-parse", "--verify", `${stagedTree}^{tree}`]);
+  } else {
+    const index = join(scratch, "candidate.index");
+    const env = { GIT_INDEX_FILE: index };
+    must(git, tree, ["read-tree", "HEAD"], env);
+    must(git, tree, ["add", "-A"], env);
+    treeId = must(git, tree, ["write-tree"], env);
+    rmSync(index, { force: true });
+  }
   const head = must(git, tree, ["rev-parse", "HEAD"]);
   const headTree = must(git, tree, ["rev-parse", "HEAD^{tree}"]);
-  rmSync(index, { force: true });
   if (treeId === headTree) return head;
   return must(git, tree, ["commit-tree", treeId, "-p", head, "-m", "marina code trial snapshot"], {
     GIT_AUTHOR_NAME: "Marina",
@@ -250,7 +272,7 @@ export async function runCodeTrial(
   deps: CodeTrialDeps,
   spec: CodeTrialSpec,
 ): Promise<CodeTrialResult> {
-  const git = deps.git ?? hostGit;
+  const git = deps.git ?? trialHostGit;
   const startChild = deps.startChild ?? ((s: ChildMarinaSpec) => startChildMarina(s, 120_000));
   const install = deps.install ?? hostInstall;
   const say = deps.progress ?? (() => {});
@@ -261,7 +283,7 @@ export async function runCodeTrial(
   const children: ChildMarina[] = [];
   let modelKey: string | undefined;
   try {
-    const candidateSha = snapshotCommit(git, spec.candidateTree, root);
+    const candidateSha = snapshotCommit(git, spec.candidateTree, root, spec.candidateTreeId);
     const base = must(git, repo, ["rev-parse", "HEAD"]);
     const baseSha = must(git, repo, ["merge-base", base, candidateSha]);
     if (baseSha === candidateSha) throw new Error("The candidate has no changes from its base.");

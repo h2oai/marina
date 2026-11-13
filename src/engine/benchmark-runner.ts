@@ -24,6 +24,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { hostGitArgv, hostGitEnv } from "../coding/host-git";
 import { dataDir } from "../config/data-dir";
 import { noteBenchmarkRun } from "../learning/intake";
 import { caseGuardFromItems } from "../learning/leak-guard";
@@ -223,13 +224,15 @@ export function sourceRevision(): string | null {
   if (cachedSource !== undefined) return cachedSource;
   try {
     const cwd = join(import.meta.dir, "../..");
-    const head = Bun.spawnSync(["git", "rev-parse", "--short=12", "HEAD"], { cwd });
+    // Hardened host git: a coding session may have written in this checkout, and
+    // `status` would otherwise run its fsmonitor, hooks or content filters.
+    const run = (argv: string[]) =>
+      Bun.spawnSync(hostGitArgv(argv, cwd), { cwd, env: hostGitEnv(), stdin: "ignore" });
+    const head = run(["git", "rev-parse", "--short=12", "HEAD"]);
     const sha = head.exitCode === 0 ? head.stdout.toString().trim() : "";
     if (!/^[0-9a-f]{7,40}$/.test(sha)) cachedSource = null;
     else {
-      const dirty = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=no"], {
-        cwd,
-      });
+      const dirty = run(["git", "status", "--porcelain", "--untracked-files=no"]);
       cachedSource = dirty.exitCode === 0 && dirty.stdout.toString().trim() ? `${sha}-dirty` : sha;
     }
   } catch {

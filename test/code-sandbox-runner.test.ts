@@ -679,23 +679,30 @@ describe("program-naming git config inside the tree is pinned (no bubblewrap nee
     mkdirSync(join(root, "tools"));
     writeFileSync(join(root, "tools", "m"), "#!/bin/sh\n");
     git(root, "config", "mergetool.x.cmd", "./tools/m $LOCAL");
-    // `$` in an executable section is refused outright (run-time expansion).
-    expect(() => layout()).toThrow(/mergetool\.x\.cmd .*shell expansion/);
+    // `$` in an executable section is supported and reported (run-time expansion
+    // cannot be pinned); its literal in-tree program is still pinned.
+    expect(layout().exposures).toEqual([
+      { key: "mergetool.x.cmd", file: join(root, ".git", "config"), kind: "shell-expansion" },
+    ]);
+    expect(layout().pins.readOnly).toEqual([join(root, "tools", "m")]);
     git(root, "config", "mergetool.x.cmd", "./tools/m");
     expect(layout().pins.readOnly).toEqual([join(root, "tools", "m")]);
+    expect(layout().exposures).toEqual([]);
   });
 
   it("every section is executable unless the one data-only list says otherwise (hook.*.command)", () => {
+    const reported = () => layout().exposures?.map((exposure) => exposure.key);
     git(root, "config", "hook.lint.command", "$(git rev-parse --show-toplevel)/tools/lint.sh");
-    expect(() => layout()).toThrow(/hook\.lint\.command .*shell expansion/);
+    expect(reported()).toEqual(["hook.lint.command"]);
     git(root, "config", "--unset", "hook.lint.command");
     git(root, "config", "newfeature.thing.run", "`pwd`/x");
-    expect(() => layout()).toThrow(/newfeature\.thing\.run .*shell expansion/);
+    expect(reported()).toEqual(["newfeature.thing.run"]);
     git(root, "config", "--unset", "newfeature.thing.run");
     // Data-only sections pass through, `$` and all.
     git(root, "config", "user.name", "$HOME person");
     git(root, "config", "format.pretty", "%H $x");
     expect(layout().pins).toEqual({ dirs: [], readOnly: [], emptyDirs: [] });
+    expect(reported()).toEqual([]);
   });
 
   it("init.templateDir and ext:: transports are not data", () => {
@@ -710,17 +717,19 @@ describe("program-naming git config inside the tree is pinned (no bubblewrap nee
     expect(() => layout()).toThrow(/ext:: transport/);
   });
 
-  it("content drivers are refused (they read files they do not name); git-lfs's own filters are allowed", () => {
+  it("content drivers are supported and reported (they read files they do not name); git-lfs's own filters are neither", () => {
     for (const [key, value] of [
       ["filter.nbs.clean", '"/usr/bin/python3" -m nbstripout_x'],
       ["filter.x.process", "some-filter-daemon"],
       ["diff.t.textconv", "cat"],
       ["diff.t.command", "sh conv.sh"],
-      ["diff.external", "./tools/d"],
+      ["diff.external", "difftool-x"],
       ["merge.m.driver", "merge-tool %O %A %B"],
     ] as const) {
       git(root, "config", key, value);
-      expect(() => layout()).toThrow(new RegExp(`${key.replace(/\./g, "\\.")} .*content driver`));
+      expect(layout().exposures).toEqual([
+        { key, file: join(root, ".git", "config"), kind: "content-driver" },
+      ]);
       git(root, "config", "--unset", key);
     }
     git(root, "config", "filter.lfs.clean", "git-lfs clean -- %f");
@@ -728,9 +737,10 @@ describe("program-naming git config inside the tree is pinned (no bubblewrap nee
     git(root, "config", "filter.lfs.process", "git-lfs filter-process");
     git(root, "config", "filter.lfs.required", "true");
     expect(layout().pins).toEqual({ dirs: [], readOnly: [], emptyDirs: [] });
+    expect(layout().exposures).toEqual([]);
     // An lfs-looking driver whose program lives in the tree is refused.
     git(root, "config", "filter.lfs.process", `${root}/bin/git-lfs filter-process`);
-    expect(() => layout()).toThrow(/filter\.lfs\.process .*content driver/);
+    expect(() => layout()).toThrow(/filter\.lfs\.process .*git-lfs program inside the work tree/);
   });
 
   it("reports existing git hooks (pre-commit style) without refusing", () => {
@@ -759,15 +769,16 @@ describe("program-naming git config inside the tree is pinned (no bubblewrap nee
   it("refusals name the key and file, never the value (it can hold a credential)", () => {
     writeFileSync(
       join(home, ".gitconfig"),
-      '[credential]\n\thelper = "!f(){ echo password=s3cr3t-$1; }; f"\n',
+      '[credential]\n\thelper = "!f(){ echo password=s3cr3t-$1; }; f"\n[remote "x"]\n\turl = ext::sh -c s3cr3t\n',
     );
+    // The shell-expanded helper is reported by key and file only.
     let message = "";
     try {
       layout();
     } catch (error) {
       message = (error as Error).message;
     }
-    expect(message).toMatch(/credential\.helper/);
+    expect(message).toMatch(/remote\.x\.url/);
     expect(message).toContain(join(home, ".gitconfig"));
     expect(message).not.toContain("s3cr3t");
     writeFileSync(join(home, ".gitconfig"), "");
@@ -1061,6 +1072,22 @@ describe("code workspace runner sandbox (command, fake launcher)", () => {
     expect(await say("code workspace runner local")).toContain("run on the host");
     // The host path refuses the same line (allowlist + metacharacters).
     expect(await say(`code run sh -c "echo a | tr a b"`)).not.toMatch(/^b$/m);
+  });
+
+  it("a content-filter repository: named at the start, its session's files listed when it ends", async () => {
+    git(root, "config", "filter.nbstripout.clean", '"/usr/bin/python3" -m nbstripout');
+    const { say } = await setup("e_sbx_drv", ["code.exec"]);
+    expect(await say("code workspace runner sandbox")).toContain(
+      "Commands now run in a local OS sandbox",
+    );
+    expect(await say("code workspace runner")).toContain(
+      "git config runs programs Marina cannot pin (filter.nbstripout.clean)",
+    );
+    await say(`code run sh -c "echo planted > nbstripout.py"`);
+    const done = await say("code done finished");
+    expect(done).toContain("Coding session completed");
+    expect(done).toContain("filter.nbstripout.clean");
+    expect(done).toMatch(/created or changed: .*nbstripout\.py/);
   });
 
   it("stays sandboxed behind > 200 newer artifacts, and retiring finds every runner setting", async () => {

@@ -13,6 +13,8 @@
  * Pure apart from `readGitVersion`, which spawns local `git` only (no network).
  */
 
+import { hostGitArgv, hostGitEnv } from "../coding/host-git";
+
 export interface MarinaVersion {
   /** Full (or, from an in-world source revision, 12-hex) commit sha. */
   commit: string;
@@ -65,15 +67,16 @@ const GIT_VERSION_TIMEOUT_MS = 10_000;
 
 export const spawnGit: GitCommand = (args, cwd) => {
   try {
-    const p = Bun.spawnSync(["git", ...args], {
+    // Hardened host git (src/coding/host-git.ts): a coding session may have written in
+    // this checkout, and `status` would otherwise run its fsmonitor, hooks or content
+    // filters. Read-only and non-interactive: no optional index lock, no prompt, no pager.
+    const p = Bun.spawnSync(hostGitArgv(["git", ...args], cwd), {
       cwd,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
       timeout: GIT_VERSION_TIMEOUT_MS,
-      // Read-only and non-interactive: `status` takes no optional index lock
-      // (concurrent readers never contend), and git never prompts or pages.
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_PAGER: "cat" },
+      env: hostGitEnv({ GIT_PAGER: "cat" }),
     });
     if (p.exitedDueToTimeout) return undefined;
     return p.exitCode === 0 ? p.stdout.toString().trim() : undefined;

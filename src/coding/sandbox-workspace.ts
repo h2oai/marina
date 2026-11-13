@@ -31,6 +31,11 @@
  *   without its own `.git`, a nested gitdir, a git config that includes a file
  *   from the work tree, or a root holding the server's own state is refused.
  *   Submodule gitfiles are checked before and after every command.
+ * - Content drivers (nbstripout-style filters) and shell-expanded git settings
+ *   are supported, not pinned: Marina's own git work that needs a filter runs
+ *   inside the sandbox (`stagedEntries`, `diff`), host git never runs any of
+ *   them, and the files a session wrote that the person's own git could hand
+ *   to them are reported (`gitExposureReport`).
  * - Never a silent host fallback: a missing or untrusted launcher, or a
  *   sandbox that fails to set up, fails the command with a readable error.
  * - No seccomp filter and no CPU limit (bubblewrap has no cgroups).
@@ -38,19 +43,34 @@
 
 import { createHash } from "node:crypto";
 import {
+  closeSync,
+  copyFileSync,
   existsSync,
+  constants as fsConstants,
+  fstatSync,
   lstatSync,
+  mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   readlinkSync,
+  readSync,
   realpathSync,
+  rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import type { CandidateCaptureOptions } from "./candidate";
 import { gitMetadataPaths } from "./container-workspace";
-import { hostGitArgv, hostGitEnv } from "./host-git";
-import type { CodeRunPolicy, WorkspaceDescriptor, WorkspaceRunResult } from "./local-workspace";
+import { gitConfigEnv, hostGitArgv, hostGitEnv } from "./host-git";
+import type {
+  CodeRunPolicy,
+  WorkspaceDescriptor,
+  WorkspaceDiff,
+  WorkspaceRunResult,
+} from "./local-workspace";
 import {
   CODE_RUN_ENV,
   codeRunPolicy,
@@ -171,6 +191,14 @@ export interface SandboxLayout {
   readOnly: string[];
   /** Git hooks the project already has (reported, not refused). */
   hooks: string[];
+  /** Content drivers and shell-expanded settings (supported, reported: `gitExposureReport`). */
+  exposures?: GitExposure[];
+  /** Filter drivers (git-lfs's aside) git config defines: Marina stages and diffs in the sandbox. */
+  contentFilters?: string[];
+  /** The person's own config files (global, system, includes): their driver definitions apply inside. */
+  personConfigFiles?: string[];
+  /** The person's global attributes file (`core.attributesFile`, else the XDG default), if any. */
+  personAttributes?: string;
   /** The command's whole environment (after `--clearenv`). */
   env: Record<string, string>;
   limits: SandboxLimits;
@@ -595,9 +623,13 @@ export function isExecutableGitConfigKey(name: string, value: string): boolean {
 }
 
 /**
- * Content drivers run programs that may read work-tree files they do not name
- * (an interpreter, `-m module`, a tool reading its own config), so no pin can
- * hold what they run: the sandbox refuses them, except this explicit allow-list.
+ * Content drivers: programs git runs over work-tree content with the work tree
+ * as their current directory. They may read work-tree files they do not name
+ * (an interpreter's `-m module`, a tool's own config), so no pin can hold what
+ * they run. The sandbox supports them: Marina's own git work that needs them
+ * (diff, staging, snapshots) runs INSIDE the sandbox, host git keeps them
+ * switched off (`hostGitDriverOverrides`), and the person's own later git is
+ * told which files the session wrote (`gitExposureReport`).
  */
 export const CONTENT_DRIVER_KEY =
   /^(filter\..+\.(clean|smudge|process)|diff\..+\.(textconv|command)|diff\.external|merge\..+\.driver)$/;
@@ -607,6 +639,23 @@ const SAFE_CONTENT_DRIVERS = [
   /^(?<program>git-lfs|\/[^\s]*\/git-lfs) smudge -- %f$/,
   /^(?<program>git-lfs|\/[^\s]*\/git-lfs) filter-process$/,
 ];
+
+/**
+ * A git setting the sandbox supports but cannot pin: a content driver, or an
+ * executable setting with shell expansion. Named by key and file only, never
+ * by value (a global config can hold a credential).
+ */
+export interface GitExposure {
+  key: string;
+  file: string;
+  kind: "content-driver" | "shell-expansion";
+}
+
+/** The filter driver a `filter.<name>.<var>` key defines, if it is one. */
+function filterDriverName(key: string): string | null {
+  const match = /^filter\.(.+)\.(clean|smudge|process)$/i.exec(key);
+  return match ? match[1]! : null;
+}
 
 const SHELL_EXPANSION = /[$`]/;
 const SHELL_SYNTAX = /[;&|`$()<>'"\\\n*?[\]{}]/;
@@ -698,6 +747,8 @@ export function programConfigPins(
   sources: readonly { file: string; base: string }[],
   root: string,
   home: string,
+  /** Receives every content driver and shell-expanded setting (supported, reported). */
+  exposures: GitExposure[] = [],
 ): SandboxPins {
   const pins = emptyPins();
   const inside = (path: string) => insideRoot(root, path) || insideRoot(root, realpathMaybe(path));
@@ -707,26 +758,30 @@ export function programConfigPins(
       if (IGNORED_KEYS.has(name) || name.startsWith("include")) continue;
       const executable = isExecutableGitConfigKey(name, value);
       const why = `git config key ${key} in ${file}`;
-      if (CONTENT_DRIVER_KEY.test(name)) {
-        const safe = SAFE_CONTENT_DRIVERS.map((pattern) => pattern.exec(value.trim())).find(
-          Boolean,
-        );
-        const program = safe?.groups?.program ?? "";
-        if (!safe || (isAbsolute(program) && inside(program)))
-          throw new Error(
-            `${why} defines a content driver; its program may read work-tree files it does not name, which no pin can hold. Remove it (only git-lfs's own filters are allowed) before using the sandbox runner.`,
-          );
-        continue;
-      }
       // An `ext::` transport URL runs its command on the person's fetch or push.
       if (/^\s*ext::/i.test(value))
         throw new Error(
           `${why} uses the ext:: transport, which runs a command when git fetches or pushes. Refused.`,
         );
-      if (executable && SHELL_EXPANSION.test(value))
-        throw new Error(
-          `${why} uses shell expansion in a setting git may run; an in-tree path built at run time cannot be pinned. Refused.`,
+      // Reported rather than pinned: a content driver may read files it does
+      // not name, and a shell-expanded path is only built at run time.
+      let reported = false;
+      if (CONTENT_DRIVER_KEY.test(name)) {
+        const safe = SAFE_CONTENT_DRIVERS.map((pattern) => pattern.exec(value.trim())).find(
+          Boolean,
         );
+        const program = safe?.groups?.program ?? "";
+        if (safe && isAbsolute(program) && inside(program))
+          throw new Error(
+            `${why} names a git-lfs program inside the work tree, which sandboxed code can replace. Refused.`,
+          );
+        if (safe) continue;
+        exposures.push({ key, file, kind: "content-driver" });
+        reported = true;
+      } else if (executable && SHELL_EXPANSION.test(value)) {
+        exposures.push({ key, file, kind: "shell-expansion" });
+        reported = true;
+      }
       const literal = (token: string) => {
         const expanded = expandHome(token, home);
         return isAbsolute(expanded) ? resolve(expanded) : resolve(base, expanded);
@@ -744,6 +799,17 @@ export function programConfigPins(
             );
       const paths = tokens.map(literal).filter((path) => path !== root && inside(path));
       if (paths.length === 0) continue;
+      if (reported) {
+        // Best effort: hold the literal in-tree programs it names (a missing
+        // one, or one behind a symlink, is left to the report).
+        for (const path of paths)
+          try {
+            addPins(pins, pinPath(root, path, why, { quiet: true }));
+          } catch {
+            // allow-empty-catch: not pinnable; the exposure report names what the session wrote
+          }
+        continue;
+      }
       if (executable && SHELL_SYNTAX.test(command))
         throw new Error(
           `${why} names a path inside the work tree through shell syntax; it cannot be pinned safely. Refused.`,
@@ -827,6 +893,24 @@ export function sandboxEnv(path: string = process.env.PATH ?? ""): Record<string
     HOME: SANDBOX_HOME,
     TMPDIR: "/tmp",
   };
+}
+
+/** The person's global attributes file: `core.attributesFile` in their config, else the XDG default. */
+function personAttributesFile(
+  files: readonly string[],
+  home: string,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  let named: string | undefined;
+  // Later files win (system, then global): `configFiles` lists the global ones before /etc.
+  for (const file of [...files].reverse())
+    for (const { value } of readGitConfigKeys(file, "^core\\.attributesfile$"))
+      if (value.trim()) named = expandHome(value.trim(), home);
+  const path =
+    named ?? join(env.XDG_CONFIG_HOME?.trim() || join(home, ".config"), "git", "attributes");
+  return isAbsolute(path) && lstatSync(path, { throwIfNoEntry: false })?.isFile()
+    ? path
+    : undefined;
 }
 
 export interface SandboxLayoutOptions {
@@ -935,11 +1019,27 @@ export function resolveSandboxLayout(
     forbidden,
     home,
   );
+  const exposures: GitExposure[] = [];
   const pins = programConfigPins(
     configFiles.map((file) => ({ file, base: root })),
     root,
     home,
+    exposures,
   );
+  const repoConfigs = new Set(
+    [git.gitDir, git.common].flatMap((dir) =>
+      ["config", "config.worktree"].map((name) => realpathMaybe(join(dir, name))),
+    ),
+  );
+  const personConfigFiles = configFiles.filter((file) => !repoConfigs.has(realpathMaybe(file)));
+  const contentFilters = [
+    ...new Set(
+      exposures
+        .map((exposure) => filterDriverName(exposure.key))
+        .filter((name): name is string => name !== null),
+    ),
+  ];
+  const personAttributes = personAttributesFile(personConfigFiles, home, env);
   return {
     bwrap,
     prlimit,
@@ -953,6 +1053,10 @@ export function resolveSandboxLayout(
     pins,
     readOnly: git.paths,
     hooks: projectGitHooks(configFiles, git.common, root, home),
+    exposures,
+    contentFilters,
+    personConfigFiles,
+    ...(personAttributes ? { personAttributes } : {}),
     env: sandboxEnv(env.PATH),
     limits: sandboxLimits(env),
     ...(opts.scratchTmp ? { scratchTmp: checkScratchTmp(opts.scratchTmp, root, home) } : {}),
@@ -1173,6 +1277,324 @@ function sameState(a: GitlinkState, b: GitlinkState): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+/** git's own words when a filter program could not run or failed. */
+const FILTER_FAILURE =
+  /(external filter [^\n]*failed[^\n]*|cannot fork to run external filter[^\n]*|cannot run [^\n]*)/;
+
+/** Bound on one of Marina's own git runs in the sandbox (staging, diff). */
+const SANDBOX_GIT_TIMEOUT_MS = 120_000;
+
+/**
+ * Command-line config for git inside the sandbox. git-lfs's filters stay off
+ * there as in host git (its clean writes `.git/lfs`, which is read-only), so
+ * an LFS file is staged as stored; hooks and fsmonitor do not run; no gc.
+ */
+const SANDBOX_GIT_CONFIG_ENV = gitConfigEnv([
+  "-c",
+  "core.hooksPath=/dev/null",
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  "gc.auto=0",
+  "-c",
+  "maintenance.auto=false",
+  "-c",
+  "submodule.recurse=false",
+  "-c",
+  "filter.lfs.clean=",
+  "-c",
+  "filter.lfs.smudge=",
+  "-c",
+  "filter.lfs.process=",
+  "-c",
+  "filter.lfs.required=false",
+]);
+
+/**
+ * `git add -A` into a private index and object directory; entries and the
+ * objects the repository lacks out. Git copies every object it hashes into the
+ * private directory (it cannot freshen the read-only alternate), so the ones
+ * the repository already has are left out by asking the repository alone.
+ * `head` starts from HEAD keeping the index's stat data (`read-tree -m`), so
+ * unchanged files are not hashed again.
+ */
+const STAGE_SCRIPT = `set -e
+mkdir -p /tmp/objects /tmp/out
+if [ "$1" = head ]; then git read-tree -m HEAD; fi
+git add -A
+git ls-files -s -z > /tmp/out/entries
+(cd /tmp/objects && find . -type f) | sed -n 's#^[.]/\\([0-9a-f][0-9a-f]\\)/\\([0-9a-f]*\\)$#\\1\\2#p' > /tmp/out/new
+GIT_OBJECT_DIRECTORY="$GIT_ALTERNATE_OBJECT_DIRECTORIES" GIT_ALTERNATE_OBJECT_DIRECTORIES= git cat-file --batch-check < /tmp/out/new | sed -n 's/ missing$//p' > /tmp/out/missing
+git cat-file --batch < /tmp/out/missing > /tmp/out/blobs`;
+
+/** The unstaged diff, new files included (intent-to-add in a private index copy). */
+const DIFF_SCRIPT = `set -e
+mkdir -p /tmp/objects /tmp/out
+git ls-files -z --others --exclude-standard -- "$@" > /tmp/out/untracked
+xargs -0 -r git add -N -- < /tmp/out/untracked
+git diff --no-ext-diff --no-textconv -- "$@" > /tmp/out/diff`;
+
+/** Paths changed from HEAD (the index on an unborn branch), and untracked ones. */
+const CHANGED_SCRIPT = `set -e
+mkdir -p /tmp/objects /tmp/out
+git diff --name-only --no-renames HEAD -- > /tmp/out/tracked 2>/dev/null || git diff --name-only --no-renames --cached -- > /tmp/out/tracked
+git ls-files --others --exclude-standard > /tmp/out/untracked`;
+
+/** One config value in git's quoted syntax. */
+function gitConfigValue(value: string): string {
+  return `"${value
+    .replace(/[\\"]/g, (c) => `\\${c}`)
+    .replace(/\n/g, "\\n")
+    .replace(/\t/g, "\\t")}"`;
+}
+
+/**
+ * The global config git inside the sandbox reads (the person's home is hidden
+ * there): only the content-driver definitions of the person's own config files
+ * and their global attributes, so staging matches what their git would stage.
+ */
+export function writeSandboxGitConfig(scratch: string, layout: SandboxLayout): void {
+  const lines: string[] = [];
+  for (const file of layout.personConfigFiles ?? [])
+    for (const { key, value } of readGitConfigKeys(file, "^(filter|diff|merge)\\.")) {
+      const first = key.indexOf(".");
+      const last = key.lastIndexOf(".");
+      if (first === last) {
+        lines.push(
+          `[${key.slice(0, first)}]`,
+          `\t${key.slice(last + 1)} = ${gitConfigValue(value)}`,
+        );
+        continue;
+      }
+      const sub = key.slice(first + 1, last);
+      if (/[\n\0]/.test(sub)) continue;
+      lines.push(
+        `[${key.slice(0, first)} ${gitConfigValue(sub)}]`,
+        `\t${key.slice(last + 1)} = ${gitConfigValue(value)}`,
+      );
+    }
+  if (layout.personAttributes) {
+    const stat = lstatSync(layout.personAttributes, { throwIfNoEntry: false });
+    if (stat?.isFile() && stat.size <= MIB) {
+      writeFileSync(join(scratch, "attributes"), readFileSync(layout.personAttributes));
+      lines.push("[core]", `\tattributesFile = ${gitConfigValue("/tmp/attributes")}`);
+    }
+  }
+  writeFileSync(join(scratch, "gitconfig"), `${lines.join("\n")}\n`, { mode: 0o600 });
+}
+
+/** A file the sandbox wrote in its scratch /tmp: a regular file (no symlink followed), bounded. */
+function readScratchBounded(scratch: string, rel: string, max: number) {
+  const fd = openSync(join(scratch, rel), fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) throw new Error(`The sandbox's ${rel} is not a regular file.`);
+    const data = Buffer.alloc(Math.min(stat.size, max));
+    let offset = 0;
+    while (offset < data.length) {
+      const read = readSync(fd, data, offset, data.length - offset, offset);
+      if (read === 0) break;
+      offset += read;
+    }
+    return { data: data.subarray(0, offset), size: stat.size };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function readScratch(scratch: string, rel: string, max: number): Buffer {
+  const { data, size } = readScratchBounded(scratch, rel, max);
+  if (size > max) throw new Error(`The sandbox's ${rel} exceeds ${max} bytes.`);
+  return data;
+}
+
+const INDEX_MODES = new Set(["100644", "100755", "120000", "160000"]);
+
+/** `git ls-files -s -z` output: mode, oid, stage 0 and a safe relative path, or a refusal. */
+export function parseIndexEntries(data: Buffer): { mode: string; oid: string; path: string }[] {
+  const entries: { mode: string; oid: string; path: string }[] = [];
+  for (const record of data.toString("utf8").split("\0")) {
+    if (!record) continue;
+    const match = /^(\d{6}) ([a-f0-9]{40}|[a-f0-9]{64}) 0\t([^\0]+)$/.exec(record);
+    if (!match || !INDEX_MODES.has(match[1]!))
+      throw new Error("Git in the sandbox staged an unexpected entry; nothing was captured.");
+    const path = match[3]!;
+    if (
+      isAbsolute(path) ||
+      /[\r\n\uFFFD]/.test(path) ||
+      path.split("/").some((part) => ["", ".", "..", ".git"].includes(part.toLowerCase()))
+    )
+      throw new Error("Git in the sandbox staged an unsafe path; nothing was captured.");
+    entries.push({ mode: match[1]!, oid: match[2]!, path });
+  }
+  return entries;
+}
+
+/** `git cat-file --batch` output: `<oid> <type> <size>\n<bytes>\n` per object. */
+export function parseBatch(data: Buffer): Map<string, { type: string; data: Buffer }> {
+  const out = new Map<string, { type: string; data: Buffer }>();
+  let offset = 0;
+  while (offset < data.length) {
+    const newline = data.indexOf(0x0a, offset);
+    if (newline < 0) throw new Error("Malformed object stream from the sandbox.");
+    const header = data.subarray(offset, newline).toString("latin1");
+    const match = /^([a-f0-9]{40}|[a-f0-9]{64}) (blob|tree|commit|tag) (\d{1,12})$/.exec(header);
+    if (!match) {
+      if (/^[a-f0-9]{40,64} missing$/.test(header)) {
+        offset = newline + 1;
+        continue;
+      }
+      throw new Error("Malformed object stream from the sandbox.");
+    }
+    const size = Number(match[3]);
+    const start = newline + 1;
+    if (start + size + 1 > data.length || data[start + size] !== 0x0a)
+      throw new Error("Malformed object stream from the sandbox.");
+    out.set(match[1]!, { type: match[2]!, data: data.subarray(start, start + size) });
+    offset = start + size + 1;
+  }
+  return out;
+}
+
+/** Hardened host git with optional stdin; never a driver, hook or the person's config. */
+async function hostGit(
+  cwd: string,
+  args: string[],
+  input?: string | Uint8Array,
+  extraEnv: Record<string, string> = {},
+): Promise<{ stdout: Buffer }> {
+  const child = Bun.spawn(hostGitArgv(["git", ...args], cwd), {
+    cwd,
+    env: hostGitEnv(extraEnv),
+    stdin:
+      input === undefined
+        ? "ignore"
+        : new Blob([typeof input === "string" ? input : new Uint8Array(input)]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const timer = setTimeout(() => child.kill("SIGKILL"), SANDBOX_GIT_TIMEOUT_MS);
+  try {
+    const [code, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).arrayBuffer(),
+      new Response(child.stderr).text(),
+    ]);
+    if (code !== 0) throw new Error(`git ${args[0]} failed: ${stderr.slice(0, 400)}`);
+    return { stdout: Buffer.from(stdout) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * What the person's own git could pick up from this session. The sandbox
+ * supports content drivers and shell-expanded settings, and Marina never runs
+ * them outside it; but the person's git runs them on their computer with this
+ * work tree as the current directory (a content driver on their next `git
+ * status`, `diff` or `add`). No pin holds what such a program reads, so every
+ * file created or changed since `sinceMs` (ctime: no sandboxed process can
+ * set it back) is listed, ignored files included.
+ */
+export interface GitExposureReport {
+  exposures: GitExposure[];
+  files: string[];
+  /** Files past the listed ones. */
+  more: number;
+  /** The walk stopped at its entry bound: more may have changed. */
+  incomplete: boolean;
+}
+
+const EXPOSURE_LISTED = 20;
+const EXPOSURE_MAX_ENTRIES = 200_000;
+
+export function gitExposureReport(
+  root: string,
+  exposures: readonly GitExposure[],
+  sinceMs: number,
+  opts: { listed?: number; maxEntries?: number } = {},
+): GitExposureReport {
+  const listed = opts.listed ?? EXPOSURE_LISTED;
+  const maxEntries = opts.maxEntries ?? EXPOSURE_MAX_ENTRIES;
+  const files: string[] = [];
+  let count = 0;
+  let seen = 0;
+  let incomplete = false;
+  // ctime has coarse granularity on some filesystems; a second of slack over-reports.
+  const since = sinceMs - 1000;
+  const stack = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue; // allow-empty-catch: an unreadable directory has nothing to list
+    }
+    for (const name of names) {
+      if (++seen > maxEntries) {
+        incomplete = true;
+        break;
+      }
+      if (name === ".git") continue;
+      const path = join(dir, name);
+      const stat = lstatSync(path, { throwIfNoEntry: false });
+      if (!stat) continue;
+      if (stat.isDirectory()) stack.push(path);
+      else if (stat.ctimeMs >= since) {
+        count++;
+        if (files.length < listed) files.push(relative(root, path));
+      }
+    }
+    if (incomplete) break;
+  }
+  files.sort();
+  return { exposures: [...exposures], files, more: count - files.length, incomplete };
+}
+
+/** The plain notice for a report, or null when nothing applies. */
+export function gitExposureNotice(report: GitExposureReport, root: string): string | null {
+  if (report.exposures.length === 0) return null;
+  const keys = [...new Set(report.exposures.map((exposure) => exposure.key))];
+  const settings = `Your git settings ${keys.join(", ")} run programs on this computer with the work tree as their directory (a content driver on your next git status, diff or add there).`;
+  const marina =
+    "Marina ran them only inside the sandbox; nothing the session wrote ran outside it.";
+  if (report.files.length === 0 && !report.incomplete)
+    return `${settings} ${marina} The session created or changed no files they could pick up.`;
+  const listed = report.files.join(", ");
+  const more = report.more > 0 ? ` and ${report.more} more` : "";
+  const partial = report.incomplete ? " (the tree is too large to list in full)" : "";
+  return `${settings} ${marina} Your own git would see the files this session created or changed${partial}: ${listed}${more}. Review them before running git in ${root} yourself.`;
+}
+
+/** The exposure notice for a sandbox root since `sinceMs`, or null (no exposure, or the layout is refused). */
+export function sandboxExposureNoticeFor(root: string, sinceMs: number): string | null {
+  try {
+    const real = realpathSync(root);
+    const layout = resolveSandboxLayout(real, [], sandboxTestDefaults);
+    if (!layout.exposures?.length) return null;
+    return gitExposureNotice(gitExposureReport(real, layout.exposures, sinceMs), real);
+  } catch {
+    return null; // the start line reports a refused layout itself
+  }
+}
+
+/** The settings a sandbox root supports but cannot pin, or none when its layout is refused. */
+export function sandboxExposuresFor(root: string): GitExposure[] {
+  try {
+    return resolveSandboxLayout(realpathSync(root), [], sandboxTestDefaults).exposures ?? [];
+  } catch {
+    return []; // the start line reports the refusal itself on first use
+  }
+}
+
+/** The start-line notice for a root whose git config the sandbox reports rather than pins. */
+export function gitExposureStartNotice(exposures: readonly GitExposure[]): string | null {
+  if (exposures.length === 0) return null;
+  const keys = [...new Set(exposures.map((exposure) => exposure.key))];
+  return `This project's git config runs programs Marina cannot pin (${keys.join(", ")}): Marina's own git work that needs them runs inside the sandbox; your own git runs them on this computer, so the files this session writes are listed when it ends.`;
+}
+
 /** Thrown when a sandboxed command changed submodule git metadata. */
 export class SandboxTamperError extends Error {
   constructor(readonly paths: string[]) {
@@ -1277,8 +1699,34 @@ export class SandboxWorkspace extends LocalWorkspace {
     timeoutMs: number,
     maxBytes: number,
   ): Promise<Omit<WorkspaceRunResult, "command" | "durationMs">> {
+    const { result, layout } = await this.inSandbox(normalized, timeoutMs, maxBytes);
+    const labelled = labelSetupFailure(result);
+    return layout.hooks.length
+      ? { ...labelled, output: `${labelled.output}\n[marina] ${gitHooksNotice(layout.hooks)}` }
+      : labelled;
+  }
+
+  /**
+   * One command in the sandbox: the layout re-resolved, every submodule
+   * gitlink pinned and checked afterwards (a change holds the workspace).
+   */
+  private async inSandbox(
+    command: string[],
+    timeoutMs: number,
+    maxBytes: number,
+    opts: { scratchTmp?: string; env?: Record<string, string> } = {},
+  ): Promise<{
+    result: Omit<WorkspaceRunResult, "command" | "durationMs">;
+    layout: SandboxLayout;
+  }> {
     if (this.hostExecForbidden) throw new HostExecForbiddenError();
-    const layout = this.layout();
+    const layout = opts.scratchTmp
+      ? resolveSandboxLayout(this.root, this.fileGrants, {
+          ...this.layoutOpts,
+          scratchTmp: opts.scratchTmp,
+        })
+      : this.layout();
+    if (opts.env) layout.env = { ...layout.env, ...opts.env };
     const git = sandboxGitPaths(this.root);
     // Submodules, recursively: pin every gitlink in place (its directory chain
     // bound onto itself, its .git read-only), record each .git as a backstop,
@@ -1293,11 +1741,12 @@ export class SandboxWorkspace extends LocalWorkspace {
           files.map((file) => ({ file, base: entry.base })),
           this.root,
           layout.home,
+          layout.exposures,
         ),
       );
     }
     const result = await runWorkspaceCommand(
-      sandboxArgv(layout, normalized),
+      sandboxArgv(layout, command),
       this.root,
       Math.min(timeoutMs, MAX_BUDGETED_RUN_TIMEOUT_MS),
       maxBytes,
@@ -1307,10 +1756,207 @@ export class SandboxWorkspace extends LocalWorkspace {
       .filter((record) => !sameState(record.state, gitlinkState(this.root, record.path)))
       .map((record) => record.path);
     if (changed.length > 0) this.tamper(changed);
-    const labelled = labelSetupFailure(result);
-    return layout.hooks.length
-      ? { ...labelled, output: `${labelled.output}\n[marina] ${gitHooksNotice(layout.hooks)}` }
-      : labelled;
+    return { result, layout };
+  }
+
+  /** Filter drivers (git-lfs's aside) git config defines for this repository. */
+  contentFilters(): string[] {
+    return this.layout().contentFilters ?? [];
+  }
+
+  /**
+   * Run one of Marina's own git scripts INSIDE the sandbox, with the
+   * repository's content drivers (and the person's own driver definitions and
+   * attributes) active: the same bwrap layout and pins as any command, `.git`
+   * read-only, a private index and object directory in a scratch /tmp. Results
+   * come back as files in that scratch directory, read as data only (no
+   * symlink followed, sizes bounded): nothing it wrote is ever run.
+   */
+  private async sandboxGit(
+    script: string,
+    args: readonly string[],
+    /** Start from a private copy of the session's index (else an empty one). */
+    copyIndex: boolean,
+  ): Promise<{ scratch: string; dispose: () => void }> {
+    if (this.hostExecForbidden) throw new HostExecForbiddenError();
+    const scratch = realpathSync(mkdtempSync(join(tmpdir(), "marina-sbx-git-")));
+    const dispose = () => rmSync(scratch, { recursive: true, force: true });
+    try {
+      const layout = this.layout();
+      const git = sandboxGitPaths(this.root);
+      writeSandboxGitConfig(scratch, layout);
+      const index = join(git.gitDir, "index");
+      if (copyIndex && lstatSync(index, { throwIfNoEntry: false })?.isFile())
+        copyFileSync(index, join(scratch, "index"));
+      const { result } = await this.inSandbox(
+        ["sh", "-c", script, "marina-git", ...args],
+        SANDBOX_GIT_TIMEOUT_MS,
+        64 * 1024,
+        {
+          scratchTmp: scratch,
+          env: {
+            GIT_INDEX_FILE: "/tmp/index",
+            GIT_OBJECT_DIRECTORY: "/tmp/objects",
+            GIT_ALTERNATE_OBJECT_DIRECTORIES: join(git.common, "objects"),
+            GIT_CONFIG_GLOBAL: "/tmp/gitconfig",
+            GIT_OPTIONAL_LOCKS: "0",
+            GIT_TERMINAL_PROMPT: "0",
+            GIT_NO_LAZY_FETCH: "1",
+            ...SANDBOX_GIT_CONFIG_ENV,
+          },
+        },
+      );
+      if (result.exitCode !== 0)
+        throw new Error(
+          `${labelSetupFailure(result).output.trim().slice(-600) || "git failed"} (git in the sandbox, exit ${result.exitCode}${result.timedOut ? ", timed out" : ""})`,
+        );
+      // A filter that cannot run (its toolchain lives in the hidden home, say) makes git
+      // fall back to the raw bytes: fail closed instead of showing what the person's git would not.
+      const failed = FILTER_FAILURE.exec(result.output);
+      if (failed)
+        throw new Error(
+          `The repository's content filter could not run inside the sandbox (${failed[0].trim().slice(0, 200)}); its program, or a module it loads, may live in your home directory, which the sandbox hides. Install it system-wide, or use another runner.`,
+        );
+      return { scratch, dispose };
+    } catch (error) {
+      dispose();
+      throw error;
+    }
+  }
+
+  /**
+   * What the person's `git add -A` would stage, computed inside the sandbox
+   * with the repository's filters: `path → blob oid` for every file, each blob
+   * written into `repository` by HOST git from the bytes the sandbox returned
+   * (`hash-object --no-filters`, its oid checked), and the staged tree.
+   * `from`: the session's index (a candidate) or HEAD (a snapshot commit).
+   */
+  async stagedEntries(
+    from: "index" | "head",
+    repository: string = this.root,
+  ): Promise<{ tree: string; blobs: Map<string, string> }> {
+    const { scratch, dispose } = await this.sandboxGit(STAGE_SCRIPT, [from], true);
+    try {
+      const entries = parseIndexEntries(readScratch(scratch, "out/entries", 64 * MIB));
+      const objects = parseBatch(readScratch(scratch, "out/blobs", 512 * MIB));
+      const repo = realpathSync(repository);
+      const wanted = [...new Set(entries.filter((e) => e.mode !== "160000").map((e) => e.oid))];
+      const present = await hostGit(
+        repo,
+        ["cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        wanted.map((oid) => `${oid}\n`).join(""),
+      );
+      const missing = new Set<string>();
+      for (const line of present.stdout.toString().split("\n").filter(Boolean)) {
+        const [oid, type] = line.split(" ");
+        if (type === "missing") missing.add(oid!);
+        else if (type !== "blob") throw new Error(`Staged entry ${oid} is not a blob.`);
+      }
+      for (const oid of missing) {
+        const content = objects.get(oid);
+        if (content?.type !== "blob")
+          throw new Error("The sandbox did not return a staged blob; nothing was captured.");
+        // Host git hashes the bytes itself: the oid the sandbox claimed must be theirs.
+        const written = (
+          await hostGit(repo, ["hash-object", "-w", "--no-filters", "--stdin"], content.data)
+        ).stdout
+          .toString()
+          .trim();
+        if (written !== oid)
+          throw new Error("A staged blob does not match its object id; nothing was captured.");
+      }
+      // A host-private index: never in the scratch directory the sandbox could write.
+      const own = mkdtempSync(join(tmpdir(), "marina-sbx-index-"));
+      let tree: string;
+      try {
+        const env = { GIT_INDEX_FILE: join(own, "index") };
+        await hostGit(
+          repo,
+          ["update-index", "-z", "--index-info"],
+          entries.map((e) => `${e.mode} ${e.oid}\t${e.path}\0`).join(""),
+          env,
+        );
+        tree = (await hostGit(repo, ["write-tree"], undefined, env)).stdout.toString().trim();
+      } finally {
+        rmSync(own, { recursive: true, force: true });
+      }
+      if (!/^[a-f0-9]{40,64}$/.test(tree)) throw new Error("git write-tree returned no tree.");
+      const blobs = new Map<string, string>();
+      for (const entry of entries) if (entry.mode !== "160000") blobs.set(entry.path, entry.oid);
+      return { tree, blobs };
+    } finally {
+      dispose();
+    }
+  }
+
+  /** The staged tree of the work tree from HEAD (`code trial`, `code ship`). */
+  async snapshotTree(repository: string = this.root): Promise<string> {
+    return (await this.stagedEntries("head", repository)).tree;
+  }
+
+  /**
+   * Candidate capture with content filters: the blobs come from git inside
+   * the sandbox; the bytes, fingerprint and materialized copy stay raw.
+   */
+  override async captureCandidate(
+    repository?: string,
+    beforeCapture?: () => void,
+    options: CandidateCaptureOptions = {},
+  ): ReturnType<LocalWorkspace["captureCandidate"]> {
+    if (this.hostExecForbidden) throw new HostExecForbiddenError();
+    if (options.staged || this.contentFilters().length === 0)
+      return super.captureCandidate(repository, beforeCapture, options);
+    const { blobs } = await this.stagedEntries("index", repository ?? this.root);
+    return super.captureCandidate(repository, beforeCapture, { staged: blobs });
+  }
+
+  /** With content filters, the diff git inside the sandbox sees (new files staged intent-to-add). */
+  override async diff(input?: string, maxBytes = DEFAULT_MAX_OUTPUT_BYTES): Promise<WorkspaceDiff> {
+    if (this.contentFilters().length === 0) return super.diff(input, maxBytes);
+    const pathspec: string[] = [];
+    if (input?.trim()) pathspec.push(this.relativePath(this.resolvePath(input)));
+    let ran: Awaited<ReturnType<SandboxWorkspace["sandboxGit"]>>;
+    try {
+      ran = await this.sandboxGit(DIFF_SCRIPT, pathspec, true);
+    } catch (error) {
+      if (error instanceof HostExecForbiddenError || error instanceof SandboxTamperError)
+        throw error;
+      return {
+        content: error instanceof Error ? error.message : String(error),
+        truncated: false,
+        exitCode: 1,
+      };
+    }
+    const { scratch, dispose } = ran;
+    try {
+      const { data, size } = readScratchBounded(scratch, "out/diff", maxBytes);
+      const truncated = size > maxBytes;
+      return {
+        content: data.toString("utf8"),
+        truncated,
+        exitCode: 0,
+        ...(truncated ? { totalBytes: size } : {}),
+      };
+    } finally {
+      dispose();
+    }
+  }
+
+  /** With content filters, changed paths as git inside the sandbox sees them. */
+  override async changedPaths(): Promise<string[]> {
+    if (this.contentFilters().length === 0) return super.changedPaths();
+    const { scratch, dispose } = await this.sandboxGit(CHANGED_SCRIPT, [], true);
+    try {
+      const out = new Set<string>();
+      for (const name of ["out/tracked", "out/untracked"])
+        for (const line of readScratch(scratch, name, 256 * 1024)
+          .toString("utf8")
+          .split("\n"))
+          if (line.trim()) out.add(line.trim());
+      return [...out];
+    } finally {
+      dispose();
+    }
   }
 
   private tamper(paths: string[]): never {

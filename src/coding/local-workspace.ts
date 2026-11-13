@@ -17,7 +17,7 @@ import {
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { captureGitCandidate } from "./candidate";
+import { type CandidateCaptureOptions, captureGitCandidate } from "./candidate";
 import { prepareCandidateBunDependencies } from "./candidate-dependencies";
 import { prepareCandidateNpmDependencies } from "./candidate-npm-dependencies";
 import type { ExecApprover } from "./exec-approver";
@@ -310,12 +310,13 @@ export class LocalWorkspace implements WorkspaceRuntime {
   captureCandidate(
     repository?: string,
     beforeCapture?: () => void,
+    options: CandidateCaptureOptions = {},
   ): ReturnType<typeof captureGitCandidate> {
     assertHostExecAllowed(this.hostExecForbidden);
     return withRootLock(this.root, () => {
       assertHostExecAllowed(this.hostExecForbidden);
       beforeCapture?.();
-      return captureGitCandidate(this.root, repository);
+      return captureGitCandidate(this.root, repository, options);
     });
   }
 

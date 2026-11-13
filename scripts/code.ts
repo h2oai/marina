@@ -41,6 +41,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { candidateFingerprint } from "../src/coding/candidate";
 import { hostGitArgv, hostGitEnv } from "../src/coding/host-git";
 import { PROJECT_MARKERS, repositoryRunnerProfiles } from "../src/coding/project-detection";
+import { sandboxExposureNoticeFor } from "../src/coding/sandbox-workspace";
 import { repositoryTestsPassed } from "../src/coding/task-run";
 import { diffStat } from "../src/coding/unified-diff";
 import {
@@ -1066,6 +1067,7 @@ export async function runCodeSession(
   opts: CodeSessionOptions = {},
 ): Promise<void> {
   for (const notice of sandboxNotices(opts)) console.error(notice);
+  const startedAt = Date.now();
   const dir = resolve(targetDir);
   if (!statSync(dir).isDirectory()) throw new Error(`Not a project directory: ${dir}`);
   // This folder's Marina home: its database, harnesses and optional `.env`
@@ -1225,6 +1227,10 @@ export async function runCodeSession(
     cleaning ??= (async () => {
       if ((await stopServerProcess(server)) === "killed")
         console.error("Server did not stop in time; killed it.");
+      // What the person's own git could hand to a content driver or a shell-expanded
+      // setting from this session's writes (src/coding/sandbox-workspace.ts).
+      const exposed = opts.sandbox ? sandboxExposureNoticeFor(dir, startedAt) : null;
+      if (exposed) console.error(`marina: ${exposed}`);
       if (!fresh) rmSync(serverInfoPath(projectDirectory), { force: true });
       // Only ephemeral (--fresh) DBs are deleted — the per-folder persistent
       // DB is the whole point of resume.
@@ -1571,7 +1577,7 @@ export function workingTreeFileStats(
   dir: string,
 ): Array<{ path: string; added: number; removed: number }> {
   const git = (args: string[]) => {
-    const run = Bun.spawnSync(hostGitArgv(["git", ...args]), {
+    const run = Bun.spawnSync(hostGitArgv(["git", ...args], dir), {
       cwd: dir,
       env: hostGitEnv(),
       stdout: "pipe",

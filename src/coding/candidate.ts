@@ -108,9 +108,28 @@ function credentialPath(path: string) {
     );
 }
 
+/**
+ * Blobs a repository's content filters produced for each path, staged by git
+ * INSIDE a sandbox (`SandboxWorkspace.stagedEntries`): `path → oid`, every oid
+ * already in the repository. Host git never runs a filter.
+ */
+export type StagedBlobs = ReadonlyMap<string, string>;
+
+export interface CandidateCaptureOptions {
+  /** With these, filter / ident / encoding attributes are supported: the tree takes the staged blobs. */
+  staged?: StagedBlobs;
+}
+
 /** Enumerate the operator index without refreshing or modifying it, then read actual bytes.
- * No stat cache, ignore bit, watcher or Marina event can substitute for content. */
-async function scan(inputRoot: string, destination?: string) {
+ * No stat cache, ignore bit, watcher or Marina event can substitute for content.
+ * `attributes: "refuse"` (a capture building its tree from raw bytes) refuses paths whose
+ * committed content git would convert; a fingerprint-only scan ("ignore") reads raw bytes
+ * either way. */
+async function scan(
+  inputRoot: string,
+  destination?: string,
+  attributes: "refuse" | "ignore" = "refuse",
+) {
   const root = await realpath(inputRoot);
   const top = (await git(root, ["rev-parse", "--show-toplevel"])).text.trim();
   if ((await realpath(top)) !== root)
@@ -146,17 +165,19 @@ async function scan(inputRoot: string, destination?: string) {
     )
       throw new Error("Candidate capture refuses an unsafe or newline-containing path.");
   }
-  const attributes = await git(
-    root,
-    ["check-attr", "-z", "--stdin", "filter", "working-tree-encoding", "ident"],
-    names.map((name) => `${name}\0`).join(""),
-  );
-  const attrs = attributes.text.split("\0");
-  for (let i = 2; i < attrs.length; i += 3)
-    if (!["unspecified", "unset", ""].includes(attrs[i]!))
-      throw new Error(
-        "Candidate capture does not yet support Git filters, LFS, ident or encoding attributes.",
-      );
+  if (attributes === "refuse") {
+    const checked = await git(
+      root,
+      ["check-attr", "-z", "--stdin", "filter", "working-tree-encoding", "ident"],
+      names.map((name) => `${name}\0`).join(""),
+    );
+    const attrs = checked.text.split("\0");
+    for (let i = 2; i < attrs.length; i += 3)
+      if (!["unspecified", "unset", ""].includes(attrs[i]!))
+        throw new Error(
+          "Candidate capture does not yet support Git filters, LFS, ident or encoding attributes outside the sandbox runner.",
+        );
+  }
   const fingerprint = createHash("sha256");
   const entries: { path: string; mode: string }[] = [];
   let bytes = 0;
@@ -258,7 +279,7 @@ export async function candidateFingerprint(
   root: string,
   expectedBase?: string | null,
 ): Promise<string> {
-  const current = await scan(root);
+  const current = await scan(root, undefined, "ignore");
   if (expectedBase !== undefined && current.baseCommit !== expectedBase)
     throw new Error("Candidate base commit changed during verification.");
   return current.fingerprint;
@@ -281,7 +302,7 @@ export async function observeCandidate(candidate: CandidateIdentity): Promise<st
   if (retained !== candidate.commit || tree !== candidate.tree)
     throw new Error("Retained candidate identity changed.");
   await git(candidate.repository, ["cat-file", "-e", `${candidate.tree}^{tree}`]);
-  const current = await scan(candidate.repository);
+  const current = await scan(candidate.repository, undefined, "ignore");
   if (current.baseCommit !== candidate.baseCommit)
     throw new Error("Candidate base commit changed. Reverify against the intended base.");
   return current.fingerprint;
@@ -289,14 +310,19 @@ export async function observeCandidate(candidate: CandidateIdentity): Promise<st
 
 /** Capture actual working bytes in an alternate index and pin their tree for review.
  * A private materialization is owned by the caller; its disposal never touches source. */
-export async function captureGitCandidate(root: string, repository = root) {
+export async function captureGitCandidate(
+  root: string,
+  repository = root,
+  options: CandidateCaptureOptions = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), "marina-candidate-"));
   const materialized = join(directory, "source");
   const index = join(directory, "index");
   let retained: { repository: string; ref: string; commit: string } | undefined;
   try {
     await mkdir(materialized);
-    const source = await scan(root, materialized);
+    const attributes = options.staged ? "ignore" : "refuse";
+    const source = await scan(root, materialized, attributes);
     repository = await realpath(repository);
     if (
       (
@@ -314,7 +340,7 @@ export async function captureGitCandidate(root: string, repository = root) {
       throw new Error(
         `Candidate retention reached ${MAX_PINS} pinned trees. Retire reviewed candidate refs before capturing more.`,
       );
-    const confirmed = await scan(root);
+    const confirmed = await scan(root, undefined, attributes);
     if (confirmed.fingerprint !== source.fingerprint || confirmed.baseCommit !== source.baseCommit)
       throw new Error("Source changed during candidate capture. Retry after the writer settles.");
     await git(repository, ["read-tree", "--empty"], undefined, index);
@@ -334,7 +360,10 @@ export async function captureGitCandidate(root: string, repository = root) {
     let cursor = 0;
     const indexEntries: string[] = [];
     for (const entry of source.entries) {
-      const oid =
+      const staged = options.staged?.get(entry.path);
+      if (options.staged && !staged)
+        throw new Error("Source changed during candidate capture. Retry after the writer settles.");
+      const raw =
         entry.mode === "120000"
           ? (
               await git(
@@ -344,6 +373,8 @@ export async function captureGitCandidate(root: string, repository = root) {
               )
             ).text.trim()
           : hashes[cursor++]!;
+      // The repository's filters decide a regular file's committed blob (staged in the sandbox).
+      const oid = staged && entry.mode !== "120000" ? staged : raw;
       if (!/^[a-f0-9]{40,64}$/.test(oid)) throw new Error("Git returned an invalid blob identity.");
       indexEntries.push(`${entry.mode} ${oid}\t${entry.path}\0`);
     }

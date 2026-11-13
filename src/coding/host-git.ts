@@ -51,6 +51,14 @@ export const HOST_GIT_CONFIG_ARGS: readonly string[] = [
   "diff.ignoreSubmodules=all",
   "-c",
   "submodule.recurse=false",
+  // `commit-tree` and `commit` honour commit.gpgSign: gpg.program (or
+  // gpg.ssh.defaultKeyCommand) would run. Marina's own commits are never signed.
+  "-c",
+  "commit.gpgSign=false",
+  "-c",
+  "tag.gpgSign=false",
+  "-c",
+  "log.showSignature=false",
 ];
 
 /** Scratch HOME shared with host Code Mode commands (never the server's own HOME). */
@@ -88,26 +96,41 @@ function absoluteProgram(name: string): string {
 
 /**
  * `-c` overrides that switch off every content driver the repository's config
- * names (filters, diff textconv / external commands, merge drivers). Git runs
- * those programs with the work tree as cwd whenever it hashes, diffs or merges
- * work-tree content, so they are inert in host git:
+ * names (filters, diff textconv / external commands, merge drivers) and every
+ * configured hook (`hook.<name>.command`). Git runs those programs with the
+ * work tree as cwd whenever it hashes, diffs or merges work-tree content, or
+ * updates a ref, so they are inert in host git:
  * - `filter.<n>.clean|smudge|process` empty and `required=false`: no program
  *   runs and content is hashed as stored;
  * - `diff.<n>.textconv` an absolute `cat` (a passthrough), `diff.<n>.command`
  *   and `diff.external` an absolute `true`;
  * - `merge.<n>.driver` an absolute `false`, so a merge that would use it
- *   reports a conflict instead of running anything.
- * All three are absolute paths (`absoluteProgram`): git looks a bare command
- * name up on PATH, which could name a work-tree file.
- * Driver names come from `git config --get-regexp`, which reads configuration
- * (including its includes) without running anything. Global and system config
- * are already off for host git (`hostGitEnv`). A driver name git's `-c` syntax
- * cannot carry fails closed.
+ *   reports a conflict instead of running anything;
+ * - `hook.<n>.event` reset (an empty value clears the list) and
+ *   `hook.<n>.enabled=false`: `core.hooksPath=/dev/null` does not reach hooks
+ *   defined in config, which git runs on `update-ref` (reference-transaction),
+ *   `commit` and checkout.
+ * Absolute programs (`absoluteProgram`): git looks a bare command name up on
+ * PATH, which could name a work-tree file.
+ * Names come from `git config --get-regexp`, which reads configuration
+ * (including its includes) without running anything; `env` decides which
+ * configuration that is (default: the repository's alone, as `hostGitEnv`
+ * gives every host git). A name git's `-c` syntax cannot carry fails closed.
  */
-export function hostGitDriverOverrides(cwd: string): string[] {
+export function hostGitDriverOverrides(
+  cwd: string,
+  env: Record<string, string | undefined> = hostGitEnv(),
+): string[] {
   const probe = Bun.spawnSync(
-    ["git", ...HOST_GIT_CONFIG_ARGS, "config", "--null", "--get-regexp", "^(filter|diff|merge)\\."],
-    { cwd, env: hostGitEnv(), stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+    [
+      "git",
+      ...HOST_GIT_CONFIG_ARGS,
+      "config",
+      "--null",
+      "--get-regexp",
+      "^(filter|diff|merge|hook)\\.",
+    ],
+    { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "ignore" },
   );
   // 1: no such keys; anything else (not a repository, unreadable config)
   // means the real git command reads no drivers either, or fails the same way.
@@ -115,6 +138,7 @@ export function hostGitDriverOverrides(cwd: string): string[] {
   const filters = new Set<string>();
   const diffs = new Set<string>();
   const merges = new Set<string>();
+  const hooks = new Set<string>();
   let external = false;
   for (const entry of probe.stdout.toString().split("\0")) {
     const newline = entry.indexOf("\n");
@@ -123,7 +147,8 @@ export function hostGitDriverOverrides(cwd: string): string[] {
     const lastDot = key.lastIndexOf(".");
     if (firstDot < 0) continue;
     const section = key.slice(0, firstDot).toLowerCase();
-    if (section !== "filter" && section !== "diff" && section !== "merge") continue;
+    if (section !== "filter" && section !== "diff" && section !== "merge" && section !== "hook")
+      continue;
     if (firstDot === lastDot) {
       if (section === "diff" && key.slice(lastDot + 1).toLowerCase() === "external")
         external = true;
@@ -132,11 +157,12 @@ export function hostGitDriverOverrides(cwd: string): string[] {
     const name = key.slice(firstDot + 1, lastDot);
     if (/[=\n\0]/.test(name))
       throw new Error(
-        "A git driver name in this repository's config cannot be overridden safely; refused.",
+        "A git driver or hook name in this repository's config cannot be overridden safely; refused.",
       );
     if (section === "filter") filters.add(name);
     else if (section === "diff") diffs.add(name);
     else if (section === "merge") merges.add(name);
+    else if (section === "hook") hooks.add(name);
   }
   const args: string[] = [];
   const cat = diffs.size ? absoluteProgram("cat") : "";
@@ -149,7 +175,30 @@ export function hostGitDriverOverrides(cwd: string): string[] {
     args.push("-c", `diff.${name}.textconv=${cat}`, "-c", `diff.${name}.command=${yes}`);
   if (external) args.push("-c", `diff.external=${yes}`);
   for (const name of merges) args.push("-c", `merge.${name}.driver=${no}`);
+  for (const name of hooks)
+    args.push("-c", `hook.${name}.event=`, "-c", `hook.${name}.enabled=false`);
   return args;
+}
+
+/**
+ * `-c key=value` pairs as `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` /
+ * `GIT_CONFIG_VALUE_n`, which bind every git process started with that
+ * environment, including those a tool such as `gh` starts itself.
+ */
+export function gitConfigEnv(args: readonly string[]): Record<string, string> {
+  const env: Record<string, string> = {};
+  let count = 0;
+  for (let i = 0; i < args.length; i += 2) {
+    if (args[i] !== "-c") throw new Error("gitConfigEnv takes -c key=value pairs only.");
+    const pair = args[i + 1] ?? "";
+    const eq = pair.indexOf("=");
+    if (eq <= 0) throw new Error("gitConfigEnv takes -c key=value pairs only.");
+    env[`GIT_CONFIG_KEY_${count}`] = pair.slice(0, eq);
+    env[`GIT_CONFIG_VALUE_${count}`] = pair.slice(eq + 1);
+    count++;
+  }
+  env.GIT_CONFIG_COUNT = String(count);
+  return env;
 }
 
 /** Whether an argv starts a git process. */
