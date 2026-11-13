@@ -150,6 +150,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in their own folder instead of the code folder, and tests no longer write into the developer's
   real `~/.marina`.
 
+- **The Python, Java and Rust SDKs do everything the TypeScript SDK does.** Each now passes all
+  eight conformance scenarios (coding, commands, reconnect, agent, memory, panels, routing,
+  local) against a live server, checked by the same assertions as TypeScript. Each adds:
+  - reconnect on its own after a dropped connection (backoff from 3 s to 30 s, at most 10
+    attempts, the newest token kept), back as the same entity;
+  - agent helpers: `tell`, `say`, `tell_and_await` (a correlated reply, notices ignored) and
+    `wait_for_tell`;
+  - typed command forms (`compose_command`) with the TypeScript SDK's validation rules;
+  - every `marina.http.v1` operation as a typed method, with request and reply models generated
+    from the OpenAPI document (`models.py`, `models.rs`, `Http.java`; `docs:api` keeps them
+    current);
+  - the memory retry rules (a named rate limit waited out exactly, other failures backed off);
+  - the live panel event stream.
+
+  Each ships runnable examples.
 - **SDK conformance: one scenario list every SDK must pass.** `protocol/conformance.md` defines
   eight scenarios (a coding run, commands with typed forms, reconnect after a dropped socket, an
   agent asking and answering by tell, typed memory calls with retry through a real rate limit, the
