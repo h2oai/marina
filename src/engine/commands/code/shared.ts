@@ -3,6 +3,7 @@
 
 import type { AgentHandle } from "../../../agent/agent-types";
 import type { CodePromptAnswerer, CodingAgentRuntime } from "../../../coding/code-session-driver";
+import type { ShipHost } from "../../../coding/code-ship";
 import type { WorkspaceRuntime } from "../../../coding/local-workspace";
 import {
   LOCAL_TARGET,
@@ -322,6 +323,8 @@ export const CODE_EXEC_SUBCOMMANDS = new Set<string>([
   "write",
   // A trial boots this session's build as a child Marina: it runs the session's code.
   "trial",
+  // Shipping commits and pushes the session's change.
+  "ship",
   // Choosing where commands execute (host vs a container image) is an
   // execution change, so configuring a runner is earned like running.
   "runner",
@@ -400,6 +403,8 @@ export interface CodeDeps {
   marinaRoot?: string;
   /** The world's benchmark runner, for `code trial` (absent ⇒ trials are unavailable). */
   benchmarkRunner?: Pick<BenchmarkRunner, "start" | "done" | "list" | "datasetReady">;
+  /** Host commands `code ship` runs; default the operator's git and gh (test seam). */
+  shipHost?: ShipHost;
   /** The concrete `provider/model` this server's default resolves to (a trial's builds use it). */
   defaultUpstream?: () => string | undefined;
   describeVisual?: (

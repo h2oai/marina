@@ -44,6 +44,7 @@ import {
   stripAnsi,
   tempDbPath,
 } from "./helpers";
+import { scopeProcessState } from "./process-state";
 
 const TEST_DB = tempDbPath("test_code_command.db");
 
@@ -3657,6 +3658,64 @@ describe("code worktree (per-session isolation)", () => {
       if (wt) git(repo, "worktree", "remove", "--force", wt);
       rmSync(repo, { recursive: true, force: true });
       rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  it("code ship: a person's act (sovereign agents too), and only a measured change", async () => {
+    const repo = makeRepoWithCommit();
+    try {
+      const entity = makeAgentEntity("u_ship", "Shipper");
+      db.saveEntity(entity);
+      grant(db, entity.id, "code.exec");
+      const sent: string[] = [];
+      const calls: string[][] = [];
+      const run = (_cwd: string, argv: string[]) => {
+        calls.push(argv);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      };
+      const command = codeCommand({
+        db,
+        getEntity: (id) => (id === entity.id ? entity : undefined),
+        workspaceRegistry: new WorkspaceRegistry({ defaultRoot: repo, roots: [repo] }),
+        getConnectionProtocol: () => "websocket",
+        marinaRoot: repo,
+        shipHost: { git: run, push: run, gh: run, ghAvailable: () => true },
+      });
+      const ctx = testRoomContext(sent);
+      const last = () => stripAnsi(sent.at(-1) ?? "");
+      await command.handler(ctx, inputFor(entity, "code start Ship"));
+      await command.handler(ctx, inputFor(entity, "code write fresh.txt\nchange\n"));
+      // An agent is refused outside sovereign.
+      await command.handler(ctx, inputFor(entity, "code ship -- Better"));
+      expect(last()).toContain("a person's act");
+      {
+        using _s = scopeProcessState({ env: { MARINA_AUTONOMY: "sovereign" } });
+        await command.handler(ctx, inputFor(entity, "code ship -- Better"));
+        expect(last()).toContain("Measure the change first");
+        const session = db.listCodingSessions("Shipper", 1)[0]!;
+        db.createCodingArtifact({
+          sessionId: session.id,
+          kind: "code_trial",
+          title: "Trial t: candidate-regresses",
+          status: "candidate-regresses",
+          contentText: "",
+          metadata: {
+            id: "t",
+            verdict: "candidate-regresses",
+            candidate: { sha: "0" },
+            base: { sha: "0" },
+          },
+          createdBy: "Shipper",
+        });
+        await command.handler(ctx, inputFor(entity, "code ship -- Better"));
+        expect(last()).toContain("nothing ships");
+        // Nothing was committed, pushed or opened.
+        expect(calls.some((argv) => argv.includes("commit") || argv.includes("push"))).toBe(false);
+      }
+    } finally {
+      const wt = db.listCodingSessions("Shipper", 1)[0]?.worktree_path;
+      if (wt) git(repo, "worktree", "remove", "--force", wt);
+      rmSync(repo, { recursive: true, force: true });
     }
   });
 

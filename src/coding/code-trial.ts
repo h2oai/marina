@@ -30,6 +30,7 @@ import {
   freeLoopbackPort,
   startChildMarina,
 } from "../world/child-marina";
+import { HOST_GIT_CONFIG_ARGS } from "./host-git";
 
 export type TrialArm = "base" | "candidate";
 export type TrialVerdict =
@@ -109,8 +110,9 @@ export function trialGroup(id: string, arm: TrialArm): string {
   return `trial:${id}:${arm}`;
 }
 
+// The trees are agent-written: no hooks, no repository-supplied drivers, no submodules.
 const hostGit: GitRunner = (cwd, argv, env) => {
-  const result = Bun.spawnSync(["git", ...argv], {
+  const result = Bun.spawnSync(["git", ...HOST_GIT_CONFIG_ARGS, ...argv], {
     cwd,
     env: { ...process.env, ...env },
     stdout: "pipe",

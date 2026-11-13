@@ -411,6 +411,27 @@ Both builds are stopped and their trees removed when the trial ends. The benchma
 be downloaded first (`benchmark fetch <name>`). A trial runs the session's code, so it takes the
 `code.exec` capability.
 
+### Ship a measured change
+
+```text
+code ship [merge] [-- <title>]
+```
+
+`code ship` opens a pull request for the session's change to Marina's own source:
+
+1. The latest trial must have measured exactly this change: the worktree now has the same Git
+   tree as the trial's candidate. A trial that found a regression, or did not complete, ships
+   nothing; neither does a change that moved after its trial.
+2. The worktree is committed on its own `marina/session-*` branch under the operator's Git
+   identity, with no hooks and no repository-supplied drivers.
+3. The branch is pushed and a pull request is opened against the repository's default branch.
+   Its description states the trial: verdict, both builds' scores, the paired interval and the
+   margin. `merge` also queues it for merge.
+
+The repository's own checks and merge queue still decide whether the change lands. Publishing
+uses the server's `gh` sign-in. A person ships; an agent ships only under
+`MARINA_AUTONOMY=sovereign`. The result arrives here, and `code show <artifact>` has the link.
+
 ## Code inside an existing world
 
 Use connected coding when your Marina already contains conversations, agents and ongoing
