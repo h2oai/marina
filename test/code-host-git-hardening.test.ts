@@ -12,11 +12,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   appendFileSync,
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -198,6 +200,75 @@ describe("host git hardening", () => {
       delete process.env.MARINA_TEST_SERVER_SECRET;
       delete process.env.GIT_DIR;
     }
+  });
+});
+
+describe("host git never descends into a redirected submodule", () => {
+  // A submodule's `.git` gitfile sits in the writable work tree. Code that can
+  // write there points it at a gitdir it controls whose config names a clean
+  // filter; a host diff that recursed into the submodule would run it.
+  function submoduleRepo(): { proj: string; plantedFilter: () => boolean } {
+    const filterMarker = join(scratch, "FILTER");
+    const filterScript = join(scratch, "filter.sh");
+    writeFileSync(filterScript, `#!/bin/sh\necho filter >> "${filterMarker}"\ncat\n`);
+    chmodSync(filterScript, 0o755);
+    const sub = join(scratch, "subsrc");
+    mkdirSync(sub);
+    gitInit(sub);
+    writeFileSync(join(sub, "s.txt"), "s\n");
+    git(sub, "add", ".");
+    git(sub, "commit", "-qm", "s");
+    const proj = join(scratch, "proj");
+    mkdirSync(proj);
+    gitInit(proj);
+    writeFileSync(join(proj, "a.txt"), "a\n");
+    git(proj, "add", ".");
+    git(proj, "commit", "-qm", "a");
+    git(proj, "-c", "protocol.file.allow=always", "submodule", "-q", "add", sub, "sub");
+    git(proj, "commit", "-qm", "sub");
+    // What sandboxed or agent-written code can do with workspace write access only:
+    cpSync(join(proj, ".git", "modules", "sub"), join(proj, "evilgit"), { recursive: true });
+    writeFileSync(join(proj, "sub", ".git"), "gitdir: ../evilgit\n");
+    appendFileSync(
+      join(proj, "evilgit", "config"),
+      `[core]\n\tworktree = ../sub\n[filter "x"]\n\tclean = ${filterScript}\n`,
+    );
+    writeFileSync(join(proj, "sub", ".gitattributes"), "s.txt filter=x\n");
+    writeFileSync(join(proj, "sub", "s.txt"), "s\n");
+    const old = new Date("2021-01-01T00:00:00Z");
+    utimesSync(join(proj, "sub", "s.txt"), old, old);
+    return { proj, plantedFilter: () => existsSync(filterMarker) };
+  }
+
+  it("the planted filter is live for a recursing git (the test is meaningful)", () => {
+    const { proj, plantedFilter } = submoduleRepo();
+    // Every hardening flag except the two submodule guards (pairs of "-c", value).
+    const flags: string[] = [];
+    for (let i = 0; i < HOST_GIT_CONFIG_ARGS.length; i += 2) {
+      const value = HOST_GIT_CONFIG_ARGS[i + 1]!;
+      if (!/^(diff\.ignoreSubmodules|submodule\.recurse)=/.test(value)) flags.push("-c", value);
+    }
+    Bun.spawnSync(
+      ["git", ...flags, "diff", "--no-ext-diff", "--name-only", "--no-renames", "HEAD", "--"],
+      {
+        cwd: proj,
+        env: hostGitEnv(),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: GIT_SYNC_TIMEOUT_MS,
+      },
+    );
+
+    expect(plantedFilter()).toBe(true);
+  });
+
+  it("changedPaths, diff and allowlisted status never run it", async () => {
+    const { proj, plantedFilter } = submoduleRepo();
+    const ws = new LocalWorkspace(proj);
+    await ws.changedPaths();
+    await ws.diff();
+    await ws.run(["git", "status", "--short"]);
+    expect(plantedFilter()).toBe(false);
   });
 });
 
