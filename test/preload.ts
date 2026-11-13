@@ -41,8 +41,12 @@ process.env.MARINA_ROBOTS_TXT ??= "ignore";
 // real ~/.marina. A test that needs its own home passes MARINA_HOME or HOME
 // in the environment it hands the code under test.
 if (!process.env.MARINA_HOME) {
-  const { mkdtempSync } = await import("node:fs");
+  const { mkdtempSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  process.env.MARINA_HOME = mkdtempSync(join(tmpdir(), "marina-test-home-"));
+  const home = mkdtempSync(join(tmpdir(), "marina-test-home-"));
+  process.env.MARINA_HOME = home;
+  // Removed after the last test of this process, so runs leave nothing behind.
+  const { afterAll } = await import("bun:test");
+  afterAll(() => rmSync(home, { recursive: true, force: true }));
 }
