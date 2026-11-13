@@ -1,8 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+
 import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { marinaPath } from "../src/config/marina-home";
 
 function serverUrl(input: string, rootOnly: boolean): string {
   const url = new URL(input);
@@ -32,7 +33,7 @@ export function cachedServerUrl(input: string): string {
   return serverUrl(input, false);
 }
 
-export const SESSION_DIRECTORY = join(homedir(), ".marina", "sessions");
+export const SESSION_DIRECTORY = marinaPath("sessions");
 
 export interface CachedParticipant {
   name: string;

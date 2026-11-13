@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -8,7 +9,7 @@
  *
  *   bash scripts/decision-cases/fetch-public.sh          # download + normalize (pinned)
  *   bun run scripts/decision-cases/import-public.ts \
- *     [--in ~/.cache/marina/decision-cases/out] [--out <cases.json>] \
+ *     [--in ~/.marina/cache/decision-cases/out] [--out <cases.json>] \
  *     [--per-tool 12] [--per-side 400] [--seed 20260927]
  *   bun run qualify:decisions -- --cases <cases.json> --backend jev …
  *
@@ -20,9 +21,9 @@
 
 import { createHash } from "node:crypto";
 import { readdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { marinaPath } from "../../src/config/marina-home";
 import {
   type DefenseClawCase,
   sampleCases,
@@ -40,9 +41,8 @@ const { values } = parseArgs({
     seed: { type: "string" },
   },
 });
-const inDir = values.in ?? join(homedir(), ".cache/marina/decision-cases/out");
-const outPath =
-  values.out ?? join(homedir(), ".cache/marina/decision-cases/public-gate-cases.json");
+const inDir = values.in ?? marinaPath("cache", "decision-cases", "out");
+const outPath = values.out ?? marinaPath("cache", "decision-cases", "public-gate-cases.json");
 const perTool = Number(values["per-tool"] ?? 12);
 const perSide = Number(values["per-side"] ?? 400);
 const seed = Number(values.seed ?? 20260927);

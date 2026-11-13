@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -13,9 +14,8 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { marinaPath } from "../../src/config/marina-home";
 import {
   authorAgreement,
   consensus,
@@ -29,7 +29,7 @@ const { values } = parseArgs({
 });
 if (!values.in) throw new Error("--in <gate-labels.json> (the page's export)");
 const minAgree = Number(values["min-agree"] ?? 2);
-const outPath = values.out ?? join(homedir(), ".cache/marina/decision-cases/panel-gate-cases.json");
+const outPath = values.out ?? marinaPath("cache", "decision-cases", "panel-gate-cases.json");
 
 const panel = (await Bun.file(values.in).json()) as PanelExport;
 const gate = panel.cases.flatMap((c) => {

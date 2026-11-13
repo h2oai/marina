@@ -269,6 +269,8 @@ const ENV_VARS_COMPOSED_AT_RUNTIME = new Set([
  * documented (or a statement that nobody should set it).
  */
 const ENV_VARS_OUTSIDE_SERVER_CATALOG = new Map<string, string>([
+  // setup.sh's install-folder override; scripts/home.ts reads it to find an install to remove.
+  ["MARINA_DIR", "setup.sh: where the code was installed (docs/guides/install.md)"],
   // Read by scripts/monitor.ts, which runs outside the server process.
   ["MARINA_MONITOR_WEBHOOK", "outside monitor: alert webhook (docs/operations.md)"],
   ["MARINA_MONITOR_HEARTBEAT_URL", "outside monitor: dead-man's-switch ping (docs/operations.md)"],

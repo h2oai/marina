@@ -5,7 +5,17 @@
 // help, refusals, and the helpers. The full install was exercised by hand (docs/guides/install.md).
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -69,6 +79,46 @@ describe("setup.sh", () => {
     expect(helper("version_at_least 1.4.4 1.4.4").code).toBe(0);
     expect(helper("version_at_least 1.3.9 1.4.4").code).toBe(1);
     expect(helper("version_at_least 2.0 1.4.4").code).toBe(0);
+  });
+
+  test("the marina command is one script in the home's bin, running the code with its Bun", () => {
+    const home = mkdtempSync(join(tmpdir(), "marina-setup-cmd-"));
+    dirs.push(home);
+    expect(helper(`write_command "${home}" /opt/bun/bin/bun "${home}/app"`).code).toBe(0);
+    const command = readFileSync(join(home, "bin", "marina"), "utf8");
+    expect(command).toContain(
+      `exec "/opt/bun/bin/bun" --no-env-file "${home}/app/scripts/marina.ts" "$@"`,
+    );
+    expect(statSync(join(home, "bin", "marina")).mode & 0o111).toBeTruthy();
+  });
+
+  test("an older setup's marina link to moved code is removed; a developer's link stays", () => {
+    const home = mkdtempSync(join(tmpdir(), "marina-setup-links-"));
+    dirs.push(home);
+    const bin = join(home, ".bun", "bin");
+    mkdirSync(bin, { recursive: true });
+    symlinkSync(join(home, "marina", "scripts", "marina.ts"), join(bin, "marina"));
+    const body = readFileSync(SCRIPT, "utf8").replace(/\nmain "\$@"\n?$/, "\n");
+    const file = join(home, "fns.sh");
+    writeFileSync(file, `${body}\nremove_old_links "${home}/.marina"\n`);
+    expect(bash([file], { HOME: home }).code).toBe(0);
+    expect(existsSync(join(bin, "marina"))).toBe(false);
+    expect(() => lstatSync(join(bin, "marina"))).toThrow();
+
+    const checkout = join(home, "src", "marina", "scripts");
+    mkdirSync(checkout, { recursive: true });
+    writeFileSync(join(checkout, "marina.ts"), "");
+    symlinkSync(join(checkout, "marina.ts"), join(bin, "marina"));
+    expect(bash([file], { HOME: home }).code).toBe(0);
+    expect(lstatSync(join(bin, "marina")).isSymbolicLink()).toBe(true);
+  });
+
+  test("--uninstall with no Marina to run says how to remove it by hand", () => {
+    const home = mkdtempSync(join(tmpdir(), "marina-setup-un-"));
+    dirs.push(home);
+    const out = bash([SCRIPT, "--uninstall"], { HOME: home, PATH: "/usr/bin:/bin" });
+    expect(out.code).toBe(1);
+    expect(out.out).toContain("To remove it by hand");
   });
 
   test("add_to_path writes one line per missing folder, once", () => {

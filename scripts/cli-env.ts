@@ -21,17 +21,17 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { parseEnvironment } from "../src/config/environment";
+import { marinaHome, marinaPathIn } from "../src/config/marina-home";
 import { IS_COMPILED, MARINA_ROOT } from "../src/runtime-paths";
 
 /** The environment the CLI was started with, before any settings file. */
 const SHELL_ENV: Readonly<NodeJS.ProcessEnv> = { ...process.env };
 
-/** `~/.marina` — the user's Marina home (settings, per-folder instances, sessions). */
+/** Marina's home (`MARINA_HOME`, else `~/.marina`): settings, worlds, sessions (src/config/marina-home.ts). */
 export function userMarinaDir(env: NodeJS.ProcessEnv = SHELL_ENV): string {
-  return join(env.HOME?.trim() || homedir(), ".marina");
+  return marinaHome(env);
 }
 
 export interface SettingsOptions {
@@ -73,4 +73,35 @@ export function cliEnvironment(opts: SettingsOptions = {}): NodeJS.ProcessEnv {
 /** Apply `cliEnvironment(opts)` to `process.env`. Callable again once the instance is known. */
 export function applyCliEnvironment(opts: { instanceDir?: string } = {}): void {
   Object.assign(process.env, cliEnvironment(opts));
+}
+
+/**
+ * The folder `marina start` runs its world in. The working directory when it
+ * already is an instance — it holds a world (`marina.db`), or a `.env` with
+ * Marina settings (`marina init --directory`) — or when a location is set
+ * (`MARINA_DATA_DIR` or `DB_PATH`, from the shell or a settings file);
+ * otherwise `world/` in Marina's home, so a world never lands in whatever
+ * folder a terminal happened to be in.
+ */
+export function startInstanceDir(
+  cwd: string,
+  env: NodeJS.ProcessEnv = SHELL_ENV,
+  settings: Pick<SettingsOptions, "checkoutDir"> = {},
+): { dir: string; home: boolean } {
+  const here = { dir: cwd, home: false };
+  const world = { dir: marinaPathIn(env, "world"), home: true };
+  // The home itself and the code installed in it are never a world: their
+  // `.env` is the user's settings, not an instance's.
+  const home = marinaHome(env);
+  const app = join(home, "app");
+  if (cwd === home || cwd === app || cwd.startsWith(app + sep)) return world;
+  if (existsSync(join(cwd, "marina.db"))) return here;
+  const local = join(cwd, ".env");
+  if (existsSync(local)) {
+    const keys = Object.keys(parseEnvironment(readFileSync(local, "utf8")));
+    if (keys.some((k) => k.startsWith("MARINA_") || k === "DB_PATH")) return here;
+  }
+  const merged = cliEnvironment({ env, ...settings });
+  if (merged.MARINA_DATA_DIR?.trim() || merged.DB_PATH?.trim()) return here;
+  return world;
 }

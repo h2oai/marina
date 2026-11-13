@@ -68,9 +68,10 @@ directories are compiled into `dist/rooms`, including their runtime imports.
 LICENSE and NOTICE are included in the app. Fonts are cached for offline use;
 a failed optional font download falls back to system fonts.
 
-The app identity is `dev.marina.desktop`; preferences and databases live in that
-app's OS data directory. Linux honors an absolute `XDG_DATA_HOME`; the default is
-`~/.local/share/marina`. Window replacement
+The app identity is `dev.marina.desktop`; preferences and databases live in
+`~/.marina/desktop` (Marina's one home, `MARINA_HOME`). Data an older version kept in the OS data
+directory (`~/Library/Application Support/Marina`, `%APPDATA%\Marina`, or
+`~/.local/share/marina`) is moved there on first start. Window replacement
 creates the new window before closing the old one. Quit requests veto native
 teardown until the engine drains pending work and closes persistence.
 

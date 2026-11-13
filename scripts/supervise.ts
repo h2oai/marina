@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { mkdirSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
+import { marinaPath } from "../src/config/marina-home";
 import { getErrorMessage } from "../src/engine/errors";
 import { BUILTIN_AGENT_ADAPTERS } from "../src/routing/agent-adapters";
 import { marinaResidentConnector, residentWorldUrl } from "../src/routing/resident-connection";
@@ -96,12 +97,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
       );
     const stateDirectory = resolve(
       options.state ??
-        join(
-          homedir(),
-          ".marina",
-          "runners",
-          Bun.hash(`${url}:${options.name ?? "token"}:${root}`).toString(16),
-        ),
+        marinaPath("runners", Bun.hash(`${url}:${options.name ?? "token"}:${root}`).toString(16)),
     );
     mkdirSync(stateDirectory, { recursive: true, mode: 0o700 });
     const adapters = BUILTIN_AGENT_ADAPTERS.flatMap((adapter) => {

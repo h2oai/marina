@@ -3,8 +3,8 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
+import { marinaPath } from "../config/marina-home";
 import { logRejection } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import { LocalWorkspace, type WorkspaceRunResult } from "./local-workspace";
@@ -51,7 +51,7 @@ interface ExecOpts {
 
 /** Root of the Marina-managed worktree area. Nothing outside this is deletable. */
 export function managedWorktreesRoot(): string {
-  return join(homedir(), ".marina", "worktrees");
+  return marinaPath("worktrees");
 }
 
 /** True when `root` is a git working tree (cheap, no subprocess). */

@@ -50,6 +50,7 @@ import {
   loadRecords,
   type TaskRetriever,
 } from "../benchmarks/deepresearch/run";
+import { adoptLegacyPath, marinaPath } from "../src/config/marina-home";
 import { researchJudge } from "../src/decisions/config";
 import { harnessDecisionProvider } from "../src/decisions/engines";
 import type { DecisionProvider } from "../src/decisions/types";
@@ -97,7 +98,13 @@ const { values, positionals } = parseArgs({
     a: { type: "string" },
     b: { type: "string" },
     out: { type: "string", default: "benchmarks/results/deepresearch" },
-    cache: { type: "string", default: join(homedir(), ".cache", "marina", "deepresearch") },
+    cache: {
+      type: "string",
+      default: adoptLegacyPath(
+        marinaPath("cache", "deepresearch"),
+        join(homedir(), ".cache", "marina", "deepresearch"),
+      ),
+    },
   },
 });
 const cmd = positionals[0];

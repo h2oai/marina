@@ -63,8 +63,10 @@ The `marina` command works the same in every folder and never reads your project
 | You | `~/.marina/.env` | provider keys and defaults for every folder; `marina init` writes here |
 | Source checkout | `<marina checkout>/.env` | a checkout's existing settings, when running from one |
 
-Each layer fills only what a higher one leaves unset. `marina start` treats its working directory
-as the instance, so a server folder's `.env` sits in the second row. `marina init` writes
+Each layer fills only what a higher one leaves unset. `marina start` runs its world in
+`~/.marina/world` (its `.env` sits in the second row), unless it is started in a folder that is
+already an instance (it holds a `marina.db`, or a `.env` with Marina settings) or `DB_PATH` /
+`MARINA_DATA_DIR` names one. `marina init` writes
 `~/.marina/.env` unless run inside the checkout or given `--directory`.
 
 ```bash

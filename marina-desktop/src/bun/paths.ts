@@ -1,9 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, rmdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { marinaPath } from "../../../src/config/marina-home";
 
 export interface AppPaths {
   /** OS-appropriate application data directory */
@@ -21,11 +22,11 @@ export interface AppPaths {
 }
 
 /**
- * Resolve OS-appropriate paths for application data.
- *
- * - macOS:  ~/Library/Application Support/Marina/
- * - Windows: %APPDATA%/Marina/
- * - Linux:  ~/.local/share/marina/
+ * Resolve paths for application data: `desktop/` in Marina's one home
+ * (`~/.marina/desktop`, or under `MARINA_HOME`), so removing Marina removes it.
+ * Data an older version kept in the OS location (macOS
+ * `~/Library/Application Support/Marina/`, Windows `%APPDATA%/Marina/`, Linux
+ * `~/.local/share/marina/`) is moved there on first start.
  *
  * Room directory resolution order:
  * 1. Bundled Electrobun app: ../Resources/app/resources/worlds/
@@ -37,15 +38,16 @@ export function getAppPaths(): AppPaths {
   const home = homedir();
   const platform = process.platform;
 
-  let dataDir: string;
+  let legacyDir: string;
   if (platform === "darwin") {
-    dataDir = join(home, "Library", "Application Support", "Marina");
+    legacyDir = join(home, "Library", "Application Support", "Marina");
   } else if (platform === "win32") {
-    dataDir = join(process.env.APPDATA || join(home, "AppData", "Roaming"), "Marina");
+    legacyDir = join(process.env.APPDATA || join(home, "AppData", "Roaming"), "Marina");
   } else {
     const xdg = process.env.XDG_DATA_HOME;
-    dataDir = join(xdg && isAbsolute(xdg) ? xdg : join(home, ".local", "share"), "marina");
+    legacyDir = join(xdg && isAbsolute(xdg) ? xdg : join(home, ".local", "share"), "marina");
   }
+  const dataDir = adoptDesktopData(marinaPath("desktop"), legacyDir);
 
   // Ensure data directory exists
   if (!existsSync(dataDir)) {
@@ -87,4 +89,24 @@ export function getAppPaths(): AppPaths {
     roomsDir,
     logDir,
   };
+}
+
+/**
+ * Move an older version's desktop data into the home once. On Linux the old
+ * folder also held other tools' data (`corpora/`, which the corpus store
+ * moves itself), so only the desktop's own entries move. A move that fails
+ * keeps the old folder in use, so nothing is stranded.
+ */
+export function adoptDesktopData(dataDir: string, legacyDir: string): string {
+  if (existsSync(dataDir) || !existsSync(legacyDir)) return dataDir;
+  const others = new Set(["corpora", "live-acceptance"]);
+  try {
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    for (const name of readdirSync(legacyDir))
+      if (!others.has(name)) renameSync(join(legacyDir, name), join(dataDir, name));
+    if (readdirSync(legacyDir).length === 0) rmdirSync(legacyDir);
+    return dataDir;
+  } catch {
+    return legacyDir;
+  }
 }

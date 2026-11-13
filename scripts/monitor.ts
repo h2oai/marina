@@ -38,6 +38,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { adoptLegacyPath, marinaPath } from "../src/config/marina-home";
 import { localHttpBase } from "../src/net/listen-ports";
 
 export interface ProbeResult {
@@ -277,7 +278,10 @@ async function main(): Promise<number> {
   }
   const statePath =
     values.state ??
-    join(process.env.XDG_STATE_HOME || join(homedir(), ".local/state"), "marina-monitor.json");
+    adoptLegacyPath(
+      marinaPath("tools", "monitor.json"),
+      join(process.env.XDG_STATE_HOME || join(homedir(), ".local/state"), "marina-monitor.json"),
+    );
 
   for (;;) {
     const result = await probe(url, timeoutMs);

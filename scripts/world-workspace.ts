@@ -9,8 +9,7 @@
  * its agents and its tasks running.
  */
 
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { marinaPath } from "../src/config/marina-home";
 import type { MarinaAgent, Perception } from "../src/sdk/client";
 import { CodeConsole } from "./code-console";
 import { HarnessStore } from "./code-harness";
@@ -28,7 +27,7 @@ export interface WorldWorkspaceOptions {
 export async function runWorldWorkspace(options: WorldWorkspaceOptions): Promise<number> {
   const completed = Promise.withResolvers<number>();
   // Nothing is saved for a world view; the directory only satisfies the console's shape.
-  const directory = join(homedir(), ".marina", "world-view");
+  const directory = marinaPath("world-view");
   const view = new CodeConsole({
     tui: true,
     worldOnly: true,

@@ -62,7 +62,7 @@ bootstrap over runs, then items). A single run is labelled "not replicated".
 | `--server-env KEY=VALUE` | Marina feature settings for every server the kit starts (repeatable; feature variables only — `MARINA_OBLIGATIONS_*`, `MARINA_ARGCHECK*`, `MARINA_LESSONS*`, `MARINA_DECISION*`, `MARINA_ANTHROPIC_AUTO_CACHE`, … — never a credential). The servers' effective feature settings (your environment plus these) are part of the τ² configuration tag and are filed with every result (`benchmark-import --server-features`), so runs with different instruments never resume, pool or promote together |
 | `--review off\|observe\|auto\|on` | τ²: the pre-write review mode the agent's requests choose (`x-marina-review`), capped by the server's `MARINA_OBLIGATIONS_REVIEW`. The agent's requests always carry `x-marina-eval: benchmark=tau2-<domain>; mode=measure`, so lessons learned on the board are never served back to it |
 | `--lessons` | τ²: recall judged lessons on the agent's requests (`marina/lessons:` on every arm); lessons learned from the board itself are still excluded, because the requests are tagged a measurement. Part of the configuration tag |
-| `--run-dir`, `--ledger` | where runs, servers and the ledger live (default under `~/.local/share/marina-repro/`, on disk) |
+| `--run-dir`, `--ledger` | where runs, servers and the ledger live (default `~/.marina/tools/repro/`; an existing `~/.local/share/marina-repro/` keeps being used) |
 | `--dry-run` | print the plan and the estimate, then stop |
 
 ## Model tiers

@@ -1,8 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { marinaPath } from "../src/config/marina-home";
 import { getErrorMessage } from "../src/engine/errors";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
 import { parseCodingCommandTarget } from "../src/sdk/command-target";
@@ -197,7 +197,7 @@ export async function runConnectedCodeSession(options: ConnectedCodeOptions): Pr
       .update(`${attached.url}\n${options.name}\n${attached.sessionId}`)
       .digest("hex")
       .slice(0, 20);
-    const directory = join(homedir(), ".marina", "connected", key);
+    const directory = marinaPath("connected", key);
     consoleView = new CodeConsole({
       tui: options.tui,
       ...(options.mode ? { mode: options.mode } : {}),
