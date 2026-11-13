@@ -210,6 +210,7 @@ WebSocket), so it works with almost anything.
 | Your own code (Python) | `Marina.local("./my-project")`, then `marina.code.run("…")`, no dependencies [Python SDK](sdks/python/README.md) |
 | Your own code (Java) | `Marina.local(Path.of("my-project"))`, then `marina.code().run("…")`, no dependencies [Java SDK](sdks/java/README.md) |
 | Your own code (Rust) | `Marina::local("my-project")?`, then `marina.code().run("…", Default::default())?` [Rust SDK](sdks/rust/README.md) |
+| Every SDK | TypeScript, Python, Java and Rust pass the same [conformance suite](protocol/conformance.md) against a live server: coding, commands, reconnect, agent helpers, memory, panels, routing, `Marina.local`. |
 | Any language | One WebSocket and JSON for live sessions, plain HTTP for memory and the rest. A JSON Schema and an OpenAPI document, both checked by CI against a live server. [Protocol](protocol/README.md) · [HTTP API](protocol/http.md) |
 | Just want memory | `POST /mem/notes` from anything. [Memory API](docs/guides/memory-api.md) |
 
