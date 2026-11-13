@@ -174,6 +174,11 @@ export interface SandboxLayout {
   /** The command's whole environment (after `--clearenv`). */
   env: Record<string, string>;
   limits: SandboxLimits;
+  /**
+   * A host directory bound at /tmp instead of the size-capped tmpfs: only for a finite
+   * Marina-owned run (a gate or base check on a snapshot), created and removed by its owner.
+   */
+  scratchTmp?: string;
 }
 
 const MIB = 1024 * 1024;
@@ -226,7 +231,8 @@ export function sandboxArgv(layout: SandboxLayout, command: readonly string[]): 
   argv.push("--proc", "/proc", "--dev", "/dev");
   argv.push("--size", String(layout.limits.shmMb * MIB), "--tmpfs", "/dev/shm");
   argv.push("--remount-ro", "/dev");
-  argv.push("--size", tmpfsBytes, "--tmpfs", "/tmp", "--dir", SANDBOX_HOME);
+  if (layout.scratchTmp) argv.push("--bind", layout.scratchTmp, "/tmp", "--dir", SANDBOX_HOME);
+  else argv.push("--size", tmpfsBytes, "--tmpfs", "/tmp", "--dir", SANDBOX_HOME);
   argv.push("--size", tmpfsBytes, "--tmpfs", layout.home);
   for (const tool of layout.tools) {
     if (tool.link !== undefined) argv.push("--symlink", tool.link, tool.path);
@@ -824,6 +830,8 @@ export function sandboxEnv(path: string = process.env.PATH ?? ""): Record<string
 }
 
 export interface SandboxLayoutOptions {
+  /** Bind this host directory at /tmp instead of the tmpfs (`SandboxLayout.scratchTmp`). */
+  scratchTmp?: string;
   home?: string;
   execPath?: string;
   /** Read-only system directories (default `SANDBOX_SYSTEM_PATHS`). */
@@ -947,7 +955,25 @@ export function resolveSandboxLayout(
     hooks: projectGitHooks(configFiles, git.common, root, home),
     env: sandboxEnv(env.PATH),
     limits: sandboxLimits(env),
+    ...(opts.scratchTmp ? { scratchTmp: checkScratchTmp(opts.scratchTmp, root, home) } : {}),
   };
+}
+
+/** A scratch /tmp must be a real directory of its own: not a link, not the home or the root. */
+function checkScratchTmp(path: string, root: string, home: string): string {
+  if (!isAbsolute(path)) throw new Error(`The sandbox scratch /tmp must be absolute: ${path}`);
+  const stat = lstatSync(path, { throwIfNoEntry: false });
+  if (!stat?.isDirectory() || stat.isSymbolicLink())
+    throw new Error(`The sandbox scratch /tmp is not a directory: ${path}`);
+  const real = realpathSync(path);
+  if (
+    insideRoot(root, real) ||
+    insideRoot(real, root) ||
+    insideRoot(real, home) ||
+    insideRoot(home, real)
+  )
+    throw new Error(`The sandbox scratch /tmp overlaps the workspace or the home: ${real}`);
+  return real;
 }
 
 /** The workspace's own git metadata; a root without (or with a symlinked) `.git` is refused. */

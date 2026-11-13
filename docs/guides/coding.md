@@ -812,13 +812,17 @@ root with a test runner Marina detects (a `test` script, pytest, cargo, go, Mave
   out privately with the repository's objects, under the same runner. A failure is labelled
   `PRE-EXISTING` only on positive evidence: every test failing with the change is identified by
   its repository-relative file and qualified name (two files' same-named tests are different
-  tests), fails on the base with the same first error, and fails the same way on a second base
+  tests), fails on the base with the same error block (the error line and the expected and
+  received values that follow it), and fails the same way on a second base
   run (the failing tests alone, `bun test <files>` or `pytest <node ids>`, else the whole step
   when it took at most 5 minutes). Then the coder is told at once that the failure exists
   without its change and to submit, noting it; the task completes but stays unverified
   (`failed`, reason "the repository's gates already fail without this change: <step>", exit
   `3`). A test that fails with the change but not on the base is the change's failure (`CAUSED
-  BY THIS CHANGE`). Anything less is `INCONCLUSIVE`: unnamed failures (a syntax error, a crash),
+  BY THIS CHANGE`). Anything less is `INCONCLUSIVE`: any unnamed failure, even beside named
+  ones (an "Unhandled error between tests", an import error, a package that failed to build, a
+  runner count above the failures it named), changed dependency manifests or lockfiles between
+  the base and the change (the base would run with the change's dependencies),
   more than 5000 failures, a cut output line, a base that could not be prepared or run, a
   different first error, or a failure that does not repeat. The coder is told to treat it as
   its own failure, investigate and fix it, or report it as blocked with the evidence, never to
@@ -836,8 +840,8 @@ root with a test runner Marina detects (a `test` script, pytest, cargo, go, Mave
   re-checked; capture refuses at 64 pins. Before each capture Marina retires the pins nobody
   needs (`src/coding/candidate-retention.ts`): those of attempts that ended (approved, rejected,
   cancelled, failed, interrupted) or were superseded by a newer candidate, any older than 14
-  days, and past 48, the oldest of the rest. It keeps the latest candidate of an open task's
-  attempt, never touches a pin younger than 10 minutes, and deletes only refs Marina created
+  days, and past 48, the oldest of the rest. It keeps, for an open task's attempt, the candidate its evidence cites
+  and its newest by Marina's own capture order (never by commit time), never touches a pin younger than 10 minutes, and deletes only refs Marina created
   (the candidate name and Marina's fixed commit identity and message), each by compare-and-swap.
 - `delivery` (default elsewhere, or `--verification delivery`): a JSON manifest of output files and
   checks, run alone in a clean directory with `code verify delivery -- <manifest JSON>`; every
@@ -1727,10 +1731,10 @@ code workspace runner local                   # back to the host allowlist (if a
   network the snapshot cannot install dependencies, and the sandbox refuses a host install, so
   the JavaScript dependency trees the workspace already installed (every Git-ignored
   `node_modules`) are copied into the snapshot as files (nothing runs); with none installed the
-  gates are `not_run` and say to install them in the workspace. The sandbox's private `/tmp` is a
-  size-capped tmpfs (`MARINA_CODE_SANDBOX_TMPFS_MB`, 1024 by default): a large suite can fill it.
-  Marina's own full suite does (its Python SDK conformance run then stalls past its 120 s limit),
-  and passes in the sandbox with 16384; set it when the gates verify a large repository. Tests that
+  gates are `not_run` and say to install them in the workspace. Interactive session commands get a private
+  `/tmp` on a size-capped RAM tmpfs (`MARINA_CODE_SANDBOX_TMPFS_MB`, 1024 by default); a gate or
+  base run on a snapshot (finite and Marina-owned) gets a fresh host directory beside the snapshot
+  bound at `/tmp` instead, removed with it, so a large suite cannot outgrow the tmpfs. Tests that
   need the network or the real home are skipped there or fail as pre-existing. When the sandbox refuses a
   snapshot or base checkout (no bubblewrap, untrusted launcher, server state inside it, …) the
   verification states the sandbox's own reason.

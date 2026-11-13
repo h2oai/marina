@@ -178,6 +178,32 @@ describe.skipIf(!bwrapWorks())("repository gates in the bubblewrap sandbox", () 
     expect(text).toContain("PRE-EXISTING:");
   });
 
+  it("[H] gate runs get a disk-backed /tmp; interactive commands keep the capped tmpfs", async () => {
+    // A 1 MiB tmpfs: a suite writing 4 MiB to /tmp fails there and passes on the scratch /tmp.
+    process.env.MARINA_CODE_SANDBOX_TMPFS_MB = "1";
+    try {
+      writeFileSync(
+        join(root, "tmp.test.ts"),
+        'import { expect, test } from "bun:test";\nimport { writeFileSync } from "node:fs";\ntest("writes 4 MiB to /tmp", () => { writeFileSync("/tmp/big", Buffer.alloc(4 * 1024 * 1024)); expect(1).toBe(1); });\n',
+      );
+      gitIn(root, "add", "tmp.test.ts");
+      gitIn(root, "commit", "--quiet", "-m", "a suite that needs /tmp");
+      await begin();
+      writeFileSync(join(root, "src.ts"), 'export const label = "ok"; // tidy\n');
+      const { meta } = await verify();
+      expect(meta.executionRunner?.kind).toBe("sandbox");
+      expect(meta.outcome).toBe("passed");
+      // The session's own commands still run on the capped tmpfs.
+      output.length = 0;
+      await send(`code run sh -c "head -c 4194304 /dev/zero > /tmp/big && echo wrote"`);
+      expect(output.map((p) => String(p.data?.text ?? "")).join("\n")).toContain(
+        "No space left on device",
+      );
+    } finally {
+      delete process.env.MARINA_CODE_SANDBOX_TMPFS_MB;
+    }
+  });
+
   it("says why when the sandbox refuses the snapshot", async () => {
     setSandboxDefaultsForTests({ bwrapPaths: ["/nonexistent/bwrap"] });
     await begin();

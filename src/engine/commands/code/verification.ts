@@ -1,7 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { realpathSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   candidateFingerprint,
   materializeGitCommit,
@@ -18,6 +19,7 @@ import {
   readDeliveryManifest,
 } from "../../../coding/delivery";
 import { attributeFailure, type FailureDigest } from "../../../coding/failure-digest";
+import { hostGitArgv, hostGitEnv } from "../../../coding/host-git";
 import { LocalWorkspace, normalizeAllowedCodeCommand } from "../../../coding/local-workspace";
 import {
   assessCodingVerification,
@@ -325,6 +327,8 @@ export async function startVerification(
           new LocalWorkspace(snapshot.directory),
           deps.db,
           session,
+          process.env,
+          { scratchTmp: runScratchTmp(snapshot.directory) },
         );
         prepared.setHostExecForbidden?.(deps.hostExecForbidden === true);
         const snapshotPlan = await planVerification(
@@ -395,6 +399,7 @@ export async function startVerification(
           session,
           repository: root,
           baseCommit,
+          candidateTree: snapshot.candidate.tree,
           plan,
           beforeSpawn,
         });
@@ -563,9 +568,12 @@ function baseRerun(input: {
   session: CodingSessionRow;
   repository: string;
   baseCommit: string | null | undefined;
+  /** The candidate snapshot's tree, compared with the base for dependency changes. */
+  candidateTree: string;
   plan: VerificationRun;
   beforeSpawn: () => void;
 }) {
+  let manifests: string[] | undefined;
   let ready:
     | Promise<{
         workspace: ReturnType<typeof applySessionRunner>;
@@ -580,6 +588,8 @@ function baseRerun(input: {
       new LocalWorkspace(checkout.directory),
       input.deps.db,
       input.session,
+      process.env,
+      { scratchTmp: runScratchTmp(checkout.directory) },
     );
     workspace.setHostExecForbidden?.(input.deps.hostExecForbidden === true);
     let wrapTests: string | undefined;
@@ -615,6 +625,17 @@ function baseRerun(input: {
         attribution: attributeFailure({ change, baseUnavailable: why }),
       });
       if (!input.baseCommit) return inconclusive("the task has no base commit");
+      // A base run uses the dependencies prepared for it, which (copied in a sandbox, or a
+      // shared cache) can be the change's: when dependency manifests differ, it proves nothing.
+      manifests ??= changedDependencyManifests(
+        input.repository,
+        input.baseCommit,
+        input.candidateTree,
+      );
+      if (manifests.length)
+        return inconclusive(
+          `dependency manifests or lockfiles differ between the base and the change (${manifests.slice(0, 5).join(", ")}), so the base would not run with its own dependencies`,
+        );
       ready ??= open();
       const base = await ready;
       if (base.unready) return inconclusive(`the base could not be prepared: ${base.unready}`);
@@ -673,6 +694,73 @@ function baseRerun(input: {
       if (ready) await (await ready.catch(() => undefined))?.dispose();
     },
   };
+}
+
+/**
+ * A fresh scratch directory beside a snapshot or base checkout (removed with it), bound at
+ * the sandbox's /tmp for a gate run: a full suite can outgrow the sandbox's RAM tmpfs, which
+ * stays for interactive session commands. Unused on the host and in containers.
+ */
+function runScratchTmp(checkout: string): string {
+  const scratch = join(dirname(checkout), "tmp");
+  mkdirSync(scratch, { recursive: true, mode: 0o700 });
+  return scratch;
+}
+
+/** Files that decide what a project's dependencies are. */
+const DEPENDENCY_FILES = new Set([
+  "package.json",
+  "bun.lock",
+  "bun.lockb",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "pyproject.toml",
+  "uv.lock",
+  "poetry.lock",
+  "Pipfile",
+  "Pipfile.lock",
+  "setup.py",
+  "setup.cfg",
+  "go.mod",
+  "go.sum",
+  "Cargo.toml",
+  "Cargo.lock",
+  "pom.xml",
+  "build.gradle",
+  "build.gradle.kts",
+  "settings.gradle",
+  "settings.gradle.kts",
+  "gradle.lockfile",
+]);
+
+/**
+ * Dependency manifests and lockfiles that differ between the base commit and the candidate
+ * tree. Unknown (git cannot compare) counts as differing.
+ */
+export function changedDependencyManifests(
+  repository: string,
+  baseCommit: string,
+  candidateTree: string,
+): string[] {
+  const diff = Bun.spawnSync(
+    hostGitArgv(
+      ["git", "diff", "--name-only", "-z", "--no-renames", baseCommit, candidateTree, "--"],
+      repository,
+    ),
+    { cwd: repository, env: hostGitEnv(), stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+  );
+  if (diff.exitCode !== 0) return ["(the base and the change could not be compared)"];
+  return diff.stdout
+    .toString()
+    .split("\0")
+    .filter(
+      (path) =>
+        !!path &&
+        (DEPENDENCY_FILES.has(path.split("/").at(-1)!) ||
+          /(^|\/)requirements[^/]*\.txt$/.test(path)),
+    );
 }
 
 /** A base step longer than this is not repeated whole to confirm a failure. */

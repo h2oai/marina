@@ -97,6 +97,81 @@ describe("attribution of a failed gate", () => {
     expect(confirmationCommand(["bun", "run", "test"], change, 600_000)).toBeUndefined();
   });
 
+  it("[A] recognises every test-file header form, so failures land in the right file", () => {
+    const out = [
+      "a.test.ts:",
+      "error: boom",
+      "(fail) one [0.1ms]",
+      "b_test.ts:",
+      "error: boom",
+      "(fail) one [0.1ms]",
+      "c.spec.mjs:",
+      "error: boom",
+      "(fail) one [0.1ms]",
+      "d_spec.tsx:",
+      "error: boom",
+      "(fail) one [0.1ms]",
+    ].join("\n");
+    expect(digestOutput(out, "/repo", 1).identities.map((identity) => identity.file)).toEqual([
+      "a.test.ts",
+      "b_test.ts",
+      "c.spec.mjs",
+      "d_spec.tsx",
+    ]);
+  });
+
+  it("[B] parses identities before display truncation: long shared-prefix names stay apart", () => {
+    const prefix = "suite > ".concat("x".repeat(500));
+    const out = bun({
+      "a.test.ts": [
+        [`${prefix} one`, "boom"],
+        [`${prefix} two`, "boom"],
+      ],
+    });
+    const digest = digestOutput(out, "/repo", 1);
+    expect(digest.identities.map((identity) => identity.name)).toEqual([
+      `${prefix} one`,
+      `${prefix} two`,
+    ]);
+    const base = failed(bun({ "a.test.ts": [[`${prefix} one`, "boom"]] }));
+    expect(attributeFailure({ change: digest, base, again: base })).toMatchObject({
+      kind: "change",
+      newFailures: [`a.test.ts::${prefix} two`],
+    });
+  });
+
+  it("[C] one unnamed failure beside named ones makes attribution inconclusive", () => {
+    const named = bun({ "a.test.ts": [["x", "boom"]] });
+    const unhandled = `${named}\n\nb.test.ts:\n\n# Unhandled error between tests\n-----\nerror: SyntaxError: Unexpected token\n-----\n\n 0 pass\n 2 fail\n 1 error\n`;
+    const change = digestOutput(unhandled, "/repo", 1);
+    expect(change.incomplete).toContain("Unhandled error between tests");
+    const base = failed(named);
+    expect(attributeFailure({ change, base, again: base }).kind).toBe("inconclusive");
+    // A runner count above the named failures is the same gap.
+    const counted = digestOutput(`${named}\n\n 0 pass\n 2 fail\n`, "/repo", 1);
+    expect(counted.incomplete).toBe("the runner counted 2 failures but named 1");
+  });
+
+  it("[D] the signature carries the expected and received values, not only the first line", () => {
+    const run = (received: string) =>
+      digestOutput(
+        `a.test.ts:\nerror: expect(received).toBe(expected)\n\nExpected: 1\nReceived: ${received}\n\n      at <anonymous> (/repo/a.test.ts:3:9)\n(fail) x [0.1ms]\n`,
+        "/repo",
+        1,
+      );
+    const change = run("2");
+    expect(change.identities[0]!.signature).toBe(
+      "error: expect(received).toBe(expected) | Expected: 1 | Received: 2",
+    );
+    const base = { passed: false, digest: run("3") };
+    expect(attributeFailure({ change, base, again: base })).toMatchObject({
+      kind: "inconclusive",
+      reason: expect.stringContaining("fails differently"),
+    });
+    const same = { passed: false, digest: run("2") };
+    expect(attributeFailure({ change, base: same, again: same }).kind).toBe("preexisting");
+  });
+
   it("[R8] bounds a line with no newline and marks the digest incomplete", () => {
     const digester = new FailureDigester("/repo");
     const mib = "x".repeat(1024 * 1024);

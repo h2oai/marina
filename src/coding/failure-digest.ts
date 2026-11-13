@@ -42,6 +42,9 @@ const MAX_IDENTITIES = 5000;
 const TAIL_LINES = 40;
 const TAIL_BYTES = 4096;
 const ERROR_LINES = 6;
+/** A failure's signature: its error block, at most this many lines and characters. */
+const SIGNATURE_LINES = 6;
+const SIGNATURE_CHARS = 1000;
 const MAX_LINE = 400;
 /** The longest partial line held per stream while waiting for its newline. */
 export const MAX_PARTIAL_LINE = 64 * 1024;
@@ -58,8 +61,24 @@ const FAILURE_LINE: Array<[RegExp, (m: RegExpExecArray) => string]> = [
   [/^test (\S+) \.\.\. FAILED$/, (m) => m[1]!],
 ];
 const LOCATION = /([\w@./-]+\.(?:[cm]?[jt]sx?|py|go|rs|java|kt)):(\d+)/;
-/** bun prints each test file's path on its own line before its results. */
-const FILE_HEADER = /^([\w@./-]+\.(?:test|spec)\.[cm]?[jt]sx?|[\w@./-]+_test\.go):$/;
+/**
+ * bun prints each test file's path on its own line before its results, for every name its
+ * runner collects: `*.test.*`, `*_test.*`, `*.spec.*`, `*_spec.*` (JS/TS, any module flavour);
+ * go test files are `*_test.go`.
+ */
+const FILE_HEADER = /^([\w@./-]+[._](?:test|spec)\.[cm]?[jt]sx?|[\w@./-]+_test\.go):$/;
+/** Output that says something failed outside any named test (setup, load or build). */
+const UNNAMED_FAILURE: Array<[RegExp, string]> = [
+  [
+    /^# Unhandled error between tests/,
+    "an error outside any named test (Unhandled error between tests)",
+  ],
+  [/^FAIL\s+\S+\s+\[(?:build|setup) failed\]/, "a package that failed to build"],
+  [/^E\s+(?:ImportError|ModuleNotFoundError|SyntaxError)\b/, "a test module that failed to import"],
+];
+/** bun's closing counts: failures and errors the runner tallied. */
+const FAIL_COUNT = /^\s*(\d+) fail$/;
+const ERROR_COUNT = /^\s*(\d+) errors?$/;
 /** bun's closing summary repeats failures without their file. */
 const SUMMARY = /^\d+ tests? failed:$/;
 const ERROR_START =
@@ -75,7 +94,9 @@ export class FailureDigester {
   private collecting = false;
   private location: string | undefined;
   private file: string | undefined;
-  private pendingError: string | undefined;
+  private pendingError: string[] | undefined;
+  private errorOpen = false;
+  private failCount: number | undefined;
   private inSummary = false;
   private incomplete: string | undefined;
   private lines: string[] = [];
@@ -119,7 +140,9 @@ export class FailureDigester {
   }
 
   private line(raw: string): void {
-    const line = raw.replace(ANSI, "").replace(/\r$/, "").slice(0, MAX_LINE);
+    // Identities and signatures are parsed from the whole line; only display is cut.
+    const full = raw.replace(ANSI, "").replace(/\r$/, "");
+    const line = full.slice(0, MAX_LINE);
     this.lines.push(line);
     if (this.lines.length > TAIL_LINES) this.lines.shift();
     if (this.collecting) {
@@ -131,38 +154,75 @@ export class FailureDigester {
       this.firstError = [line];
       this.collecting = true;
     }
-    if (!this.pendingError && ERROR_START.test(line)) this.pendingError = this.normalise(line);
-    if (SUMMARY.test(line.trim())) this.inSummary = true;
-    const header = FILE_HEADER.exec(line.trim());
+    this.errorBlock(full);
+    for (const [pattern, why] of UNNAMED_FAILURE) if (pattern.test(full)) this.incomplete ??= why;
+    const fails = FAIL_COUNT.exec(full);
+    if (fails) this.failCount = Number(fails[1]);
+    const errors = ERROR_COUNT.exec(full);
+    if (errors && Number(errors[1]) > 0)
+      this.incomplete ??= `${errors[1]} error(s) outside any named test`;
+    if (SUMMARY.test(full.trim())) this.inSummary = true;
+    // Paths are short: matching them on the display-length line keeps every line linear
+    // (these patterns backtrack quadratically on a long run of path characters).
+    const header = full.length <= MAX_LINE ? FILE_HEADER.exec(full.trim()) : null;
     if (header) {
       this.file = this.relative(header[1]!);
       this.inSummary = false;
+      // A new file: an error left over from the last one belongs to no failure here.
+      this.pendingError = undefined;
+      this.errorOpen = false;
     }
     const at = LOCATION.exec(line);
     if (at && !/node_modules|bun:test|internal\//.test(line)) this.location = `${at[1]}:${at[2]}`;
     for (const [pattern, name] of FAILURE_LINE) {
-      const match = pattern.exec(line);
+      const match = pattern.exec(full);
       if (!match) continue;
       this.record(name(match).trim());
       break;
     }
     // A passing result closes the window an error belongs to.
-    if (/^\(pass\) |^PASSED |^\s*--- PASS: |^ok\s/.test(line)) {
+    if (/^\(pass\) |^PASSED |^\s*--- PASS: |^ok\s/.test(full)) {
+      this.errorOpen = false;
       this.pendingError = undefined;
       this.location = undefined;
     }
   }
 
+  /**
+   * The current error block, for the next failure's signature: the error line and what
+   * follows it (expected/received values, the message), up to the stack, a code frame or the
+   * result line, bounded. Blank lines inside the block are skipped, not an end.
+   */
+  private errorBlock(full: string): void {
+    if (ERROR_START.test(full) && !this.errorOpen) {
+      if (!this.pendingError) {
+        this.pendingError = [this.normalise(full.slice(0, SIGNATURE_CHARS))];
+        this.errorOpen = true;
+      }
+      return;
+    }
+    if (!this.errorOpen || !this.pendingError) return;
+    if (/^\s+at |^\s*\d+ \| |^\((?:fail|pass)\) |^\S.*:$/.test(full)) {
+      this.errorOpen = false;
+      return;
+    }
+    if (!full.trim()) return;
+    const total = this.pendingError.reduce((sum, part) => sum + part.length, 0);
+    if (this.pendingError.length < SIGNATURE_LINES && total < SIGNATURE_CHARS)
+      this.pendingError.push(this.normalise(full.slice(0, SIGNATURE_CHARS)));
+  }
+
   private record(failure: string): void {
-    const fromLine = LOCATION.exec(failure);
+    const fromLine = LOCATION.exec(failure.slice(0, MAX_LINE));
     const location = fromLine ? `${fromLine[1]}:${fromLine[2]}` : this.location;
     this.location = undefined;
-    const signature = this.pendingError ?? "";
+    const signature = (this.pendingError ?? []).join(" | ").slice(0, SIGNATURE_CHARS);
     this.pendingError = undefined;
+    this.errorOpen = false;
     // A closing summary repeats failures already seen; only an unseen one is recorded.
     if (this.inSummary && this.identities.some((identity) => identity.name === failure)) return;
     // pytest names its file in the node id; bun by its file header; else the location's file.
-    const pytest = /^([^\s:]+\.py)::/.exec(failure);
+    const pytest = /^([^\s:]+\.py)::/.exec(failure.slice(0, MAX_LINE));
     const file = this.inSummary
       ? undefined
       : pytest
@@ -188,10 +248,14 @@ export class FailureDigester {
     let tail = this.lines.join("\n");
     if (Buffer.byteLength(tail) > TAIL_BYTES)
       tail = Buffer.from(tail).subarray(-TAIL_BYTES).toString("utf8");
+    const named = new Set(this.identities.map((identity) => `${identity.file}::${identity.name}`))
+      .size;
     const unnamed =
       exitCode !== undefined && exitCode !== 0 && !this.identities.length
         ? "the command failed without naming a failing test"
-        : undefined;
+        : this.failCount !== undefined && this.failCount > named
+          ? `the runner counted ${this.failCount} failures but named ${named}`
+          : undefined;
     const incomplete = this.incomplete ?? unnamed;
     return {
       failures: [...this.failures],

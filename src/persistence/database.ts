@@ -4127,7 +4127,7 @@ export class MarinaDB implements MarinaStores {
     return codingDb.listCodingRunArtifacts(this.db, runId, kinds);
   }
 
-  listCodingCandidatesByRef(refs: readonly string[]): CodingArtifactRow[] {
+  listCodingCandidatesByRef(refs: readonly string[]): Array<CodingArtifactRow & { seq: number }> {
     return codingDb.listCodingCandidatesByRef(this.db, refs);
   }
 

@@ -428,17 +428,17 @@ export function listCodingRunArtifacts(
 export function listCodingCandidatesByRef(
   db: Database,
   refs: readonly string[],
-): CodingArtifactRow[] {
-  const out: CodingArtifactRow[] = [];
+): Array<CodingArtifactRow & { seq: number }> {
+  const out: Array<CodingArtifactRow & { seq: number }> = [];
   // Bounded batches: a repository holds at most a few dozen candidate refs.
   for (let i = 0; i < refs.length; i += 200) {
     const batch = refs.slice(i, i + 200);
     out.push(
       ...(db
         .query(
-          `SELECT * FROM coding_artifacts WHERE kind = 'candidate' AND json_extract(metadata_json, '$.ref') IN (${batch.map(() => "?").join(",")}) ORDER BY rowid DESC`,
+          `SELECT *, rowid AS seq FROM coding_artifacts WHERE kind = 'candidate' AND json_extract(metadata_json, '$.ref') IN (${batch.map(() => "?").join(",")}) ORDER BY rowid DESC`,
         )
-        .all(...batch) as CodingArtifactRow[]),
+        .all(...batch) as Array<CodingArtifactRow & { seq: number }>),
     );
   }
   return out;

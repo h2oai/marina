@@ -64,13 +64,20 @@ export function shipVerificationRefusal(
 ): string | null {
   const how =
     "Run code verify candidate gates:repository and ship once the repository's gates pass.";
-  // The latest attempt, request or result: a newer request that is still running, or that
-  // ended without a result, is not hidden behind an older pass.
-  const attempt = db
-    .listCodingArtifacts(sessionId, 50)
-    .find(
+  // The latest attempt by when it STARTED: a background request starts when it is admitted
+  // (its result lands later), a synchronous check is its own result. A newer request that is
+  // still running, or ended without a result, is never hidden behind an older pass, nor is a
+  // later synchronous failure hidden behind a background pass that finished after it.
+  const recent = db
+    .listCodingArtifacts(sessionId, 200)
+    .filter(
       (artifact) => artifact.kind === "verification" || artifact.kind === "verification_request",
     );
+  const attempt = recent.find(
+    (artifact) =>
+      artifact.kind === "verification_request" ||
+      typeof (JSON.parse(artifact.metadata_json) as Record<string, unknown>).requestId !== "string",
+  );
   if (!attempt) return `Not verified: no verification of this change. ${how}`;
   let latest = attempt;
   if (attempt.kind === "verification_request") {

@@ -461,6 +461,73 @@ describe("repository gates", () => {
       );
     });
 
+    it("[E] ship takes the attempt that started last, not the result that landed last", () => {
+      // A: a background request admitted first; B: a synchronous check that failed after it;
+      // then A's result lands, passed.
+      const requestA = f.db.createCodingArtifact({
+        sessionId: "s",
+        kind: "verification_request",
+        title: "Background verification",
+        status: "running",
+        contentText: "test",
+        metadata: { commands: ["test"] },
+        createdBy: "Owner",
+      });
+      f.db.createCodingArtifact({
+        sessionId: "s",
+        kind: "verification",
+        title: "Snapshot verification failed",
+        status: "failed",
+        contentText: "failed",
+        metadata: { gates: "repository", outcome: "failed", outcomeReason: "test: exit 1" },
+        createdBy: "Owner",
+      });
+      const resultA = f.db.createCodingArtifact({
+        sessionId: "s",
+        kind: "verification",
+        title: "Snapshot verification passed",
+        status: "complete",
+        contentText: "passed",
+        metadata: {
+          gates: "repository",
+          outcome: "passed",
+          requestId: requestA.id,
+          candidateFingerprint: "f",
+          materializedFingerprint: "f",
+          freshness: "current",
+          tree: "t",
+        },
+        createdBy: "Owner",
+      });
+      f.db.updateCodingArtifact(requestA.id, {
+        status: "complete",
+        metadata: { commands: ["test"], resultArtifactId: resultA.id },
+      });
+      expect(shipVerificationRefusal(f.db, "s", "t")).toContain("gates failed");
+    });
+
+    it("[F] a dependency change between base and candidate makes attribution inconclusive", async () => {
+      writeFileSync(join(root, "label.test.ts"), test("label", 'expect(label).toBe("other");'));
+      gitIn(root, "commit", "--quiet", "-am", "red base");
+      await begin(true);
+      const pkg = JSON.parse(await Bun.file(join(root, "package.json")).text());
+      writeFileSync(
+        join(root, "package.json"),
+        // Any manifest change counts: the base would run with the change's dependencies.
+        JSON.stringify({ ...pkg, description: "a changed manifest" }),
+      );
+      const result = await verify("code verify candidate");
+      expect(result.outcome).toBe("failed");
+      expect((result as { preexistingOnly?: boolean }).preexistingOnly).toBeFalsy();
+      const text = f.db
+        .listCodingRunArtifacts(run!.id)
+        .filter((a) => a.kind === "verification")
+        .at(-1)!.content_text;
+      expect(text).toContain("INCONCLUSIVE");
+      expect(text).toContain("dependency manifests or lockfiles differ");
+      expect(text).toContain("package.json");
+    });
+
     it("[retention] a verification at the 64-pin limit retires stale refs first instead of refusing", async () => {
       const tree = gitIn(root, "rev-parse", "HEAD^{tree}").trim();
       const date = `${Math.floor(Date.now() / 1000) - 86_400} +0000`;

@@ -56,7 +56,7 @@ export interface CodingStore {
   listCodingRuns(query?: CodingRunQuery): CodingArtifactRow[];
   listCodingRunArtifacts(runId: string, kinds?: string[]): CodingArtifactRow[];
   /** Candidate artifacts whose retained ref is one of `refs` (`refs/marina/candidates/*`). */
-  listCodingCandidatesByRef(refs: readonly string[]): CodingArtifactRow[];
+  listCodingCandidatesByRef(refs: readonly string[]): Array<CodingArtifactRow & { seq: number }>;
   getCodingArtifact(id: string): CodingArtifactRow | null;
   listCodingArtifacts(
     sessionId: string,

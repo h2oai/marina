@@ -44,6 +44,8 @@ export interface CandidateRetentionDb {
   listCodingCandidatesByRef(refs: readonly string[]): Array<{
     id: string;
     metadata_json: string;
+    /** Marina's own capture order (the row's sequence): later captures are larger. */
+    seq: number;
   }>;
   getCodingArtifact(id: string): { status: string; metadata_json: string } | null | undefined;
   getTask(id: number): { status: string } | null | undefined;
@@ -105,19 +107,21 @@ export function planCandidateRetirement(
     if (!ref.marina) plan.keep.push({ ...ref, why: "not created by Marina" });
     return ref.marina;
   });
-  const artifacts = new Map<string, { id: string; meta: Record<string, unknown> }>();
+  const artifacts = new Map<string, { id: string; seq: number; meta: Record<string, unknown> }>();
   for (const row of db?.listCodingCandidatesByRef(marina.map((ref) => ref.ref)) ?? []) {
     const meta = JSON.parse(row.metadata_json) as Record<string, unknown>;
     if (typeof meta.ref === "string" && !artifacts.has(meta.ref))
-      artifacts.set(meta.ref, { id: row.id, meta });
+      artifacts.set(meta.ref, { id: row.id, seq: row.seq, meta });
   }
-  // The newest candidate of each attempt, by commit time.
-  const newestOfRun = new Map<string, CandidateRef>();
+  // The newest candidate of each attempt by Marina's own capture order (the row sequence),
+  // never by commit time: two captures in the same second tie there.
+  const newestOfRun = new Map<string, { ref: string; seq: number }>();
   for (const ref of marina) {
-    const runId = artifacts.get(ref.ref)?.meta.runId;
+    const known = artifacts.get(ref.ref);
+    const runId = known?.meta.runId;
     if (typeof runId !== "string") continue;
     const best = newestOfRun.get(runId);
-    if (!best || ref.createdAt > best.createdAt) newestOfRun.set(runId, ref);
+    if (!best || known!.seq > best.seq) newestOfRun.set(runId, { ref: ref.ref, seq: known!.seq });
   }
   const rest: CandidateRef[] = [];
   for (const ref of marina) {
@@ -136,6 +140,11 @@ export function planCandidateRetirement(
         !(task && ENDED_TASK.has(task.status));
       if (!open) {
         plan.retire.push({ ...ref, reason: "attempt-ended" });
+        continue;
+      }
+      // Any candidate the attempt's own evidence cites is kept, newest or not.
+      if (meta.candidateId === known.id) {
+        plan.keep.push({ ...ref, why: `cited by open task attempt ${runId}` });
         continue;
       }
       if (newestOfRun.get(runId!)?.ref !== ref.ref) {

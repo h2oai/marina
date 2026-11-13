@@ -424,6 +424,8 @@ export function applySessionRunner(
   db: RunnerDb | undefined,
   session: CodingSessionRow,
   env: NodeJS.ProcessEnv = process.env,
+  /** A finite Marina-owned run (gate or base check): bind this directory at the sandbox's /tmp. */
+  run: { scratchTmp?: string } = {},
 ): WorkspaceRuntime {
   if (session.execution_target !== "local" || !(ws instanceof LocalWorkspace)) return ws;
   // A held session runs nothing, on any runner, until a person releases it.
@@ -433,8 +435,11 @@ export function applySessionRunner(
   if (runner.kind === "host") return ws;
   if (runner.kind === "sandbox") {
     try {
-      return new SandboxWorkspace(ws.root, ws.fileGrants, {}, (error) =>
-        db ? holdRoot(db, session, ws.root, error) : undefined,
+      return new SandboxWorkspace(
+        ws.root,
+        ws.fileGrants,
+        run.scratchTmp ? { scratchTmp: run.scratchTmp } : {},
+        (error) => (db ? holdRoot(db, session, ws.root, error) : undefined),
       );
     } catch (error) {
       return new UnavailableSandboxWorkspace(ws.root, error, ws.fileGrants);

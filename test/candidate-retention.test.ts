@@ -30,21 +30,28 @@ const ref = (ageMs: number, marina = true): CandidateRef => ({
 
 /** A database with candidates bound to attempts. */
 function fakeDb(
-  bindings: Array<{ ref: CandidateRef; runId: string }>,
-  runs: Record<string, { status: string; taskId: number }>,
+  bindings: Array<{ ref: CandidateRef; runId: string; seq?: number }>,
+  runs: Record<string, { status: string; taskId: number; candidateId?: string }>,
   tasks: Record<number, string>,
 ): CandidateRetentionDb {
   return {
     listCodingCandidatesByRef: (refs) =>
       bindings
         .filter((b) => refs.includes(b.ref.ref))
-        .map((b) => ({
+        .map((b, index) => ({
           id: `candidate_${b.ref.ref.slice(-4)}`,
           metadata_json: JSON.stringify({ ref: b.ref.ref, runId: b.runId }),
+          seq: b.seq ?? index + 1,
         })),
     getCodingArtifact: (id) =>
       runs[id]
-        ? { status: runs[id]!.status, metadata_json: JSON.stringify({ taskId: runs[id]!.taskId }) }
+        ? {
+            status: runs[id]!.status,
+            metadata_json: JSON.stringify({
+              taskId: runs[id]!.taskId,
+              candidateId: runs[id]!.candidateId,
+            }),
+          }
         : null,
     getTask: (id) => (tasks[id] ? { status: tasks[id]! } : null),
   };
@@ -77,6 +84,25 @@ describe("candidate ref retirement plan", () => {
     expect(reason(latest)).toBeUndefined();
     expect(reason(newer)).toBeUndefined();
     expect(plan.keep.find((x) => x.ref === latest.ref)?.why).toContain("cited by open task");
+  });
+
+  it("[G] orders an attempt's candidates by Marina's capture record, and keeps what it cites", () => {
+    // Same commit second: only the capture order tells which is newest.
+    const first = ref(DAY);
+    const second = { ...ref(DAY), createdAt: first.createdAt };
+    const cited = { ...ref(DAY), createdAt: first.createdAt };
+    const db = fakeDb(
+      [
+        { ref: second, runId: "run", seq: 20 },
+        { ref: first, runId: "run", seq: 10 },
+        { ref: cited, runId: "run", seq: 5 },
+      ],
+      { run: { status: "active", taskId: 1, candidateId: `candidate_${cited.ref.slice(-4)}` } },
+      { 1: "claimed" },
+    );
+    const plan = planCandidateRetirement(db, [first, second, cited], NOW);
+    expect(plan.retire.map((x) => [x.ref, x.reason])).toEqual([[first.ref, "superseded"]]);
+    expect(plan.keep.map((x) => x.ref).sort()).toEqual([second.ref, cited.ref].sort());
   });
 
   it("retires by age, never touches a recent ref or one Marina did not create", () => {
