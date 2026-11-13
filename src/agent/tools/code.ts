@@ -310,6 +310,49 @@ const codeExternalSchema = Type.Object({
   artifactId: Type.Optional(Type.String({ description: "External link artifact id" })),
 });
 
+/** Typed Code Mode tools that change only the session's own working copy. */
+const WORKSPACE_AUTHORING_TOOLS: ReadonlySet<string> = new Set([
+  "marina_code_edit",
+  "marina_code_write",
+  "marina_code_patch",
+  "marina_code_apply_patch",
+  "marina_code_reject_patch",
+  "marina_code_run",
+  "marina_code_verify",
+  "marina_code_checkpoint",
+  "marina_code_plan",
+]);
+/** The same work through the generic `marina_code` tool's `action`. */
+const WORKSPACE_AUTHORING_ACTIONS: ReadonlySet<string> = new Set([
+  "edit",
+  "write",
+  "patch",
+  "apply",
+  "reject",
+  "run",
+  "verify",
+  "checkpoint",
+  "revert",
+  "plan",
+]);
+
+/**
+ * A coder working in its own Code Mode workspace: editing files, running the
+ * allowed checks, verifying, planning. Its paths and text are its own work, not
+ * values the requester stated, so the conversation-support argument check does
+ * not apply; the session's diffs, verification receipts and review check this
+ * work instead. Submitting, handing off, approvals and anything outside the
+ * workspace are not covered.
+ */
+export function isWorkspaceAuthoringCall(name: string, args: Record<string, unknown>): boolean {
+  if (WORKSPACE_AUTHORING_TOOLS.has(name)) return true;
+  return (
+    name === "marina_code" &&
+    typeof args.action === "string" &&
+    WORKSPACE_AUTHORING_ACTIONS.has(args.action)
+  );
+}
+
 export function createCodeTool(ctx: ToolContext): AgentTool<typeof codeSchema> {
   return {
     name: "marina_code",
