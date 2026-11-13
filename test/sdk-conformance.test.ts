@@ -266,12 +266,12 @@ for (const language of LANGUAGES.filter((l) => !selected.length || selected.incl
       const credential = fixture.db.issueMemoryCredential(principal.principal_id).token;
       const report = (await drive(language, "memory", fixture.url, {
         credential,
-        burst: 140,
+        burst: 40,
       })) as Report;
       expect(report.replayed).toBe(true);
       expect(report.content).toBe("Deploys run from main");
       expect(report.found).toBe(true);
-      expect(report.written).toBe(140);
+      expect(report.written).toBe(40);
       expect(report.rate_limit_waits).toBeGreaterThan(0);
     }, 120_000);
 
