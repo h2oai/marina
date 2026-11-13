@@ -20,6 +20,7 @@ import {
 } from "../../../coding/code-ship";
 import type { CodeTrialResult, GitRunner } from "../../../coding/code-trial";
 import { HOST_GIT_CONFIG_ARGS } from "../../../coding/host-git";
+import { protectedChanges, protectedHold } from "../../../coding/protected-paths";
 import { isLiveMarinaCheckout } from "../../../coding/self-checkout";
 import { scratchRoot } from "../../../config/data-dir";
 import type { MarinaDB } from "../../../persistence/database";
@@ -112,6 +113,22 @@ export async function shipCode(
     refuseCommand(ctx, eid, refusal);
     return;
   }
+  // An agent's change to what decides Marina's authority or its own judging is
+  // opened, never queued by Marina (src/coding/protected-paths.ts).
+  let protectedFiles: string[];
+  try {
+    protectedFiles = protectedChanges(
+      git,
+      session.worktree_path,
+      trial.base.sha,
+      trial.candidate.sha,
+    );
+  } catch (error) {
+    refuseCommand(ctx, eid, `Could not read the change: ${getErrorMessage(error)}`);
+    return;
+  }
+  const holdForPerson =
+    protectedFiles.length > 0 && principalOf(entity.id) !== "person" && protectedHold();
   const baseRef = git(session.workspace_root, [
     "symbolic-ref",
     "--short",
@@ -132,6 +149,8 @@ export async function shipCode(
         author: entity.name,
         merge,
         scratch,
+        protectedFiles,
+        holdForPerson,
       },
     );
     deps.db.createCodingArtifact({
@@ -165,7 +184,13 @@ export async function shipCode(
   sendCode(
     ctx,
     eid,
-    `Shipping "${title}" on ${session.worktree_branch} against ${base}, with trial ${trial.id} (${trial.verdict}).${merge ? " It will be queued to merge." : ""}`,
+    `Shipping "${title}" on ${session.worktree_branch} against ${base}, with trial ${trial.id} (${trial.verdict}).${
+      holdForPerson
+        ? ` It touches protected paths (${protectedFiles.length}); a person queues it.`
+        : merge
+          ? " It will be queued to merge."
+          : ""
+    }`,
     {
       event: "code_ship_started",
       sessionId: session.id,

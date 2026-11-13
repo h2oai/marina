@@ -46,6 +46,10 @@ export interface ShipSpec {
   author: string;
   /** Queue the pull request for merge after opening it. */
   merge: boolean;
+  /** Protected files the change touches (`protected-paths.ts`), listed in the body. */
+  protectedFiles?: readonly string[];
+  /** An agent's protected change: opened, never queued by Marina; a person queues it. */
+  holdForPerson?: boolean;
   /** Scratch directory for the snapshot's temporary index. */
   scratch: string;
 }
@@ -69,7 +73,9 @@ export function shipRefusal(git: GitRunner, spec: Pick<ShipSpec, "tree" | "trial
   return null;
 }
 
-export function shipBody(spec: Pick<ShipSpec, "trial" | "author">): string {
+export function shipBody(
+  spec: Pick<ShipSpec, "trial" | "author" | "protectedFiles" | "holdForPerson">,
+): string {
   const t = spec.trial;
   const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
   const measured =
@@ -84,6 +90,16 @@ export function shipBody(spec: Pick<ShipSpec, "trial" | "author">): string {
     `- Base \`${t.base.sha.slice(0, 12)}\` ${pct(t.base.accuracy)} (${t.base.successes}/${t.base.attempts}) → candidate \`${t.candidate.sha.slice(0, 12)}\` ${pct(t.candidate.accuracy)} (${t.candidate.successes}/${t.candidate.attempts})`,
     `- ${measured}`,
     ...t.warnings.map((w) => `- warning: ${w}`),
+    ...(spec.protectedFiles?.length
+      ? [
+          "",
+          "## Protected paths",
+          spec.holdForPerson
+            ? "This change touches files that decide what Marina may do or how it judges itself. Marina did not queue it: a person reads it and queues it."
+            : "This change touches files that decide what Marina may do or how it judges itself:",
+          ...spec.protectedFiles.map((f) => `- \`${f}\``),
+        ]
+      : []),
     "",
     "Both builds ran as child Marinas with no provider credentials; this repository's checks and merge queue decide whether it lands.",
   ].join("\n");
@@ -156,7 +172,7 @@ export function shipChange(
     .filter(Boolean)
     .at(-1)!;
   let queued = false;
-  if (spec.merge) {
+  if (spec.merge && !spec.holdForPerson) {
     must(run.gh, spec.tree, ["gh", "pr", "merge", url, "--squash"]);
     queued = true;
   }

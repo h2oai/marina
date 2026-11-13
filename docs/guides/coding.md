@@ -430,7 +430,17 @@ code ship [merge] [-- <title>]
 
 The repository's own checks and merge queue still decide whether the change lands. Publishing
 uses the server's `gh` sign-in. A person ships; an agent ships only under
-`MARINA_AUTONOMY=sovereign`. The result arrives here, and `code show <artifact>` has the link.
+`MARINA_AUTONOMY=sovereign`.
+
+Some files decide what Marina may do or how it judges itself:
+- the gates, trust and authority checks, and the as-of fence;
+- the promotion and statistics rules;
+- the trial and ship steps themselves;
+- CI, the package scripts and configuration.
+
+When an agent ships a change to any of them, the pull request lists those files and Marina does
+not queue it, even with `merge`; a person reads it and queues it. `MARINA_SELF_IMPROVE_PROTECTED=off`
+lifts this hold. The result arrives here, and `code show <artifact>` has the link.
 
 ### Find what to fix
 
