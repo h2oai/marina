@@ -496,7 +496,8 @@ Usage:
   code resume <session_id>    Make a session active
   code status [session_id]    Show session status
   code files [path]           List workspace files
-  code read <path>            Read a workspace file
+  code read <path> [offset:<line>] [limit:<lines>] [column:<character>]
+                             Read numbered lines (max 2000 lines / 50 KiB per page)
   code search <query> [path:<path>]  Search workspace text, optionally within one file/directory
   code diff [path]            Show git diff
   code run <check|cmd...>     Run an allowed workspace command and store output

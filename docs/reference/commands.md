@@ -2332,7 +2332,8 @@ Usage:
   code resume <session_id>    Make a session active
   code status [session_id]    Show session status
   code files [path]           List workspace files
-  code read <path>            Read a workspace file
+  code read <path> [offset:<line>] [limit:<lines>] [column:<character>]
+                             Read numbered lines (max 2000 lines / 50 KiB per page)
   code search <query> [path:<path>]  Search workspace text, optionally within one file/directory
   code diff [path]            Show git diff
   code run <check|cmd...>     Run an allowed workspace command and store output
@@ -2903,11 +2904,17 @@ Effect: execute.
 
 - `field-0` (`json-array`): json, required.
 
-### `code read <path>`
+### `code read <path> [offset:<line>] [limit:<lines>] [column:<character>]`
 
 Effect: read.
 
 - `field-0` (`path`): text, required.
+- `field-1` (`offset`): number, optional group `option-0`, min 1, max 9007199254740991.
+- `field-2` (`limit`): number, optional group `option-1`, min 1, max 9007199254740991.
+- `field-3` (`column`): number, optional group `option-2`, min 1, max 9007199254740991.
+- Group `option-0`: `offset:line`.
+- Group `option-1`: `limit:lines`.
+- Group `option-2`: `column:character`.
 
 ### `code see <path> [question]`
 

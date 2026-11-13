@@ -1046,9 +1046,31 @@ Ready.
 ```
 > code files src
 > code read src/parser.ts
+> code read src/parser.ts offset:2001 limit:200
 > code search off by one
 > code diff
 ```
+
+`code read <path>` still starts at line 1. Reads return numbered lines; `offset:<line>`
+selects a one-based starting line and `limit:<lines>` requests a page (default and maximum
+2000 lines). A page also stops at 50 KiB of numbered text. Whenever more content remains,
+the reply gives the exact `code read` command that continues it, and includes it in the
+structured response's `commands` and `metadata.continuation`. The line range and next
+position are in `metadata` too. An empty file or an offset past EOF returns no lines and
+no continuation.
+
+For a single line larger than a page, the continuation adds `column:<character>`: a
+one-based Unicode character column within that line. This keeps every part readable
+without splitting a Unicode character. Line numbers stay the file's original line numbers;
+remove the `N: ` prefixes when copying source text into an edit.
+
+Modifiers use `key:value`; `key=value`, `--key value` and `--key=value` work too. To read
+a path that looks like a modifier, put it after `--`, for example
+`code read offset:2001 limit:200 -- limit:notes.txt`.
+`marina_code_read_file` and `marina_code` with `action=read` accept the same optional numeric
+`offset`, `limit` and `column` fields alongside `path`. Local, worktree, and container
+workspaces share this file-reading surface. A sandbox execution target continues to read
+the session's host workspace files; it does not imply guest-file synchronization.
 
 **5. Run a check.** In the default local target, allowlisted commands run in the host workspace. In
 an explicitly selected Flywheel target, finite guest commands run in the active sandbox project.
@@ -1338,7 +1360,7 @@ instead of from scratch.
 | Do this | Command |
 |---|---|
 | Start / resume / finish | `code start [title]` · `code resume <id>` · `code done [summary]` · `code list` |
-| Look around | `code files [path]` · `code read <path>` · `code search <query> [path:<relative-path>]` · `code diff` |
+| Look around | `code files [path]` · `code read <path> [offset:<line>] [limit:<lines>] [column:<character>]` · `code search <query> [path:<relative-path>]` · `code diff` |
 | Run things | `code run <cmd>` · `code verify` · `code test` / `lint` / `typecheck` · `code recipe run <name>` |
 | Change code | `code patch <title>` → `code apply last patch` · `code checkpoint [title]` · `code revert <id>` |
 | Review | `code approvals` · `code approve\|deny <id>` |
