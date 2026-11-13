@@ -30,6 +30,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -38,7 +39,15 @@ import { createServer } from "node:net";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { hostGitArgv, hostGitEnv } from "../src/coding/host-git";
+import { detectProjectRunner, PROJECT_MARKERS } from "../src/coding/project-detection";
 import { diffStat } from "../src/coding/unified-diff";
+import {
+  compareWorkspaceState,
+  noChangeReason,
+  observeWorkspaceState,
+  type WorkspaceComparison,
+  type WorkspaceState,
+} from "../src/coding/workspace-state";
 import { formatAge } from "../src/engine/commands/format-duration";
 import { waitForDatabaseLease } from "../src/persistence/database-lease";
 import { IS_COMPILED, MARINA_ROOT } from "../src/runtime-paths";
@@ -57,6 +66,7 @@ import { tipLines, welcomeCard } from "./term-frame";
 const REPO_ROOT = resolve(import.meta.dir, "..");
 const STDERR_TAIL_LINES = 40;
 const DEFAULT_TASK_TIMEOUT_MS = 600_000;
+const GATES_TASK_TIMEOUT_MS = 1_200_000;
 
 export interface CodeSessionOptions {
   tui?: boolean;
@@ -103,17 +113,76 @@ export function oneShotBudgetMs(timeoutMs: number): number {
 }
 
 /**
+ * Whether a folder has repository gates Marina can run: it is a Git working-tree root and
+ * Marina detects a test runner there (`detectProjectRunner`, the same detection candidate
+ * verification plans with). Reads marker files only; never runs the project.
+ */
+export function repositoryGates(
+  dir: string,
+): { ok: true; runner: string } | { ok: false; reason: string } {
+  let root: string;
+  try {
+    root = realpathSync(dir);
+  } catch {
+    return { ok: false, reason: "the folder cannot be read" };
+  }
+  const top = Bun.spawnSync(hostGitArgv(["git", "rev-parse", "--show-toplevel"]), {
+    cwd: root,
+    env: hostGitEnv(),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  if (top.exitCode !== 0) return { ok: false, reason: "the folder is not a Git repository" };
+  if (realpathSync(top.stdout.toString().trim()) !== root)
+    return { ok: false, reason: "the folder is not its Git repository's root" };
+  const markers = new Set<string>();
+  const read = (name: string) => {
+    try {
+      return readFileSync(join(root, name), "utf8").slice(0, 64 * 1024);
+    } catch {
+      return null;
+    }
+  };
+  for (const marker of PROJECT_MARKERS) if (existsSync(join(root, marker))) markers.add(marker);
+  const profile = detectProjectRunner({
+    markers,
+    packageJson: markers.has("package.json") ? read("package.json") : null,
+    pythonConfig: `${read("pyproject.toml") ?? ""}\n${read("setup.cfg") ?? ""}`,
+  });
+  return profile.testCommand
+    ? { ok: true, runner: profile.verify.join(", ") }
+    : { ok: false, reason: "Marina detects no test runner in the folder" };
+}
+
+/**
  * A one-shot's verification requirement: the flag, else `MARINA_CODE_VERIFICATION`
- * (checks | candidate | delivery), else `delivery` — every stated requirement
- * observed by a check or reported unverified.
+ * (checks | candidate | delivery), else `candidate` for a Git repository with a detected
+ * test runner (verified = the repository's own gates passed on a snapshot) and `delivery`
+ * for anything else (every stated requirement observed by a check, or reported unverified).
  */
 export function printVerification(
   flag: CodeSessionOptions["verification"],
   env: NodeJS.ProcessEnv = process.env,
+  dir?: string,
 ): "checks" | "candidate" | "delivery" {
   if (flag) return flag;
   const v = env.MARINA_CODE_VERIFICATION?.trim().toLowerCase();
-  return v === "checks" || v === "candidate" ? v : "delivery";
+  if (v === "checks" || v === "candidate" || v === "delivery") return v;
+  return dir !== undefined && repositoryGates(dir).ok ? "candidate" : "delivery";
+}
+
+/**
+ * The one-shot task timeout: `MARINA_CODE_TASK_TIMEOUT_MS`, else 10 minutes, or 20 under
+ * repository gates, which leave room for the full suite after the work.
+ */
+export function printTimeoutMs(
+  verification: "checks" | "candidate" | "delivery" | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const set = Number.parseInt(env.MARINA_CODE_TASK_TIMEOUT_MS ?? "", 10);
+  if (set > 0) return set;
+  return verification === "candidate" ? GATES_TASK_TIMEOUT_MS : DEFAULT_TASK_TIMEOUT_MS;
 }
 
 /** Interactive host-exec approval posture negotiated with the server. */
@@ -252,6 +321,8 @@ export function formatAssumptions(assumptions: CodeAssumption[] | undefined): st
 
 export interface CodeRequirementCoverage {
   listed: boolean;
+  /** Listing was optional (verified on the repository's gates): none listed = not mapped. */
+  optional?: boolean;
   verified: string[];
   unverified: string[];
   notCheckable: { text: string; reason: string }[];
@@ -264,6 +335,7 @@ function lifecycleRequirements(value: unknown): CodeRequirementCoverage | undefi
     Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
   return {
     listed: raw.listed === true,
+    ...(raw.optional === true ? { optional: true } : {}),
     verified: texts(raw.verified),
     unverified: texts(raw.unverified),
     notCheckable: Array.isArray(raw.notCheckable)
@@ -291,7 +363,7 @@ function lifecycleRequirements(value: unknown): CodeRequirementCoverage | undefi
  */
 export function unverifiedRequirements(coverage: CodeRequirementCoverage | undefined): string[] {
   if (!coverage) return [];
-  if (!coverage.listed) return ["no acceptance checklist was recorded"];
+  if (!coverage.listed) return coverage.optional ? [] : ["no acceptance checklist was recorded"];
   if (!coverage.verified.length && !coverage.unverified.length)
     return [
       "no stated requirement is observed by a passing check",
@@ -307,46 +379,61 @@ export function notCheckableRequirements(coverage: CodeRequirementCoverage | und
   );
 }
 
-/** `marina -p` exit codes. */
+/** `marina -p` exit codes. A no-change answer completed but verified nothing: 3. */
 export const PRINT_EXIT = {
   verified: 0,
   failed: 1,
   timeout: 2,
   unverified: 3,
+  no_changes: 3,
 } as const;
 
+/** The line a verified result prints when no stated requirement was mapped to a check. */
+export const REQUIREMENTS_NOT_MAPPED =
+  "Verified on the repository's gates; requirements not mapped (no stated requirement was mapped to a check that observes it).";
+
 /**
- * The one-shot outcome: completed AND verified is success (0); completed
- * without passing verification is 3, unless the caller accepts unverified
- * work (`--allow-unverified`, then 0 with the same notice); failed is 1,
- * timed out 2. A budget-forced submission follows the same rule: verified
- * only when its checks passed.
+ * The one-shot outcome: completed and verified is success (0); completed without passing
+ * verification is 3, and so is a no-change answer (status `no_changes`: nothing was
+ * verified because nothing changed), unless the caller accepts unverified work
+ * (`--allow-unverified`, then 0 with the same notice); failed is 1, timed out 2. A
+ * budget-forced submission follows the same rule: verified only when its checks passed.
  */
 export function printOutcome(
   end: CodeLifecycleEnd | "timeout" | undefined,
   allowUnverified = false,
 ): {
-  status: "verified" | "unverified" | "failed" | "timeout";
+  status: "verified" | "no_changes" | "unverified" | "failed" | "timeout";
   exitCode: number;
   notice?: string;
 } {
   if (end === "timeout") return { status: "timeout", exitCode: PRINT_EXIT.timeout };
   if (!end || end.phase === "failed") return { status: "failed", exitCode: PRINT_EXIT.failed };
+  if (end.verification === "not_applicable")
+    return {
+      status: "no_changes",
+      exitCode: allowUnverified ? PRINT_EXIT.verified : PRINT_EXIT.no_changes,
+      notice: `Completed but not verified: ${end.verificationReason ?? "nothing to verify: no files changed during this task"}`,
+    };
   const unobserved = unverifiedRequirements(end.requirements);
   if (end.verification === "passed" && !unobserved.length) {
     const declared = notCheckableRequirements(end.requirements);
-    return declared.length
-      ? {
-          status: "verified",
-          exitCode: PRINT_EXIT.verified,
-          notice: `Verified. Declared not machine-checkable (recorded, not observed by a check): ${declared.join("; ")}`,
-        }
+    const notes = [
+      ...(end.requirements?.optional && !end.requirements.listed ? [REQUIREMENTS_NOT_MAPPED] : []),
+      ...(declared.length
+        ? [
+            `Verified. Declared not machine-checkable (recorded, not observed by a check): ${declared.join("; ")}`,
+          ]
+        : []),
+    ];
+    return notes.length
+      ? { status: "verified", exitCode: PRINT_EXIT.verified, notice: notes.join("\n") }
       : { status: "verified", exitCode: PRINT_EXIT.verified };
   }
   const notice =
     end.verification === "passed"
       ? `Completed but not verified: checks passed, but no passing check observed ${unobserved.length === 1 ? "this stated requirement" : "these stated requirements"}: ${unobserved.join("; ")}`
-      : `Completed but not verified: ${end.verification ?? "unknown"}${end.verificationReason ? ` — ${end.verificationReason}` : ""}`;
+      : `Completed but not verified: ${end.verification ?? "unknown"}${end.verificationReason ? ` — ${end.verificationReason}` : ""}${end.requirements?.optional && !end.requirements.listed ? "\nRequirements not mapped: no stated requirement was mapped to a check." : ""}`;
   return {
     status: "unverified",
     exitCode: allowUnverified ? PRINT_EXIT.verified : PRINT_EXIT.unverified,
@@ -445,6 +532,130 @@ export function codingTaskCompletionMatcher(sessionId?: string): (p: Perception)
     if (code.phase === "received" && typeof code.metadata?.runId === "string")
       runId = code.metadata.runId;
     return !!runId && code.metadata?.runId === runId && terminalCodeLifecycle(p) !== undefined;
+  };
+}
+
+/** What `verification_finished` carries for a repository-gate run (`repositoryGateReport`). */
+export interface GateReport {
+  outcome: string;
+  reason?: string;
+  gates?: boolean;
+  freshness?: string;
+  workspace?: string;
+  resultId?: string;
+  steps?: Array<{ command: string; role?: unknown; outcome?: unknown; reason?: unknown }>;
+}
+
+/** A native turn declares no requirement checks: verified, at most, on the gates alone. */
+const NATIVE_REQUIREMENTS: CodeRequirementCoverage = {
+  listed: false,
+  optional: true,
+  verified: [],
+  unverified: [],
+  notCheckable: [],
+};
+
+/**
+ * The result of a native one-shot as Marina verified it. Nothing changed: nothing to verify.
+ * Otherwise `verified` only when the repository's gates ran on a snapshot of the folder,
+ * every one passed, and the folder still matches that snapshot; anything else is unverified
+ * with the gate (or the reason no gate could run) named.
+ */
+export function nativeVerificationEnd(input: {
+  comparison: WorkspaceComparison;
+  gates: ReturnType<typeof repositoryGates>;
+  report?: GateReport | Error;
+  folder?: string;
+}): CodeLifecycleEnd {
+  const end = (verification: string, verificationReason?: string): CodeLifecycleEnd => ({
+    phase: "completed",
+    verification,
+    ...(verificationReason ? { verificationReason } : {}),
+    requirements: NATIVE_REQUIREMENTS,
+  });
+  if (input.comparison.kind === "unchanged")
+    return { ...end("not_applicable", noChangeReason(input.comparison)), requirements: undefined };
+  if (!input.gates.ok)
+    return end(
+      "unavailable",
+      `Marina could not verify the native turn: ${input.gates.reason}, so there are no repository gates to run. Review its changes.`,
+    );
+  const report = input.report;
+  if (!report || report instanceof Error)
+    return end(
+      "error",
+      `The repository gates did not report a result${report ? `: ${report.message}` : ""}.`,
+    );
+  if (!report.gates)
+    return end("unbound", "The verification that ran was not the repository's gates.");
+  if (input.folder && report.workspace && report.workspace !== input.folder)
+    return end("unbound", `The gates ran on ${report.workspace}, not on this folder.`);
+  const failing = report.steps?.find((step) => step.outcome !== "passed");
+  const named = failing
+    ? `${failing.command} ${failing.outcome}${failing.reason ? ` (${failing.reason})` : ""}`
+    : report.reason;
+  if (report.outcome !== "passed")
+    return end(
+      report.outcome === "failed" ? "failed" : report.outcome === "not_run" ? "not_run" : "error",
+      `Repository gate ${report.outcome === "failed" ? "failed" : "did not pass"}: ${named ?? report.outcome}.${report.resultId ? ` Inspect: code show ${report.resultId}` : ""}`,
+    );
+  if (report.freshness !== "current")
+    return end(
+      "stale",
+      "The repository gates passed on a snapshot, but the folder changed after it (or could not be compared). Re-run to verify the current state.",
+    );
+  return end("passed");
+}
+
+/**
+ * After a native turn: compare the folder with its state before the turn and, when it
+ * changed, run the repository's gates on a snapshot (`code verify candidate
+ * gates:repository`) and wait for their result. `arm` starts waiting for the
+ * `verification_finished` perception before the command is sent.
+ */
+export async function verifyNativeTurn(input: {
+  dir: string;
+  baseline: WorkspaceState;
+  gates: ReturnType<typeof repositoryGates>;
+  arm: () => Promise<Perception>;
+  run: (command: string) => Promise<unknown>;
+  say?: (line: string) => void;
+}): Promise<CodeLifecycleEnd> {
+  const comparison = compareWorkspaceState(input.baseline, await observeWorkspaceState(input.dir));
+  let report: GateReport | Error | undefined;
+  if (comparison.kind !== "unchanged" && input.gates.ok) {
+    input.say?.(`Verifying with the repository's gates (${input.gates.runner})…`);
+    const finished = input.arm();
+    finished.catch(() => {
+      /* read below */
+    });
+    try {
+      await input.run("code verify candidate gates:repository");
+      const code = (await finished).data?.code as { metadata?: { gates?: GateReport } };
+      report = code.metadata?.gates;
+    } catch (error) {
+      report = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  return nativeVerificationEnd({
+    comparison,
+    gates: input.gates,
+    report,
+    folder: realpathSync(input.dir),
+  });
+}
+
+/** Matches the `verification_finished` of the repository-gate run this client started. */
+export function gateVerificationMatcher(sessionId?: string): (p: Perception) => boolean {
+  return (p) => {
+    const code = p.data?.code as
+      | { event?: string; sessionId?: string; metadata?: { gates?: unknown } }
+      | undefined;
+    return (
+      code?.event === "verification_finished" &&
+      (!sessionId || code.sessionId === sessionId) &&
+      !!code.metadata?.gates
+    );
   };
 }
 
@@ -1185,8 +1396,10 @@ export async function runCodeSession(
   };
 
   if (opts.print !== undefined && harness.agent !== "marina") {
-    const timeout =
-      Number.parseInt(process.env.MARINA_CODE_TASK_TIMEOUT_MS ?? "", 10) || DEFAULT_TASK_TIMEOUT_MS;
+    const timeout = printTimeoutMs(undefined);
+    // What the folder held before the turn: a turn that changes nothing has nothing to verify.
+    const baseline = await observeWorkspaceState(dir);
+    const gates = repositoryGates(dir);
     try {
       await sessionConsole.task(opts.print, true, timeout);
     } catch (error) {
@@ -1196,23 +1409,24 @@ export async function runCodeSession(
       );
       return;
     }
-    // A native turn has no Marina verification: finished is not verified.
-    await finishPrint(
-      printOutcome(
-        {
-          phase: "completed",
-          verification: "missing",
-          verificationReason:
-            "Native turn finished; Marina did not verify it. Review its output and workspace changes; task approval is separate.",
-        },
-        opts.allowUnverified,
-      ),
-    );
+    // Marina verifies the native turn's result the way it verifies its own coder's: the
+    // repository's gates on a snapshot of the folder.
+    const sessionId = sessionConsole.currentSessionId;
+    const end = await verifyNativeTurn({
+      dir,
+      baseline,
+      gates,
+      arm: () =>
+        agent.waitForMessage(gateVerificationMatcher(sessionId), printTimeoutMs("candidate")),
+      run: (command) => agent.command(command),
+      say: (line) => console.error(line),
+    });
+    await finishPrint(printOutcome(end, opts.allowUnverified), end);
     return;
   }
 
   // One-shot mode (`marina -p "<task>"`): dispatch, stream, await the terminal
-  // lifecycle signal, then exit — 0 verified, 3 completed but not verified,
+  // lifecycle signal, then exit — 0 verified or no changes, 3 completed but not verified,
   // 1 failed, 2 timeout (`printOutcome`).
   if (opts.print !== undefined) {
     const task = opts.print.trim();
@@ -1221,8 +1435,8 @@ export async function runCodeSession(
       await finishPrint(printOutcome(undefined));
       return;
     }
-    const timeoutMs =
-      Number.parseInt(process.env.MARINA_CODE_TASK_TIMEOUT_MS ?? "", 10) || DEFAULT_TASK_TIMEOUT_MS;
+    const verification = printVerification(opts.verification, process.env, dir);
+    const timeoutMs = printTimeoutMs(verification);
     // Arm the waiter BEFORE dispatching so a fast completion can't slip past.
     const outcome = agent.waitForMessage(
       codingTaskCompletionMatcher(sessionConsole.currentSessionId),
@@ -1238,8 +1452,10 @@ export async function runCodeSession(
         false,
         timeoutMs,
         true,
-        printVerification(opts.verification),
+        verification,
         oneShotBudgetMs(timeoutMs),
+        // A one-shot's candidate requirement is the repository's own gates.
+        verification === "candidate",
       );
     } catch (error) {
       // A refused task's reason already printed with its output; say anything else.

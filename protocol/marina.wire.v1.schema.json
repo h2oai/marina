@@ -266,6 +266,10 @@
             },
             {
               "type": "string",
+              "const": "not_applicable"
+            },
+            {
+              "type": "string",
               "const": "failed"
             },
             {
@@ -293,7 +297,7 @@
               "const": "unavailable"
             }
           ],
-          "description": "What the checks said. Only `passed` means checks ran on the change and passed."
+          "description": "What the checks said. Only `passed` means checks ran on the change and passed; `not_applicable`: the task changed no files, so there was nothing to verify."
         },
         "verificationReason": {
           "type": "string"
@@ -330,6 +334,10 @@
         },
         {
           "type": "string",
+          "const": "not_applicable"
+        },
+        {
+          "type": "string",
           "const": "failed"
         },
         {
@@ -357,7 +365,7 @@
           "const": "unavailable"
         }
       ],
-      "description": "What the checks said. Only `passed` means checks ran on the change and passed."
+      "description": "What the checks said. Only `passed` means checks ran on the change and passed; `not_applicable`: the task changed no files, so there was nothing to verify."
     },
     "Login": {
       "type": "object",

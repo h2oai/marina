@@ -785,6 +785,8 @@ export class CodeConsole {
     verification: "checks" | "candidate" | "delivery" = "checks",
     /** An unattended task's wall-clock budget (ms), sent as `budget:<seconds>s`. */
     budgetMs?: number,
+    /** Candidate only: verified means the repository's own gates passed (`gates:repository`). */
+    gates = false,
   ) {
     this.interrupted = false;
     if (this.selected) {
@@ -796,7 +798,7 @@ export class CodeConsole {
       this.marinaPhase = "working";
       this.updatePrompt();
       await this.command(
-        `code do ${unattended ? `verification:${verification} owner:unattended ` : ""}${unattended && budgetMs ? `budget:${Math.max(1, Math.floor(budgetMs / 1000))}s ` : ""}-- ${text}`,
+        `code do ${unattended ? `verification:${verification} ${gates && verification === "candidate" ? "gates:repository " : ""}owner:unattended ` : ""}${unattended && budgetMs ? `budget:${Math.max(1, Math.floor(budgetMs / 1000))}s ` : ""}-- ${text}`,
       );
     }
   }

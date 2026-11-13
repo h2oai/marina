@@ -78,6 +78,8 @@ export function verificationReadinessLabel(value: unknown): string | undefined {
       return "checks need attention";
     case "not-run":
       return "checks not run";
+    case "not-applicable":
+      return "verification not applicable";
     default:
       return undefined;
   }
@@ -316,13 +318,15 @@ export function renderRunResult(r: RunResult): string {
     ? `${stats.length} file${stats.length === 1 ? "" : "s"} changed (+${added} −${removed})`
     : "no file changes";
   const checks =
-    r.verification === "passed"
-      ? "checks passed"
-      : r.verification === "failed"
-        ? "checks failed"
-        : r.verification
-          ? `checks ${r.verification}`
-          : "no checks recorded";
+    r.verification === "not_applicable"
+      ? "verification not applicable"
+      : r.verification === "passed"
+        ? "checks passed"
+        : r.verification === "failed"
+          ? "checks failed"
+          : r.verification
+            ? `checks ${r.verification}`
+            : "no checks recorded";
   const took = [
     r.elapsedMs !== undefined ? duration(r.elapsedMs) : "",
     r.costUsd !== undefined && r.costUsd > 0
@@ -339,7 +343,7 @@ export function renderRunResult(r: RunResult): string {
     if (why) lines.push(`Why: ${flat(why)}`);
   }
   if (r.budgetForced) lines.push("Best effort: the run's budget ran out before it finished.");
-  if (r.verification === "failed" && r.verificationReason)
+  if ((r.verification === "failed" || r.verification === "not_applicable") && r.verificationReason)
     lines.push(`Checks: ${flat(r.verificationReason)}`);
   // The edits already showed inline as they happened: the result names the files, /diff
   // shows the whole change again.

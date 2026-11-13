@@ -12,6 +12,7 @@ import {
 } from "./project-instructions";
 import { SANDBOX_RUN_NOTE } from "./sandbox-workspace";
 import { beginCodingRun, codingRunMetadata, endCodingRun } from "./task-run";
+import { observeWorkspaceState } from "./workspace-state";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
 const ACTIVE_MODAL_KEY = "active_modal";
@@ -154,6 +155,8 @@ export class CodeSessionDriver {
     actorEntity?: Entity;
     modelTarget?: string;
     verificationRequirement?: "candidate" | "checks" | "delivery";
+    /** Candidate only: verified means the repository's own gates passed. */
+    verificationGates?: "repository";
     ownerMode?: "unattended";
     planMode?: boolean;
     /** Wall-clock budget for a new tracked attempt (ms). */
@@ -183,6 +186,15 @@ export class CodeSessionDriver {
       );
     }
     const initialRun = this.deps.db.listCodingRuns({ sessionId: opts.session.id, limit: 1 })[0];
+    // A new attempt's baseline: what the workspace held before this task, so a task that
+    // changes nothing is recognized (and changes already present are not taken for its own).
+    // Observed before the re-checks below, which refuse if the session or attempt moved.
+    const initialWorkspace =
+      opts.actorEntity &&
+      opts.session.execution_target === "local" &&
+      initialRun?.status !== "active"
+        ? await observeWorkspaceState(opts.session.worktree_path ?? opts.session.workspace_root)
+        : undefined;
     const workerId = agent.getStatus().entityId;
     const instructions = await loadProjectInstructions({
       root: opts.session.worktree_path ?? opts.session.workspace_root,
@@ -233,8 +245,10 @@ export class CodeSessionDriver {
             modelTarget: opts.modelTarget,
             runtimeName: agent.name,
             verificationRequirement: opts.verificationRequirement,
+            verificationGates: opts.verificationGates,
             ownerMode: opts.ownerMode,
             budgetMs: opts.budgetMs,
+            initialWorkspace,
           })
         : undefined;
     const runMeta = run ? codingRunMetadata(run) : undefined;
@@ -247,13 +261,18 @@ export class CodeSessionDriver {
       : undefined;
     if (run) this.deps.onRun?.(run, agent);
     const requirement =
-      run && codingRunMetadata(run).verificationRequirement === "candidate"
-        ? "Completion requires current candidate verification: use marina_code verify with verificationMode=candidate, inspect its receipt/result, then summary. Early summaries remain progress. If blocked, use marina_code blocked with the reason; do not loop indefinitely. Honor existing operator authorization for bounded dependency preparation."
-        : run && codingRunMetadata(run).verificationRequirement === "delivery"
-          ? 'Completion requires delivery verification. Pass an inline JSON manifest {"files":["relative/output","relative/check-file"],"checks":["finite check command"]} naming every required output, dependency and check file. Use marina_code verify with verificationMode=delivery and manifestJson=<JSON object or string>; do not write a bookkeeping manifest into the workspace. Checks run with only those files in a clean directory under the configured runner. Add "requirements":[{"text":"<each explicit requirement in the task>","checks":[<check index>]}]: a mapped check must observe the requirement (measure the timing, ordering or output it names, against the delivered files), not restate it. Use {"text":…,"notCheckable":"<why>"} only when no finite check can. Unobserved requirements are reported UNVERIFIED. Inspect the result before summary. If blocked, use code blocked <reason>.'
-          : run && codingRunMetadata(run).verificationRequirement === "checks"
-            ? "Completion requires current task checks. Use code verify or a saved validation recipe; inspect the receipt before summary. Validate the requested artifact or service state, including failure cases; whitespace alone is insufficient. These are live checks, not immutable source evidence. If blocked, use code blocked <reason>."
-            : undefined;
+      run && codingRunMetadata(run).verificationGates === "repository"
+        ? `Completion requires the repository's own gates: marina_code verify with verificationMode=candidate runs the project's type-check, lint and tests on a snapshot of the whole repository (tests relevant to the change, then the full suite, which can take minutes: start it well before your deadline). Only that counts as verified; a saved recipe does not. Map each explicit requirement of the task to a check that observes it: manifestJson={"checks":["<test command>"],"requirements":[{"text":"<requirement>","checks":[0]}]} (no files; checks run in the snapshot before the gates; {"text":…,"notCheckable":"<why>"} only when no finite check can). Without requirements the result says "requirements not mapped". Inspect the result before summary. If blocked, use marina_code blocked with the reason.`
+        : run && codingRunMetadata(run).verificationRequirement === "candidate"
+          ? "Completion requires current candidate verification: use marina_code verify with verificationMode=candidate, inspect its receipt/result, then summary. Early summaries remain progress. If blocked, use marina_code blocked with the reason; do not loop indefinitely. Honor existing operator authorization for bounded dependency preparation."
+          : run && codingRunMetadata(run).verificationRequirement === "delivery"
+            ? 'Completion requires delivery verification. Pass an inline JSON manifest {"files":["relative/output","relative/check-file"],"checks":["finite check command"]} naming every required output, dependency and check file. Use marina_code verify with verificationMode=delivery and manifestJson=<JSON object or string>; do not write a bookkeeping manifest into the workspace. Checks run with only those files in a clean directory under the configured runner. Add "requirements":[{"text":"<each explicit requirement in the task>","checks":[<check index>]}]: a mapped check must observe the requirement (measure the timing, ordering or output it names, against the delivered files), not restate it. Use {"text":…,"notCheckable":"<why>"} only when no finite check can. Unobserved requirements are reported UNVERIFIED. Inspect the result before summary. If blocked, use code blocked <reason>.'
+            : run && codingRunMetadata(run).verificationRequirement === "checks"
+              ? "Completion requires current task checks. Use code verify or a saved validation recipe; inspect the receipt before summary. Validate the requested artifact or service state, including failure cases; whitespace alone is insufficient. These are live checks, not immutable source evidence. If blocked, use code blocked <reason>."
+              : undefined;
+    const noChanges = run
+      ? "For a question, investigation or confirmation that needs no file changes, submit the answer as the summary without verifying. Marina compares the workspace with its state at task start: if nothing changed, verification is recorded as not applicable (nothing to verify), never as a pass; changes already there before the task are named, not verified. Any file the task changed (even one later reverted) needs the normal verification."
+      : undefined;
     const ownership =
       run && codingRunMetadata(run).ownerMode === "unattended"
         ? `The owner is unattended. Progress notes need no ownership transfer. If you hand the write lock back to the owner while this task remains active, you are authorized to reclaim it with code writer ${worker!.name}. This does not authorize taking a collaborator's lock or restarting a finished task. No person can answer during this task: code blocked over ambiguity or conflicting requirements is answered at once with a directive to proceed; record each interpretation with code assume <text>. That grants no authority. Use code blocked kind:impossible <reason> only when required data, credentials or a working environment are missing.`
@@ -264,6 +283,7 @@ export class CodeSessionDriver {
       ? [
           `Task #${codingRunMetadata(run).taskId}; full request: code show ${run.id} (marina_code action=show, artifactId=${run.id}). Read the full request before editing; this reminder may be abbreviated.`,
           requirement,
+          noChanges,
           ownership,
           deadline,
           prompt,
@@ -288,9 +308,10 @@ export class CodeSessionDriver {
         ? "Plan mode: research and propose only. Do not edit, write, patch, or run mutagenic commands. Emit a concrete proposal — the files to change, why, and the checks that will verify the result. When exact earlier constraints or identifiers matter, use marina_code_artifacts and marina_code_show to inspect the original task request; do not treat a paraphrased summary as the source of truth."
         : undefined,
       requirement,
+      noChanges,
       ownership,
       run
-        ? `Task #${codingRunMetadata(run).taskId}; attempt artifact:${run.id}. Record a summary only after finishing checks. A stored summary submits the task for the requester to review.`
+        ? `Task #${codingRunMetadata(run).taskId}; attempt artifact:${run.id}. Record a summary after finishing the task and any applicable checks. A stored summary submits the task for the requester to review.`
         : undefined,
       // The terminal shows each change, the check verdict and the review commands
       // (scripts/code-presentation.ts); the reply explains, the summary keeps evidence ids.

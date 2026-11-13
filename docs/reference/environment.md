@@ -615,8 +615,8 @@ Script, test and CI knobs are in [docs/guides/testing.md](../guides/testing.md) 
 |---|---|---|
 | `MARINA_URL=ws://localhost:3300` | Server URL for `marina connect`, `marina status`, the ACP bridge (scripts/acp.ts) and the routing CLIs. Read by those clients, not the server. | internal |
 | `MARINA_TOKEN=` | Bearer token `marina status` and the routing CLIs send. Unset reuses the newest cached `marina connect` session for MARINA_URL. | secret, internal |
-| `MARINA_CODE_FRESH=`<br>`MARINA_CODE_TASK_TIMEOUT_MS=600000` | Folder launcher (`marina [dir]`, `bun run code`): `1` uses a throwaway database deleted on exit (same as --fresh) instead of ~/.marina/projects/&lt;slug&gt;/marina.db, and the one-shot `marina -p` timeout in milliseconds (on timeout it sends `code stop` and exits 2). | internal |
-| `MARINA_CODE_VERIFICATION=delivery` | The one-shot `marina -p` verification requirement when --verification is not given: checks (the project's own checks), candidate (a Git snapshot) or delivery (default: each stated requirement mapped to a check that observes it, else the run is reported unverified). | internal |
+| `MARINA_CODE_FRESH=`<br>`MARINA_CODE_TASK_TIMEOUT_MS=600000` | Folder launcher (`marina [dir]`, `bun run code`): `1` uses a throwaway database deleted on exit (same as --fresh) instead of ~/.marina/projects/&lt;slug&gt;/marina.db, and the one-shot `marina -p` timeout in milliseconds (on timeout it sends `code stop` and exits 2; unset: 600000, or 1200000 when the repository's gates verify the task). | internal |
+| `MARINA_CODE_VERIFICATION=` | The one-shot `marina -p` verification requirement when --verification is not given: checks (the project's own checks), candidate (the repository's own type-check, lint and tests on a Git snapshot, relevant tests then the full suite) or delivery (each stated requirement mapped to a check that observes it, else the run is reported unverified). Unset: candidate for a Git repository root with a detected test runner, delivery for any other folder. | internal |
 
 ## Set by Marina (do not set)
 

@@ -44,7 +44,7 @@ const verificationMode = Type.Optional(
     ],
     {
       description:
-        "live: workspace; start: background; candidate: Git snapshot; delivery: inline manifestJson files only. Inspect receipts using show/artifactId before summary.",
+        "live: workspace; start: background; candidate: Git snapshot (on a repository-gates task: the project's type-check, lint and tests, relevant then full suite; optional manifestJson {checks, requirements}); delivery: inline manifestJson files only. Inspect receipts using show/artifactId before summary.",
     },
   ),
 );
@@ -72,7 +72,7 @@ const scope = Type.Optional(
 const manifestJson = Type.Optional(
   Type.Union([Type.String(), Type.Record(Type.String(), Type.Unknown())], {
     description:
-      "delivery verify: inline manifest JSON object or string with files, checks and requirements. Pass bookkeeping here without creating a workspace file.",
+      "delivery verify: inline manifest JSON object or string with files, checks and requirements. candidate verify: {checks, requirements} only (no files): requirement checks run in the snapshot before the gates. Pass bookkeeping here without creating a workspace file.",
   }),
 );
 const manifest = Type.Optional(
@@ -809,9 +809,12 @@ function verificationCommand(
     throw new Error(`scope must be one of ${VERIFY_SCOPES.join(", ")}`);
   const hasManifest = manifest !== undefined;
   const hasInline = inlineManifest !== undefined;
-  if ((hasManifest && hasInline) || (mode === "delivery") !== (hasManifest || hasInline))
+  if (
+    (hasManifest && hasInline) ||
+    (mode === "candidate" ? hasManifest : (mode === "delivery") !== (hasManifest || hasInline))
+  )
     throw new Error(
-      "Delivery verification requires manifestJson or an existing manifest path, exclusively; other modes do not accept a manifest.",
+      "Delivery verification requires manifestJson or an existing manifest path, exclusively; candidate verification takes only manifestJson {checks, requirements}; other modes take neither.",
     );
   if (hasManifest && (typeof manifest !== "string" || !manifest || /\s/.test(manifest)))
     throw new Error("Manifest must be a path without whitespace.");
@@ -820,6 +823,10 @@ function verificationCommand(
     const value = typeof inlineManifest === "string" ? JSON.parse(inlineManifest) : inlineManifest;
     if (!value || typeof value !== "object" || Array.isArray(value))
       throw new Error("manifestJson must be a JSON object or an encoded JSON object.");
+    if (mode === "candidate" && "files" in value)
+      throw new Error(
+        "Candidate verification checks the whole repository snapshot: pass {checks, requirements} without files.",
+      );
     json = JSON.stringify(value);
   }
   return [

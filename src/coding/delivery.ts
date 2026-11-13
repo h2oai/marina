@@ -49,6 +49,11 @@ export interface DeliveryRequirement {
 export interface RequirementCoverage {
   /** False when the manifest lists no requirements at all. */
   listed: boolean;
+  /**
+   * Listing is optional (candidate verification on the repository's gates): an unlisted
+   * checklist means "requirements not mapped", reported apart, not an unverified result.
+   */
+  optional?: boolean;
   verified: string[];
   unverified: string[];
   notCheckable: { text: string; reason: string }[];
@@ -96,6 +101,45 @@ export function parseDeliveryManifest(value: unknown): DeliveryManifest {
     checks as string[],
   );
   return { files: paths, checks: checks as string[], ...(requirements ? { requirements } : {}) };
+}
+
+/** Candidate verification's requirement list: checks run in the repository snapshot, after
+ * which the repository's gates run; each requirement is mapped to the checks that observe it. */
+export interface RequirementChecks {
+  checks: string[];
+  requirements: DeliveryRequirement[];
+}
+
+export function parseRequirementChecks(json: string): RequirementChecks {
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    throw new Error("Requirement checks must be a JSON object.");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Requirement checks must be a JSON object.");
+  const { checks, files } = value as Record<string, unknown>;
+  if (files !== undefined)
+    throw new Error(
+      "Candidate verification checks the whole repository snapshot; do not list files (that is delivery's manifest).",
+    );
+  if (
+    !Array.isArray(checks) ||
+    !checks.length ||
+    checks.length > 8 ||
+    checks.some((check) => typeof check !== "string" || !check.trim() || check.length > 8192)
+  )
+    throw new Error("Requirement checks need 1–8 finite check commands.");
+  const requirements = parseRequirements(
+    (value as Record<string, unknown>).requirements,
+    checks as string[],
+  );
+  if (!requirements?.length)
+    throw new Error(
+      'List the task\'s requirements: "requirements":[{"text":…,"checks":[<check index>]}].',
+    );
+  return { checks: checks as string[], requirements };
 }
 
 function parseRequirements(value: unknown, checks: string[]): DeliveryRequirement[] | undefined {
@@ -176,13 +220,18 @@ export function requirementCoverage(
 
 /** True when every stated requirement is observed or explicitly marked not machine-checkable. */
 export function requirementsComplete(coverage: RequirementCoverage | undefined): boolean {
+  if (coverage?.optional && !coverage.listed) return true;
   return !coverage || (coverage.listed && coverage.unverified.length === 0);
 }
 
 /** The reviewer-facing lines for a coverage record. */
 export function requirementLines(coverage: RequirementCoverage): string[] {
   return [
-    ...(coverage.listed ? [] : ["UNVERIFIED: no acceptance checklist (manifest requirements)"]),
+    ...(coverage.listed
+      ? []
+      : coverage.optional
+        ? ["requirements not mapped: no requirement was mapped to a check"]
+        : ["UNVERIFIED: no acceptance checklist (manifest requirements)"]),
     ...coverage.verified.map((text) => `verified: ${text}`),
     ...coverage.notCheckable.map(
       ({ text, reason }) => `not machine-checkable: ${text} (${reason})`,

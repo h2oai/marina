@@ -48,6 +48,7 @@ export function parseCodingTask(raw: string) {
       owner: { type: "string" },
       mode: { type: "string" },
       budget: { type: "string" },
+      gates: { type: "string" },
     },
     { leading: true },
   );
@@ -59,10 +60,12 @@ export function parseCodingTask(raw: string) {
     (parsed.values.verification !== undefined &&
       !["candidate", "checks", "delivery"].includes(String(parsed.values.verification))) ||
     (parsed.values.owner !== undefined && parsed.values.owner !== "unattended") ||
-    (parsed.values.mode !== undefined && parsed.values.mode !== "plan")
+    (parsed.values.mode !== undefined && parsed.values.mode !== "plan") ||
+    (parsed.values.gates !== undefined &&
+      (parsed.values.gates !== "repository" || parsed.values.verification !== "candidate"))
   )
     throw new Error(
-      "Usage: code do [verification:candidate|checks|delivery] [owner:unattended] [mode:plan] [budget:<duration>] -- <task>",
+      "Usage: code do [verification:candidate [gates:repository]|checks|delivery] [owner:unattended] [mode:plan] [budget:<duration>] -- <task>",
     );
   return {
     prompt: parsed.rest.join(" ").trim(),
@@ -72,6 +75,7 @@ export function parseCodingTask(raw: string) {
       | "delivery"
       | undefined,
     ownerMode: parsed.values.owner as "unattended" | undefined,
+    ...(parsed.values.gates === "repository" ? { verificationGates: "repository" as const } : {}),
     ...(parsed.values.mode === "plan" ? { planMode: true } : {}),
     ...(budgetMs ? { budgetMs } : {}),
   };
@@ -147,9 +151,8 @@ export async function assignCode(
   const resolved = resolveSession(ctx, eid, entity, deps.db);
   if (!resolved) return;
   const agentName = args[0];
-  const { prompt, verificationRequirement, ownerMode, planMode, budgetMs } = parseCodingTask(
-    args.slice(1).join(" "),
-  );
+  const { prompt, verificationRequirement, verificationGates, ownerMode, planMode, budgetMs } =
+    parseCodingTask(args.slice(1).join(" "));
   if (!sameEntityName(resolved.created_by, entity.name))
     throw new Error("Only the coding session creator may dispatch its task.");
   // Bind the worktree before the coder loads, never while it works.
@@ -170,6 +173,7 @@ export async function assignCode(
     profile: profile.name,
     prompt,
     verificationRequirement,
+    verificationGates,
     ownerMode,
     planMode,
     budgetMs,
@@ -241,6 +245,7 @@ export async function doCode(
   const {
     prompt: task,
     verificationRequirement,
+    verificationGates,
     ownerMode,
     planMode,
     budgetMs,
@@ -353,6 +358,7 @@ export async function doCode(
       profile: profile.name,
       prompt: task,
       verificationRequirement,
+      verificationGates,
       ownerMode,
       planMode,
       budgetMs,

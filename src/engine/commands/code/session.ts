@@ -663,6 +663,7 @@ export async function status(
               ]
             : []),
           `Recorded verification: ${runMeta.verification ?? "not yet submitted"}`,
+          ...(runMeta.verificationReason ? [runMeta.verificationReason] : []),
           ...(runMeta.verificationRequirement
             ? [`Required verification: ${runMeta.verificationRequirement}`]
             : []),
@@ -710,6 +711,7 @@ export async function status(
       acceptedUnverified: !!runMeta?.unverifiedAcceptance,
       ...worker,
       verification: runMeta?.verification,
+      verificationReason: runMeta?.verificationReason,
       verificationRequirement: runMeta?.verificationRequirement,
       verificationReadiness: run ? codingVerificationReadiness(deps.db, run, runMeta) : undefined,
       profile: getCodeProfile(entity).name,

@@ -12,6 +12,7 @@ import type { Entity, EntityId } from "../types";
 import { CANDIDATE_POLICY, type CandidateIdentity, observeCandidate } from "./candidate";
 import {
   type DeliveryEvidence,
+  type DeliveryRequirement,
   deliveryFingerprint,
   type RequirementCoverage,
   readDeliveryManifest,
@@ -21,6 +22,12 @@ import {
 } from "./delivery";
 import { LocalWorkspace } from "./local-workspace";
 import { candidateVerificationRetry } from "./verification-plan";
+import {
+  compareWorkspaceState,
+  noChangeReason,
+  observeWorkspaceState,
+  type WorkspaceState,
+} from "./workspace-state";
 
 export interface CodingRunMetadata {
   version: 1;
@@ -37,9 +44,18 @@ export interface CodingRunMetadata {
   workspace: string;
   executionTarget: string;
   workspaceEventId?: string;
+  /** Observed once before the attempt's dispatch; a missing or failed observation never
+   * waives verification (`compareWorkspaceState`). */
+  initialWorkspace?: WorkspaceState;
   summaryId?: string;
   /** Frozen owner intent for this attempt; omission preserves ordinary task behavior. */
   verificationRequirement?: "candidate" | "checks" | "delivery";
+  /**
+   * Candidate only: `verified` means the repository's own gates passed on the snapshot (the
+   * detected project's type-check, lint and tests, relevant tests then the full suite), never
+   * a recipe the coder chose, plus every listed requirement's mapped check.
+   */
+  verificationGates?: "repository";
   /** Owner preauthorizes only its active worker to reclaim an owner-held lock. */
   ownerMode?: "unattended";
   /** Interpretations made where no person could answer (`code assume`, answered blocks). */
@@ -50,6 +66,7 @@ export interface CodingRunMetadata {
   verificationId?: string;
   verification?:
     | "passed"
+    | "not_applicable"
     | "failed"
     | "not_run"
     | "error"
@@ -170,10 +187,13 @@ export function beginCodingRun(
     modelTarget?: string;
     runtimeName?: string;
     verificationRequirement?: "candidate" | "checks" | "delivery";
+    verificationGates?: "repository";
     /** Owner preauthorizes only its active worker to reclaim an owner-held lock. */
     ownerMode?: "unattended";
     /** Wall-clock budget for a new attempt (ms); a steered active attempt keeps its own. */
     budgetMs?: number;
+    /** The workspace observed just before dispatch (`observeWorkspaceState`). */
+    initialWorkspace?: WorkspaceState;
   },
 ): CodingArtifactRow {
   return db.transaction(() => {
@@ -185,6 +205,8 @@ export function beginCodingRun(
     }
     if (input.verificationRequirement === "candidate" && input.session.execution_target !== "local")
       throw new Error("Candidate-required tasks need a local Git workspace.");
+    if (input.verificationGates && input.verificationRequirement !== "candidate")
+      throw new Error("Repository gates apply to candidate verification only.");
     const workerKey = db.durableEntityKey(input.worker.id);
     const ownerKey = db.durableEntityKey(input.owner.id);
     const active = db.listCodingRuns({
@@ -200,8 +222,9 @@ export function beginCodingRun(
         );
       }
       if (
-        input.verificationRequirement &&
-        meta.verificationRequirement !== input.verificationRequirement
+        (input.verificationRequirement &&
+          meta.verificationRequirement !== input.verificationRequirement) ||
+        (input.verificationGates && meta.verificationGates !== input.verificationGates)
       )
         throw new Error(
           "This attempt's verification contract is already set. Stop it before changing the verification requirement.",
@@ -252,6 +275,14 @@ export function beginCodingRun(
       workspace: input.session.workspace_root,
       executionTarget: input.session.execution_target,
       verificationRequirement: input.verificationRequirement,
+      ...(input.verificationGates ? { verificationGates: input.verificationGates } : {}),
+      initialWorkspace:
+        input.session.execution_target !== "local"
+          ? { version: 2, reason: "workspace observation is unavailable for this execution target" }
+          : (input.initialWorkspace ?? {
+              version: 2,
+              reason: "the workspace was not observed before dispatch",
+            }),
       ownerMode: input.ownerMode,
       ...(input.budgetMs && input.budgetMs > 0 ? budgetWindow(input.budgetMs) : {}),
     };
@@ -360,7 +391,7 @@ export async function submitCodingRun(
     // reported as verified unless its checks passed.
     const forced = stop ?? budgetForcedAt(meta, Date.now());
     if (forced) meta.budgetForced = forced;
-    if (!forced && meta.verificationRequirement && meta.verification !== "passed") {
+    if (!forced && meta.verificationRequirement && !codingVerificationSatisfied(meta)) {
       db.updateCodingArtifact(run.id, { metadata: meta });
       db.createCodingEvent({
         sessionId,
@@ -372,7 +403,8 @@ export async function submitCodingRun(
     }
     if (
       !forced &&
-      meta.verificationRequirement === "delivery" &&
+      meta.verification !== "not_applicable" &&
+      (meta.verificationRequirement === "delivery" || meta.requirements) &&
       !requirementsComplete(meta.requirements) &&
       (meta.requirementRefusals ?? 0) < REQUIREMENT_REFUSALS
     ) {
@@ -391,7 +423,7 @@ export async function submitCodingRun(
     const submittedFor = member
       ? `\nSubmitted by: ${worker.name}, member of crew ${member.name}, for the lead ${meta.workerName}`
       : "";
-    const evidence = `${summary.content_text}${requirements.length ? `\n\nRequirements:\n${requirements.map((line) => `- ${line}`).join("\n")}` : ""}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${verification ? ` (artifact:${verification.id})` : ""}${submittedFor}${forced ? `\n${budgetForcedLine(forced)}` : ""}${assumed.length ? `\nAssumptions (no person could answer):\n${assumed.join("\n")}` : ""}`;
+    const evidence = `${summary.content_text}${requirements.length ? `\n\nRequirements:\n${requirements.map((line) => `- ${line}`).join("\n")}` : ""}\n\nCoding attempt: artifact:${run.id}\nSummary: artifact:${summary.id}\nRecorded verification: ${meta.verification}${meta.verificationReason ? ` — ${meta.verificationReason}` : ""}${verification ? ` (artifact:${verification.id})` : ""}${submittedFor}${forced ? `\n${budgetForcedLine(forced)}` : ""}${assumed.length ? `\nAssumptions (no person could answer):\n${assumed.join("\n")}` : ""}`;
     const claim = codingRunClaim(db, run);
     if (!claim || !tasks.submit(meta.taskId, claim.entity_id, evidence)) {
       throw new Error(
@@ -418,12 +450,18 @@ function latestVerification(db: MarinaDB, runId: string) {
     );
 }
 
+/** A no-change answer satisfies submission/review without claiming checks passed. */
+export function codingVerificationSatisfied(meta: Pick<CodingRunMetadata, "verification">) {
+  return meta.verification === "passed" || meta.verification === "not_applicable";
+}
+
 /** UI projection of a fresh assessment, never a substitute for the submission check. */
 export function codingVerificationReadiness(
   db: MarinaDB,
   run: CodingArtifactRow,
   meta = codingRunMetadata(run),
 ) {
+  if (meta.verification === "not_applicable") return "not-applicable" as const;
   if (latestVerification(db, run.id)?.status === "running") return "running" as const;
   if (meta.verification === "passed") return "ready" as const;
   if (meta.verification === "not_run") return "not-run" as const;
@@ -470,6 +508,26 @@ export async function assessCodingVerification(
     verificationReason: undefined,
     requirements: undefined,
   };
+  const session = db.getCodingSession(run.session_id);
+  // A task that changed nothing has nothing to verify. The comparison is with the workspace
+  // as observed before dispatch; a missing observation keeps the normal requirement.
+  if (
+    allowHostObservation &&
+    meta.initialWorkspace &&
+    session?.execution_target === "local" &&
+    meta.executionTarget === "local"
+  ) {
+    const comparison = compareWorkspaceState(
+      meta.initialWorkspace,
+      await observeWorkspaceState(session.worktree_path ?? session.workspace_root),
+    );
+    if (comparison.kind === "unchanged")
+      return {
+        ...result,
+        verification: "not_applicable" as const,
+        verificationReason: noChangeReason(comparison),
+      };
+  }
   if (!verification)
     return {
       ...result,
@@ -593,6 +651,13 @@ export async function assessCodingVerification(
       verificationReason:
         "This task requires delivery verification. Pass the deliverable files, checks and requirements as inline JSON with code verify delivery -- <manifest JSON> (marina_code verificationMode=delivery, manifestJson). Do not create a bookkeeping manifest in the workspace.",
     };
+  if (meta.verificationGates === "repository" && evidence.gates !== "repository")
+    return {
+      ...result,
+      verification: "unbound" as const,
+      verificationReason:
+        "This task is verified only by the repository's own gates. Run code verify candidate (marina_code verify verificationMode=candidate): it runs the project's type-check, lint and tests on a snapshot, relevant tests then the full suite. Inspect the result, then submit.",
+    };
   if (!evidence.candidateId && evidence.workspaceEventId !== meta.workspaceEventId)
     return {
       ...result,
@@ -627,7 +692,6 @@ export async function assessCodingVerification(
     };
   result.candidateId = row.id;
   const candidate = JSON.parse(row.metadata_json) as CandidateIdentity & { runId?: string };
-  const session = db.getCodingSession(run.session_id);
   if (
     candidate.version !== 1 ||
     candidate.policy !== CANDIDATE_POLICY ||
@@ -668,6 +732,15 @@ export async function assessCodingVerification(
     )
       throw new Error("Candidate workspace binding changed during observation.");
     result.verification = current === candidate.fingerprint ? "passed" : "stale";
+    // Requirements mapped to checks that ran in this snapshot (candidate requirement list).
+    if (result.verification === "passed" && Array.isArray(evidence.requirements))
+      result.requirements = {
+        ...requirementCoverage(
+          { requirements: evidence.requirements as DeliveryRequirement[] },
+          steps,
+        ),
+        ...(evidence.gates === "repository" ? { optional: true } : {}),
+      };
     if (result.verification === "stale")
       result.verificationReason = `Included source changed since snapshot verification. Run ${retry} and inspect the completed receipt before resubmitting.`;
   } catch (error) {

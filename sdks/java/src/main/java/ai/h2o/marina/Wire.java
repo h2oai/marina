@@ -22,9 +22,21 @@ public final class Wire {
   public static final List<String> CODING_ACTIVITY_KINDS =
       List.of("read", "search", "edit", "write", "patch", "run", "verify", "plan", "summary", "other");
 
-  /** What the checks said. Only {@code passed} means checks ran on the change and passed. */
+  /**
+   * What the checks said. Only {@code passed} means checks ran on the change and passed; {@code
+   * not_applicable}: the task changed no files, so there was nothing to verify.
+   */
   public static final List<String> VERIFICATIONS =
-      List.of("passed", "failed", "not_run", "error", "missing", "stale", "unbound", "unavailable");
+      List.of(
+          "passed",
+          "not_applicable",
+          "failed",
+          "not_run",
+          "error",
+          "missing",
+          "stale",
+          "unbound",
+          "unavailable");
 
   /** How a run ended. {@code submitted}: the coder handed the change in for review. */
   public static final List<String> RUN_OUTCOMES =

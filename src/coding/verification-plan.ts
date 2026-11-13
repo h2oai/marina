@@ -893,6 +893,12 @@ export interface StepPlan {
   /** Why the test scope is what it is (recorded with the result). */
   scopeNote: string;
   relevant?: RelevantTests;
+  /**
+   * Repository gates: every planned step must run and pass. A full suite that does not
+   * finish within its budget, or a type-check whose tool is missing, leaves the verification
+   * `not_run`: never passed on the scoped tests alone.
+   */
+  repositoryGates?: boolean;
 }
 
 /** Steps for stored recipe commands: run as written, test commands recognized by shape. */
@@ -1074,6 +1080,7 @@ export function aggregateVerification(input: {
   steps: { step: VerificationStep; outcome: StepOutcome }[];
   testsPlanned: boolean;
   scopeNote?: string;
+  repositoryGates?: boolean;
 }): VerificationVerdict {
   const { preparation, steps } = input;
   if (preparation?.status === "not_run") return { outcome: "not_run", reason: preparation.reason };
@@ -1095,6 +1102,14 @@ export function aggregateVerification(input: {
         : (input.scopeNote ?? "no tests ran"),
     };
   }
+  const unfinished = input.repositoryGates
+    ? steps.find((s) => s.outcome.outcome !== "passed")
+    : undefined;
+  if (unfinished)
+    return {
+      outcome: "not_run",
+      reason: `${unfinished.step.command}: ${unfinished.outcome.reason} (every repository gate must run and pass)`,
+    };
   const blocking = steps.filter(
     (s) => s.step.role !== "typecheck" && s.outcome.outcome === "not_run",
   );

@@ -565,8 +565,12 @@ export async function planVerification(
   options: VerificationOptions,
   candidate = false,
   knownTouched?: readonly string[],
+  /** Repository gates: the detected project's own checks, never a stored recipe. */
+  gates = false,
 ): Promise<VerificationRun> {
-  const recipe = await resolveRecipeCommands(deps.db, session, workspace, "default");
+  const recipe = gates
+    ? undefined
+    : await resolveRecipeCommands(deps.db, session, workspace, "default");
   if (session.execution_target !== "local") {
     const commands = recipe ?? ["git diff --check"];
     return { commands, steps: recipeSteps(commands), options };
@@ -609,7 +613,10 @@ export async function planVerification(
       ? { files: [], reasons: [], packages: [] }
       : findRelevantTests(root, profile, touched);
   const exists = (path: string) => existsSync(join(root, path));
-  const steps = detectedSteps({ profile, options, touched, relevant, exists });
+  const steps = {
+    ...detectedSteps({ profile, options, touched, relevant, exists }),
+    ...(gates ? { repositoryGates: true } : {}),
+  };
   // pytest may be missing where the checks run: plan the switch now, so the
   // fallback commands are known (and admitted) before anything spawns.
   let fallback: VerificationRun["fallback"];
@@ -624,6 +631,7 @@ export async function planVerification(
     });
     const fallbackSteps: StepPlan = {
       ...planned,
+      ...(gates ? { repositoryGates: true } : {}),
       steps: planned.steps.map((step) =>
         step.role === "tests" || step.role === "full-tests"
           ? { ...step, requireTestCount: true }
@@ -761,6 +769,7 @@ export async function runVerificationCommands(
     steps: ran,
     testsPlanned: stepPlan.testsPlanned,
     scopeNote: stepPlan.scopeNote,
+    repositoryGates: stepPlan.repositoryGates,
   });
   const results = ran.flatMap((item) => (item.stored ? [item.stored] : []));
   const failedRun = ran.find((item) => item.outcome.outcome === verdict.outcome && item.stored);
@@ -771,11 +780,20 @@ export async function runVerificationCommands(
   const relevant = stepPlan.relevant;
   // Delivery receipts say which stated requirements these steps observed (index-aligned).
   const coverage = Array.isArray(candidateEvidence?.requirements)
-    ? requirementCoverage(
-        { requirements: candidateEvidence.requirements as DeliveryRequirement[] },
-        ran.map((item) => ({ command: item.command, outcome: item.outcome.outcome })),
-      )
+    ? {
+        ...requirementCoverage(
+          { requirements: candidateEvidence.requirements as DeliveryRequirement[] },
+          ran.map((item) => ({ command: item.command, outcome: item.outcome.outcome })),
+        ),
+        // On the repository's gates a requirement list is optional: none is "not mapped".
+        ...(candidateEvidence.gates === "repository" ? { optional: true } : {}),
+      }
     : undefined;
+  const coverageLines = coverage
+    ? `\nRequirements:\n${requirementLines(coverage)
+        .map((line) => `- ${line}`)
+        .join("\n")}`
+    : "";
   const summary =
     (preparationArtifact
       ? `Dependency preparation: ${preparationArtifact.status} (${preparationArtifact.id}).${blocked ? " Checks were not run." : preparation?.policy ? " Install scripts disabled." : ""}\n`
@@ -789,15 +807,9 @@ export async function runVerificationCommands(
       ? `\n${dim(`Scope: ${stepPlan.scopeNote}.${relevant?.files.length ? ` Relevant tests: ${relevant.files.slice(0, 8).join(", ")}${relevant.files.length > 8 ? ", …" : ""}` : ""}`)}`
       : "") +
     (candidateEvidence?.delivery
-      ? `\nDelivery checks used only the manifest's files in a clean working directory under the configured runner. The manifest content, inventory and digests are saved. Check coverage and task acceptance still require review.${
-          coverage
-            ? `\nRequirements:\n${requirementLines(coverage)
-                .map((line) => `- ${line}`)
-                .join("\n")}`
-            : ""
-        }`
+      ? `\nDelivery checks used only the manifest's files in a clean working directory under the configured runner. The manifest content, inventory and digests are saved. Check coverage and task acceptance still require review.${coverageLines}`
       : candidateEvidence
-        ? `\nCandidate evidence: ${candidateEvidence.freshness}. Source snapshot: ${candidateEvidence.candidateId}.\nRecipe: ${candidateEvidence.recipeType}.${typeof candidateEvidence.observedAt === "number" ? `\nObserved: ${new Date(candidateEvidence.observedAt).toISOString()}` : ""}${candidateEvidence.freshnessReason ? `\n${candidateEvidence.freshnessReason}` : ""}`
+        ? `${candidateEvidence.gates === "repository" ? "\nRepository gates: the project's own checks on the whole snapshot." : ""}${coverageLines}\nCandidate evidence: ${candidateEvidence.freshness}. Source snapshot: ${candidateEvidence.candidateId}.\nRecipe: ${candidateEvidence.recipeType}.${typeof candidateEvidence.observedAt === "number" ? `\nObserved: ${new Date(candidateEvidence.observedAt).toISOString()}` : ""}${candidateEvidence.freshnessReason ? `\n${candidateEvidence.freshnessReason}` : ""}`
         : "\nLive-workspace check results; no immutable candidate binding.");
   const runner = (background?.workspace ?? plan?.workspace)?.describe?.().runner;
   const artifact = deps.db.createCodingArtifact({

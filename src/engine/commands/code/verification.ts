@@ -9,6 +9,7 @@ import {
   type DeliveryManifestSource,
   deliveryFingerprint,
   prepareDeliveryMount,
+  type RequirementChecks,
   readDeliveryManifest,
 } from "../../../coding/delivery";
 import { LocalWorkspace, normalizeAllowedCodeCommand } from "../../../coding/local-workspace";
@@ -51,6 +52,12 @@ export async function startVerification(
   candidate = false,
   options: VerificationOptions = resolveVerificationOptions(),
   deliveryManifest?: DeliveryManifestSource,
+  candidateOptions: {
+    /** Run the repository's own gates (`gates:repository`). */
+    gates?: boolean;
+    /** Requirement checks to run in the snapshot before the gates, with their mapping. */
+    requirementChecks?: RequirementChecks;
+  } = {},
 ): Promise<void> {
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
@@ -72,6 +79,28 @@ export async function startVerification(
       "Delivery verification needs mount sync to exclude undeclared workspace files. Patch sync cannot establish that boundary.",
     );
   const runId = codingRunContext.getStore()?.runId;
+  const activeRun = runId ? deps.db.getCodingArtifact(runId) : undefined;
+  // A task that requires the repository's gates gets them from plain `code verify candidate`.
+  const gates =
+    candidate &&
+    (candidateOptions.gates === true ||
+      (activeRun?.kind === "task_run" &&
+        codingRunMetadata(activeRun).verificationGates === "repository"));
+  if (candidateOptions.requirementChecks && !candidate)
+    throw new Error("Requirement checks belong to candidate verification.");
+  if (gates)
+    // The gates: type-check where configured, relevant tests then the full suite, and
+    // dependencies prepared in the snapshot unless the coder named a manager.
+    options = {
+      ...options,
+      scope: options.scope === "full" ? "full" : "changed+full",
+      typecheck: "auto",
+      dependencies:
+        options.dependencies === "check" || options.dependencies === "none"
+          ? "auto"
+          : options.dependencies,
+    };
+  const requirementChecks = candidateOptions.requirementChecks;
   const beforeSpawn = () => {
     const actor = deps.getEntity(eid);
     const current = deps.db.getCodingSession(session.id);
@@ -106,8 +135,12 @@ export async function startVerification(
     : undefined;
   const livePlan = delivery
     ? { commands: delivery.manifest.checks, steps: recipeSteps(delivery.manifest.checks), options }
-    : await planVerification(deps, session, workspace, options, candidate);
-  const commands = livePlan.commands.map(forCandidate);
+    : await planVerification(deps, session, workspace, options, candidate, undefined, gates);
+  if (gates && (!("language" in livePlan) || !livePlan.language))
+    throw new Error(
+      "Repository gates need a detected test runner (package.json test script, pytest, cargo, go, maven or gradle); none was found in this workspace.",
+    );
+  const commands = [...(requirementChecks?.checks ?? []), ...livePlan.commands].map(forCandidate);
   assertBoundedVerification(commands);
   // A planned pytest fallback is admitted on the same allowlist before anything runs.
   // Under the sandbox runner every check runs in the sandbox (any command, like
@@ -269,17 +302,36 @@ export async function startVerification(
           options,
           true,
           livePlan.touched,
+          gates,
         );
+        // Requirement checks run first, so their indexes are the requirements' step indexes.
+        const required = requirementChecks ? recipeSteps(requirementChecks.checks).steps : [];
+        const withRequired = (steps: typeof snapshotPlan.steps) => ({
+          ...steps,
+          testsPlanned: steps.testsPlanned || required.some((step) => step.role === "tests"),
+          steps: [...required, ...steps.steps].map((step) => ({
+            ...step,
+            command: forCandidate(step.command),
+          })),
+        });
         const plan = {
           ...snapshotPlan,
-          commands: snapshotPlan.commands.map(forCandidate),
-          steps: {
-            ...snapshotPlan.steps,
-            steps: snapshotPlan.steps.steps.map((step) => ({
-              ...step,
-              command: forCandidate(step.command),
-            })),
-          },
+          commands: [...(requirementChecks?.checks ?? []), ...snapshotPlan.commands].map(
+            forCandidate,
+          ),
+          steps: withRequired(snapshotPlan.steps),
+          ...(snapshotPlan.fallback
+            ? {
+                fallback: {
+                  ...snapshotPlan.fallback,
+                  commands: [
+                    ...(requirementChecks?.checks ?? []),
+                    ...snapshotPlan.fallback.commands,
+                  ],
+                  steps: withRequired(snapshotPlan.fallback.steps),
+                },
+              }
+            : {}),
         };
         const runner = prepared.describe().runner;
         return await runVerificationCommands(
@@ -297,6 +349,11 @@ export async function startVerification(
             candidateId: captured.id,
             candidateEvidence: async () => {
               const evidence: Record<string, unknown> = {
+                ...(gates ? { gates: "repository" } : {}),
+                ...(gates || requirementChecks
+                  ? { requirements: requirementChecks?.requirements ?? [] }
+                  : {}),
+                ...(requirementChecks ? { requirementChecks: requirementChecks.checks } : {}),
                 candidateId: captured.id,
                 tree: snapshot.candidate.tree,
                 candidateFingerprint: snapshot.candidate.fingerprint,
@@ -372,6 +429,7 @@ export async function startVerification(
         run && assessment && codingVerificationUnchanged(deps.db, run, assessment.verificationId);
       const state = fresh ? { ...codingRunMetadata(run), ...assessment } : undefined;
       const meta = parseJsonObject(completed.metadata_json);
+      const gateReport = gates ? repositoryGateReport(deps.db, meta) : undefined;
       notifyParticipants(
         [
           `Background verification ${completed.status}: ${completed.id}`,
@@ -386,6 +444,7 @@ export async function startVerification(
           event: "verification_finished",
           metadata: {
             runId,
+            ...(gateReport ? { gates: gateReport } : {}),
             ...state,
             verificationReadiness: fresh
               ? codingVerificationReadiness(deps.db, run, state)
@@ -425,4 +484,40 @@ export async function startVerification(
       commands: [`code show ${receipt.id}`],
     },
   );
+}
+
+/**
+ * What a repository-gate verification found, from its stored result: the verdict, whether
+ * the snapshot still matches the workspace, and each gate. Sent with `verification_finished`
+ * so a client that ran the gates outside a task attempt (a native one-shot) can report them.
+ */
+export function repositoryGateReport(db: MarinaDB, receipt: Record<string, unknown>) {
+  const result =
+    typeof receipt.resultArtifactId === "string"
+      ? db.getCodingArtifact(receipt.resultArtifactId)
+      : undefined;
+  if (!result)
+    return {
+      outcome: "error",
+      reason:
+        typeof receipt.outcomeReason === "string"
+          ? receipt.outcomeReason
+          : "The verification left no result.",
+    };
+  const evidence = parseJsonObject(result.metadata_json);
+  const steps = Array.isArray(evidence.steps) ? evidence.steps : [];
+  return {
+    outcome: typeof evidence.outcome === "string" ? evidence.outcome : result.status,
+    reason: typeof evidence.outcomeReason === "string" ? evidence.outcomeReason : undefined,
+    gates: evidence.gates === "repository",
+    freshness: typeof evidence.freshness === "string" ? evidence.freshness : "unavailable",
+    workspace: typeof receipt.workspace === "string" ? receipt.workspace : undefined,
+    resultId: result.id,
+    steps: steps.map((step: Record<string, unknown>) => ({
+      command: Array.isArray(step.command) ? step.command.join(" ") : String(step.command ?? ""),
+      role: step.role,
+      outcome: step.outcome,
+      reason: step.reason,
+    })),
+  };
 }

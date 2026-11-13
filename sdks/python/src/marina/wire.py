@@ -30,8 +30,19 @@ CODING_ACTIVITY_KINDS = (
     "summary",
     "other",
 )
-#: What the checks said. Only `passed` means checks ran on the change and passed.
-VERIFICATIONS = ("passed", "failed", "not_run", "error", "missing", "stale", "unbound", "unavailable")
+#: What the checks said. Only `passed` means checks ran on the change and passed;
+#: `not_applicable`: the task changed no files, so there was nothing to verify.
+VERIFICATIONS = (
+    "passed",
+    "not_applicable",
+    "failed",
+    "not_run",
+    "error",
+    "missing",
+    "stale",
+    "unbound",
+    "unavailable",
+)
 #: How a run ended. `submitted`: the coder finished and handed the change in for review.
 RUN_OUTCOMES = ("submitted", "failed", "cancelled", "interrupted")
 
