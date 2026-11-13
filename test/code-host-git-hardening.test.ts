@@ -412,14 +412,16 @@ describe("host git never runs the repository's content drivers", () => {
       "filter.nbs.smudge=",
       "filter.nbs.process=",
       "filter.nbs.required=false",
-      "diff.t.command=true",
-      "diff.external=true",
-      "merge.m.driver=false",
     ])
       expect(args).toContain(value);
-    expect(args.some((a) => /^diff\.t\.textconv=(\/usr\/bin\/cat|\/bin\/cat|true)$/.test(a))).toBe(
-      true,
-    );
+    // Every program is absolute: git resolves a bare name through PATH.
+    for (const pattern of [
+      /^diff\.t\.textconv=\/(usr\/)?bin\/cat$/,
+      /^diff\.t\.command=\/(usr\/)?bin\/true$/,
+      /^diff\.external=\/(usr\/)?bin\/true$/,
+      /^merge\.m\.driver=\/(usr\/)?bin\/false$/,
+    ])
+      expect(args.some((a) => pattern.test(a))).toBe(true);
     expect(hostGitDriverOverrides(scratch)).toEqual([]);
     git(repo, "config", "filter.a=b.clean", "x");
     expect(() => hostGitDriverOverrides(repo)).toThrow(/cannot be overridden safely/);

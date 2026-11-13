@@ -74,9 +74,17 @@ export function hostGitEnv(extra: Record<string, string> = {}): Record<string, s
   };
 }
 
-/** A passthrough textconv: an absolute `cat` (never resolved through PATH), else the shell builtin. */
-const PASSTHROUGH_TEXTCONV =
-  ["/usr/bin/cat", "/bin/cat"].find((path) => existsSync(path)) ?? "true";
+/**
+ * Absolute programs for the driver overrides. Git runs a command string with no
+ * shell metacharacters through PATH, so a bare `cat`/`true`/`false` could resolve
+ * to a work-tree file when the server's PATH has a relative entry. None found:
+ * fail closed rather than fall back to PATH.
+ */
+function absoluteProgram(name: string): string {
+  const found = [`/usr/bin/${name}`, `/bin/${name}`].find((path) => existsSync(path));
+  if (!found) throw new Error(`Host git hardening needs /usr/bin/${name} or /bin/${name}.`);
+  return found;
+}
 
 /**
  * `-c` overrides that switch off every content driver the repository's config
@@ -86,9 +94,11 @@ const PASSTHROUGH_TEXTCONV =
  * - `filter.<n>.clean|smudge|process` empty and `required=false`: no program
  *   runs and content is hashed as stored;
  * - `diff.<n>.textconv` an absolute `cat` (a passthrough), `diff.<n>.command`
- *   and `diff.external` the shell builtin `true`;
- * - `merge.<n>.driver` the shell builtin `false`, so a merge that would use
- *   it reports a conflict instead of running anything.
+ *   and `diff.external` an absolute `true`;
+ * - `merge.<n>.driver` an absolute `false`, so a merge that would use it
+ *   reports a conflict instead of running anything.
+ * All three are absolute paths (`absoluteProgram`): git looks a bare command
+ * name up on PATH, which could name a work-tree file.
  * Driver names come from `git config --get-regexp`, which reads configuration
  * (including its includes) without running anything. Global and system config
  * are already off for host git (`hostGitEnv`). A driver name git's `-c` syntax
@@ -129,18 +139,16 @@ export function hostGitDriverOverrides(cwd: string): string[] {
     else if (section === "merge") merges.add(name);
   }
   const args: string[] = [];
+  const cat = diffs.size ? absoluteProgram("cat") : "";
+  const yes = diffs.size || external ? absoluteProgram("true") : "";
+  const no = merges.size ? absoluteProgram("false") : "";
   for (const name of filters)
     for (const setting of ["clean=", "smudge=", "process=", "required=false"])
       args.push("-c", `filter.${name}.${setting}`);
   for (const name of diffs)
-    args.push(
-      "-c",
-      `diff.${name}.textconv=${PASSTHROUGH_TEXTCONV}`,
-      "-c",
-      `diff.${name}.command=true`,
-    );
-  if (external) args.push("-c", "diff.external=true");
-  for (const name of merges) args.push("-c", `merge.${name}.driver=false`);
+    args.push("-c", `diff.${name}.textconv=${cat}`, "-c", `diff.${name}.command=${yes}`);
+  if (external) args.push("-c", `diff.external=${yes}`);
+  for (const name of merges) args.push("-c", `merge.${name}.driver=${no}`);
   return args;
 }
 
