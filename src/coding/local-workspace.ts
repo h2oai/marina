@@ -34,7 +34,7 @@ import { insideRoot, type WorkspaceFileGrant } from "./workspace-file-grants";
 const DEFAULT_MAX_READ_BYTES = 64 * 1024;
 const DEFAULT_MAX_LIST_ENTRIES = 200;
 const DEFAULT_MAX_SEARCH_RESULTS = 80;
-const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
+export const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 /** New files listed in one diff at most; the rest are counted as truncated. */
 const UNTRACKED_DIFF_FILES = 200;
 /** A new folder with more files than this is named, not shown file by file. */
@@ -48,14 +48,14 @@ export interface WorkspaceDiff {
   totalBytes?: number;
   collapsed?: string[];
 }
-const DEFAULT_RUN_TIMEOUT_MS = 120_000;
-const MAX_RUN_TIMEOUT_MS = 300_000;
+export const DEFAULT_RUN_TIMEOUT_MS = 120_000;
+export const MAX_RUN_TIMEOUT_MS = 300_000;
 /**
  * The ceiling for a step that asks for more than {@link MAX_RUN_TIMEOUT_MS}: a
  * verification's full suite under its budget (MARINA_CODE_VERIFY_FULL_BUDGET,
  * `budget:`). The container runner's ceiling, so a budget means the same on both.
  */
-const MAX_BUDGETED_RUN_TIMEOUT_MS = 1_800_000;
+export const MAX_BUDGETED_RUN_TIMEOUT_MS = 1_800_000;
 
 const SKIP_DIRS = new Set([".git", ".turbo", ".vite", "coverage", "dist", "node_modules", "tmp"]);
 const SHELL_METACHARACTERS = /[;&|`$()><\n\r\\]/;
@@ -82,7 +82,8 @@ const CODE_RUN_GIT_COMMANDS = new Set([
 // caller before deletion — this layer only bounds the shape of the argv.
 const CODE_RUN_GIT_WORKTREE_SUBCOMMANDS = new Set(["add", "list", "prune", "remove"]);
 const WORKTREE_MANAGED_BRANCH = /^marina\/session-[A-Za-z0-9._-]+$/;
-const CODE_RUN_ENV: Record<string, string> = {
+/** The fixed environment every Code Mode command gets (plus PATH and a scratch HOME). */
+export const CODE_RUN_ENV: Readonly<Record<string, string>> = {
   TERM: "dumb",
   LANG: "en_US.UTF-8",
   CI: "1",
@@ -127,6 +128,8 @@ export interface CodeRunPolicy {
   commands: string[];
   gitCommands: string[];
   timeoutMs: number;
+  /** Set when commands run in the local OS sandbox: any command, and what the sandbox hides. */
+  sandbox?: string;
 }
 
 export type WorkspaceCapability =
@@ -146,7 +149,9 @@ export interface WorkspaceDescriptor {
   /** Explicit operator-owned task roots; guest paths only when shared by the runner. */
   fileGrants?: { root: string; access: "read" | "write"; guestPath?: string }[];
   /** Present when finite commands run inside a container instead of on the host. */
-  runner?: { kind: "container"; runtime: string; image: string; sync: "mount" | "patch" };
+  runner?:
+    | { kind: "container"; runtime: string; image: string; sync: "mount" | "patch" }
+    | { kind: "sandbox"; engine: "bubblewrap"; network: false };
 }
 
 /**
@@ -843,7 +848,7 @@ export class LocalWorkspace implements WorkspaceRuntime {
     });
   }
 
-  private runNormalized(
+  protected runNormalized(
     normalized: string[],
     timeoutMs: number,
     maxBytes: number,

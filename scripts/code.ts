@@ -85,6 +85,8 @@ export interface CodeSessionOptions {
   verification?: "checks" | "candidate" | "delivery";
   /** The coder's thinking level, passed to the folder server as `MARINA_CODE_THINKING`. */
   thinking?: string;
+  /** `--sandbox`: the folder server runs coder commands in bubblewrap (`MARINA_CODE_SANDBOX=required`). */
+  sandbox?: boolean;
   /** Code Mode driver for the session before the task (`code driver <name>`). */
   driver?: "single" | "crew";
   /** `-p`: one JSON result object as the last stdout line; human output goes to stderr. */
@@ -529,6 +531,8 @@ function printWelcome(session: {
   resumed?: string;
   /** No provider key and no local runtime: say how to add one, first. */
   noModel?: boolean;
+  /** `--sandbox`: name the runner on the card. */
+  sandbox?: boolean;
 }): void {
   const stream = process.stderr;
   const theme = themeFor(stream);
@@ -549,7 +553,13 @@ function printWelcome(session: {
     {
       title: `Marina ${MARINA_VERSION}`,
       greeting: `${session.resumed ? "Welcome back" : "Welcome"}${user ? `, ${user}` : ""}!`,
-      details: [muted(session.agentLabel), theme.fg("info")(where)],
+      details: [
+        muted(session.agentLabel),
+        theme.fg("info")(where),
+        ...(session.sandbox
+          ? [muted("commands run in a local OS sandbox (bubblewrap): no network, home hidden")]
+          : []),
+      ],
       sections: [
         ...(session.noModel
           ? [
@@ -730,6 +740,8 @@ export function spawnFolderServer(o: {
   serverHome: string;
   defaultModel?: string;
   thinking?: string;
+  /** `MARINA_CODE_SANDBOX=required`: every session's commands run in the bubblewrap sandbox. */
+  sandbox?: boolean;
 }) {
   const { dir, port, dbPath, serverHome, defaultModel } = o;
   return Bun.spawn(
@@ -761,6 +773,9 @@ export function spawnFolderServer(o: {
         MARINA_OPEN_API: process.env.MARINA_OPEN_API ?? "true",
         ...(defaultModel ? { MARINA_DEFAULT_MODEL: defaultModel } : {}),
         ...(o.thinking ? { MARINA_CODE_THINKING: o.thinking } : {}),
+        // `required`, not `default`: the coder cannot pick the host again, and
+        // a `local` pin stored by an earlier launch fails instead of winning.
+        ...(o.sandbox ? { MARINA_CODE_SANDBOX: "required" } : {}),
       },
       stdout: "ignore",
       stderr: "pipe",
@@ -770,10 +785,22 @@ export function spawnFolderServer(o: {
 
 /** Boot a folder-scoped Marina and run the Code Mode REPL (or a one-shot
  *  `print` task). Never returns. */
+/**
+ * What `--sandbox` means for the chosen runtime: Marina's sandbox wraps Marina's
+ * own coder only; a native agent keeps its own sandbox (still allowed).
+ */
+export function sandboxNotices(opts: { sandbox?: boolean; agent?: string }): string[] {
+  if (!opts.sandbox || !opts.agent || opts.agent === "marina") return [];
+  return [
+    `marina: --sandbox applies to Marina's own coder. The native ${opts.agent} agent runs its commands in its own sandbox, not Marina's bubblewrap sandbox.`,
+  ];
+}
+
 export async function runCodeSession(
   targetDir: string,
   opts: CodeSessionOptions = {},
 ): Promise<void> {
+  for (const notice of sandboxNotices(opts)) console.error(notice);
   const dir = resolve(targetDir);
   if (!statSync(dir).isDirectory()) throw new Error(`Not a project directory: ${dir}`);
   // This folder's Marina home: its database, harnesses and optional `.env`
@@ -907,6 +934,7 @@ export async function runCodeSession(
     serverHome,
     defaultModel,
     thinking: harness.thinking,
+    ...(opts.sandbox ? { sandbox: true } : {}),
   });
 
   // Rolling stderr tail so a boot failure can say why.
@@ -1072,7 +1100,15 @@ export async function runCodeSession(
     }
     break;
   }
-  if (card) printWelcome({ dir, agentLabel, port, resumed, noModel: noProviderKey });
+  if (card)
+    printWelcome({
+      dir,
+      agentLabel,
+      port,
+      resumed,
+      noModel: noProviderKey,
+      ...(opts.sandbox ? { sandbox: true } : {}),
+    });
 
   // Negotiate the host-exec posture with the server. The server independently
   // re-verifies the operator is a loopback-local sovereign before honoring this

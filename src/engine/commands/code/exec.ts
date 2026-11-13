@@ -240,6 +240,29 @@ async function showRunAllowlist(
     return;
   }
   const policy = workspace.runPolicy();
+  if (policy.sandbox) {
+    sendCode(
+      ctx,
+      eid,
+      [
+        header("Code Run Policy"),
+        separator(),
+        `Workspace: ${session.workspace_root}`,
+        `Timeout: ${policy.timeoutMs}ms`,
+        "Runner: local OS sandbox (bubblewrap)",
+        policy.sandbox,
+      ].join("\n"),
+      {
+        commands: ["code run sh -c 'rg TODO | head'", "code verify", "code workspace runner"],
+        event: "run_allowlist_shown",
+        sessionId: session.id,
+        title: "Sandbox Run Policy",
+        type: "list",
+        workspace: session.workspace_root,
+      },
+    );
+    return;
+  }
   // allow-empty-catch: a missing package.json means no package scripts
   const packageJson = await workspace.read("package.json").catch(() => null);
   const scripts = packageJson ? detectPackageScripts(packageJson.content) : [];
@@ -564,7 +587,7 @@ export async function planVerification(
     ? planPreparation(profile, options.dependencies, {
         installsPermitted: workspace.installsPermitted?.() ?? false,
         hostCandidate: candidate && !runner,
-        ephemeral: runner?.sync === "patch",
+        ephemeral: runner?.kind === "container" && runner.sync === "patch",
       })
     : undefined;
   if (recipe)
@@ -811,7 +834,11 @@ export async function runVerificationCommands(
               : {}),
           }
         : {}),
-      runner: runner ? { kind: "container", image: runner.image, sync: runner.sync } : undefined,
+      runner: runner
+        ? runner.kind === "container"
+          ? { kind: "container", image: runner.image, sync: runner.sync }
+          : { kind: "sandbox", engine: runner.engine }
+        : undefined,
       steps: ran.map((item) => ({
         command: item.command,
         role: item.step.role,

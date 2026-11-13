@@ -66,7 +66,8 @@ export async function startVerification(
   if (candidate && !workspace.captureCandidate)
     throw new Error("This runtime does not support local Git candidate materialization.");
   const root = realpathSync(workspace.displayRoot());
-  if (deliveryManifest && workspace.describe().runner?.sync === "patch")
+  const described = workspace.describe().runner;
+  if (deliveryManifest && described?.kind === "container" && described.sync === "patch")
     throw new Error(
       "Delivery verification needs mount sync to exclude undeclared workspace files. Patch sync cannot establish that boundary.",
     );
@@ -109,8 +110,13 @@ export async function startVerification(
   const commands = livePlan.commands.map(forCandidate);
   assertBoundedVerification(commands);
   // A planned pytest fallback is admitted on the same allowlist before anything runs.
-  for (const command of [...commands, ...(livePlan.fallback?.commands ?? [])])
-    normalizeAllowedCodeCommand(root, normalizeCodeRunArgs(parseCommandArgv(command)));
+  // Under the sandbox runner every check runs in the sandbox (any command, like
+  // `code run`); the argv must still parse.
+  const sandboxed = workspace.runPolicy().sandbox !== undefined;
+  for (const command of [...commands, ...(livePlan.fallback?.commands ?? [])]) {
+    const argv = normalizeCodeRunArgs(parseCommandArgv(command));
+    if (!sandboxed) normalizeAllowedCodeCommand(root, argv);
+  }
   beforeSpawn();
   // Background results are durable even if the caller disconnects or loses access. Never
   // forward private evidence to a caller whose bound-agent membership was revoked meanwhile.
@@ -297,7 +303,9 @@ export async function startVerification(
                 executionTarget: "local",
                 executionLocation: "candidate-materialization",
                 executionRunner: runner
-                  ? { kind: "container", image: runner.image, sync: runner.sync }
+                  ? runner.kind === "container"
+                    ? { kind: "container", image: runner.image, sync: runner.sync }
+                    : { kind: "sandbox", engine: runner.engine }
                   : { kind: "host" },
                 recipeType: plan.commands.every(
                   (command) => command === "git diff --cached --check",

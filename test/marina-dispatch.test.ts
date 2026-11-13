@@ -194,6 +194,19 @@ describe("marina dispatcher routing", () => {
     });
   });
 
+  it("parses --sandbox for folder and one-shot sessions, never for connected coding", () => {
+    expect(parseDispatch(["--sandbox", "."])).toMatchObject({ kind: "code", sandbox: true });
+    expect(parseDispatch(["--sandbox", "-p", "fix it", "."])).toMatchObject({
+      kind: "code",
+      sandbox: true,
+      print: "fix it",
+    });
+    expect(parseDispatch(["."])).not.toHaveProperty("sandbox");
+    expect(
+      parseDispatch(["--sandbox", "--url", "ws://x", "--name", "a", "--session", "s"]),
+    ).toMatchObject({ kind: "usage-error" });
+  });
+
   it("parses a one-shot driver and gives the coder a budget inside the timeout", () => {
     expect(parseDispatch(["-p", "fix it", "--driver", "crew"])).toMatchObject({
       kind: "code",

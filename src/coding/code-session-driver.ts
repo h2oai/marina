@@ -10,6 +10,7 @@ import {
   loadProjectInstructions,
   projectInstructionMetadata,
 } from "./project-instructions";
+import { SANDBOX_RUN_NOTE } from "./sandbox-workspace";
 import { beginCodingRun, codingRunMetadata, endCodingRun } from "./task-run";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
@@ -309,6 +310,9 @@ export class CodeSessionDriver {
           ? `Start with marina_code status, then inspect with files/read/search/diff. Finite commands run in the session's ${opts.session.execution_target} sandbox project with no host fallback; use code service for long-running apps.`
           : "Start with marina_code status, then inspect with files/read/search/diff. For a supported local Git root, use verify with verificationMode=candidate for immutable source evidence. It returns a receipt: inspect its result before submitting a summary. Ignored dependencies are not copied. Use code verify dependencies:auto only where the configured runner permits installation; otherwise report missing prerequisites. Commands are argv-based: shell prefixes such as VAR=value are not shell execution; an explicit env command still needs execution authorization. Ordinary verify checks the live workspace; it is not immutable source evidence. Use code allowed and code exec-mode to inspect the actual command policy. Already-authorized commands and dependency installation within this task do not need a repeated user decision; additional authority does. Execution uses argv, not implicit shell syntax."
         : `First run: code resume ${opts.session.id}. Then use marina_code status/files/read/search/diff/verify when available.`,
+      workspaceDescriptor?.runner?.kind === "sandbox"
+        ? `Sandbox runner: ${SANDBOX_RUN_NOTE} Use marina_code_run with command "sh -c '<line>'" for shell syntax.`
+        : undefined,
       "Use marina_code action=edit with path, oldText and newText for exact replacements: choose a small unique oldText copied from the file and literal newText without diff markers. Use action=write with path and content for new files or deliberate full rewrites. These use the existing writer permissions and record durable changes. Use patch for unified diffs; show/artifacts/patches/history retain the evidence.",
       opts.session.execution_target !== "local"
         ? "Use code service start/probe/screenshot for managed app evidence; use observe for additional behavior notes."
