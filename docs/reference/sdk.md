@@ -516,8 +516,9 @@ import type { MarinaClient } from "./client.js";
 import type { Perception } from "./protocol.js";
 /** What kind of step a coding activity is. */
 export declare const CODING_ACTIVITY_KINDS: readonly ["read", "search", "edit", "write", "patch", "run", "verify", "plan", "summary", "other"];
-/** What the checks said. Only `passed` means checks ran on the change and passed. */
-export declare const VERIFICATIONS: readonly ["passed", "failed", "not_run", "error", "missing", "stale", "unbound", "unavailable"];
+/** What the checks said. Only `passed` means checks ran on the change and passed;
+ * `not_applicable`: the task changed no files, so there was nothing to verify. */
+export declare const VERIFICATIONS: readonly ["passed", "not_applicable", "failed", "not_run", "error", "missing", "stale", "unbound", "unavailable"];
 /** How a run ended. `submitted`: the coder finished and handed the change in for review. */
 export declare const RUN_OUTCOMES: readonly ["submitted", "failed", "cancelled", "interrupted"];
 /** One step the coder took. */

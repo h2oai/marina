@@ -414,3 +414,37 @@ export async function captureGitCandidate(root: string, repository = root) {
     throw error;
   }
 }
+
+/**
+ * Check out a commit of `repository` into a private directory, for re-running a failed gate
+ * without the change: the task's base. Like a candidate, it has its own Git metadata and
+ * index with the repository's objects as alternates; the repository's own config, hooks and
+ * content drivers never run. Disposal never touches the repository.
+ */
+export async function materializeGitCommit(repository: string, commit: string) {
+  if (!/^[a-f0-9]{40,64}$/.test(commit)) throw new Error("Invalid base commit.");
+  const directory = await mkdtemp(join(tmpdir(), "marina-base-"));
+  const materialized = join(directory, "source");
+  try {
+    await mkdir(materialized);
+    repository = await realpath(repository);
+    const format = (await git(repository, ["rev-parse", "--show-object-format"])).text.trim();
+    const objects = (
+      await git(repository, ["rev-parse", "--path-format=absolute", "--git-path", "objects"])
+    ).text.trim();
+    if (/[\r\n]/.test(objects)) throw new Error("Base object directory contains a newline.");
+    await git(materialized, ["init", "--quiet", "--template=", `--object-format=${format}`]);
+    await mkdir(join(materialized, ".git/objects/info"), { recursive: true });
+    await writeFile(join(materialized, ".git/objects/info/alternates"), `${objects}\n`);
+    await git(materialized, ["update-ref", "HEAD", commit]);
+    await git(materialized, ["read-tree", commit]);
+    await git(materialized, ["checkout-index", "--all", "--force"]);
+    return {
+      directory: materialized,
+      dispose: () => rm(directory, { recursive: true, force: true }),
+    };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+}

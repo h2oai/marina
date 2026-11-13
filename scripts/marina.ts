@@ -95,7 +95,7 @@ export type Dispatch =
       mode?: WorkspaceMode;
       verbose?: boolean;
       allowUnverified?: boolean;
-      /** One-shot verification requirement (`code do verification:<mode>`); default `delivery`. */
+      /** One-shot verification requirement (`code do verification:<mode>`); default by folder (`printVerification`). */
       verification?: PrintVerification;
       /** The coder's thinking level (`MARINA_CODE_THINKING` for the folder server). */
       thinking?: string;
@@ -530,12 +530,15 @@ Options:
   -p, --print <task>           dispatch one coding task, await completion, then exit
   --allow-unverified           with -p: exit 0 for completed work that was not verified
                                (still reported on stderr)
-  --verification <mode>        with -p: what the task must verify before it can submit:
-                               checks (the project's own checks), candidate (a Git
-                               snapshot), or delivery (default, MARINA_CODE_VERIFICATION:
-                               the declared output files checked alone in a clean
-                               directory, each stated requirement mapped to a check
-                               that observes it)
+  --verification <mode>        with -p: what the task must verify before it can submit
+                               (default MARINA_CODE_VERIFICATION, else by folder):
+                               candidate (default in a Git repository with a detected
+                               test runner: the repository's own type-check, lint and
+                               tests on a snapshot, relevant tests then the full suite,
+                               plus each listed requirement's check), delivery (default
+                               elsewhere: the declared output files checked alone in a
+                               clean directory, each stated requirement mapped to a check
+                               that observes it), or checks (the project's own checks)
   --json                       with -p: print one JSON result object as the last stdout
                                line; everything else goes to stderr
   --verbose                    print startup details (database, server endpoints,
@@ -564,14 +567,16 @@ loosen that only in an interactive local terminal you own; without a TTY they ar
 refused and the session stays allowlist-only.
 
 Exit codes (one-shot -p):
-  0  task completed and its checks passed (verified; session diff printed)
+  0  task completed and verified (its required verification passed; session diff
+     printed). A native agent's turn (--agent claude|codex|pi) is verified the same
+     way: the repository's gates on a snapshot of the folder after the turn
   3  task completed but was not verified (the reason is printed; --allow-unverified
-     makes this 0). A native agent's turn (--agent claude|codex|pi) is never
-     verified by Marina, so it ends 3 unless --allow-unverified.
+     makes this 0), including a task that changed no files (status no_changes,
+     reason "nothing to verify")
   1  task failed (the agent died mid-task, the run was stopped, or it ended
      blocked); edits already made stay and are listed. A block over an
      interpretation is answered automatically and recorded as an assumption
-  2  task timed out (MARINA_CODE_TASK_TIMEOUT_MS, default 600000) — code stop sent
+  2  task timed out (MARINA_CODE_TASK_TIMEOUT_MS) — code stop sent
 
 Environment:
   MARINA_URL                   server URL for connect/status/attach and connected coding
@@ -579,7 +584,8 @@ Environment:
   MARINA_TOKEN                 credential for connected coding or status readiness;
                                connected coding otherwise uses that account's server-bound cache
   MARINA_CODE_FRESH=1          same as --fresh
-  MARINA_CODE_TASK_TIMEOUT_MS  one-shot task timeout in ms (default 600000)
+  MARINA_CODE_TASK_TIMEOUT_MS  one-shot task timeout in ms (default 600000; 1200000 when
+                               the repository's gates verify the task)
   ANTHROPIC_API_KEY, ...       an LLM provider key so agents can think`;
 
 // ── version ──────────────────────────────────────────────────────────────────

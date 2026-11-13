@@ -491,10 +491,21 @@ export const CodingActivity = Type.Object(
 );
 
 export const Verification = Type.Union(
-  ["passed", "failed", "not_run", "error", "missing", "stale", "unbound", "unavailable"].map((v) =>
-    Type.Literal(v),
-  ),
-  { description: "What the checks said. Only `passed` means checks ran on the change and passed." },
+  [
+    "passed",
+    "not_applicable",
+    "failed",
+    "not_run",
+    "error",
+    "missing",
+    "stale",
+    "unbound",
+    "unavailable",
+  ].map((v) => Type.Literal(v)),
+  {
+    description:
+      "What the checks said. Only `passed` means checks ran on the change and passed; `not_applicable`: the task changed no files, so there was nothing to verify.",
+  },
 );
 
 export const RunResult = Type.Object(

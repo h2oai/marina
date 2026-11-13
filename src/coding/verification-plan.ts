@@ -30,11 +30,12 @@
  *    runner used and why. Such a run passes only when it reports tests ran.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { posix } from "node:path";
+import { cpSync, existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, posix } from "node:path";
 import { parseDuration } from "../engine/commands/format-duration";
 import { escapeRegExp } from "../engine/regexp";
 import type { CandidatePreparation } from "./candidate-dependencies";
+import { hostGitArgv, hostGitEnv } from "./host-git";
 import type { WorkspaceRunResult } from "./local-workspace";
 import {
   isTestCommand,
@@ -253,6 +254,12 @@ export interface PreparationPlan {
   note?: string;
   /** Prefix for Python test commands after an install into a project environment. */
   wrapTests?: string;
+  /**
+   * A sandboxed snapshot (no network, no host install): copy the dependency trees the session's
+   * own workspace already installed (`node_modules`, as files; nothing runs) from `from` into
+   * `to` when the probe finds none.
+   */
+  copyDependencies?: { from: string | readonly string[]; to: string };
   /**
    * The runner to switch to when the pytest probe shows pytest is not importable
    * (`unittest` or a workspace test script). Set only alongside fallback steps.
@@ -503,6 +510,46 @@ export async function executePreparation(
           status: "not_run",
           reason: `Dependency installation failed (${plan.install.join(" ")}, exit ${install.exitCode}${install.timedOut ? ", timed out" : ""}).${note}`,
           runs: [probe, install],
+        };
+  }
+  if (plan.copyDependencies && !ok(probe)) {
+    let copied: string[];
+    try {
+      copied = [];
+      // The first source that has installed trees: a session worktree of a checkout has none
+      // of its own, and takes the checkout's.
+      for (const from of typeof plan.copyDependencies.from === "string"
+        ? [plan.copyDependencies.from]
+        : plan.copyDependencies.from) {
+        copied = copyInstalledDependencies(from, plan.copyDependencies.to);
+        if (copied.length) break;
+      }
+    } catch (error) {
+      return {
+        status: "error",
+        reason: `Copying dependencies: ${errorText(error)}`,
+        runs: [probe],
+      };
+    }
+    if (!workspace.runPreparationStep) throw new Error("unreachable: probe ran");
+    let again: WorkspaceRunResult;
+    try {
+      again = await workspace.runPreparationStep([...plan.probe], beforeSpawn);
+    } catch (error) {
+      if (isVerificationStop(error)) throw error;
+      return { status: "error", reason: errorText(error), runs: [probe] };
+    }
+    return ok(again)
+      ? {
+          status: "ready",
+          reason: `Copied the workspace's installed dependencies into the sandboxed snapshot (${copied.join(", ")}); nothing was installed and no script ran.${note}`,
+          runs: [],
+          policy: "copied-from-workspace",
+        }
+      : {
+          status: "not_run",
+          reason: `${copied.length ? "The workspace's installed dependencies were copied, but " : "The workspace has no installed dependencies to copy, and "}the sandbox has no network to install them. Install them in the workspace (for example bun install) and verify again.${note}`,
+          runs: [probe, again],
         };
   }
   // Nothing could install pytest: switch runners rather than report no checks.
@@ -879,6 +926,8 @@ export interface VerificationStep {
   role: StepRole;
   /** Per-step timeout (the full-suite budget). */
   timeoutMs?: number;
+  /** A coder's requirement check: never stands in for a repository gate. */
+  requirement?: boolean;
   /**
    * A fallback runner: a zero exit passes only when the output reports tests
    * ran (`Ran N tests`, `N passed`). Silence is never a pass.
@@ -893,6 +942,12 @@ export interface StepPlan {
   /** Why the test scope is what it is (recorded with the result). */
   scopeNote: string;
   relevant?: RelevantTests;
+  /**
+   * Repository gates: every planned step must run and pass. A full suite that does not
+   * finish within its budget, or a type-check whose tool is missing, leaves the verification
+   * `not_run`: never passed on the scoped tests alone.
+   */
+  repositoryGates?: boolean;
 }
 
 /** Steps for stored recipe commands: run as written, test commands recognized by shape. */
@@ -916,10 +971,18 @@ export function detectedSteps(input: {
   relevant: RelevantTests;
   /** Paths that exist in the workspace (deleted files never become arguments). */
   exists: (path: string) => boolean;
+  /** Repository gates: a configured type-check always runs, over the whole project. */
+  gates?: boolean;
 }): StepPlan {
   const { profile, options, relevant } = input;
   const steps: VerificationStep[] = [];
-  if (options.typecheck === "auto" && profile.typecheck) {
+  if (input.gates && profile.typecheck) {
+    // A change to configuration alone can break the type-check: never skip it.
+    steps.push({
+      command: profile.typecheck === "python -m mypy" ? "python -m mypy ." : profile.typecheck,
+      role: "typecheck",
+    });
+  } else if (options.typecheck === "auto" && profile.typecheck) {
     if (profile.language === "python") {
       const files = input.touched
         .filter((path) => /\.pyi?$/.test(path) && input.exists(path))
@@ -1074,6 +1137,7 @@ export function aggregateVerification(input: {
   steps: { step: VerificationStep; outcome: StepOutcome }[];
   testsPlanned: boolean;
   scopeNote?: string;
+  repositoryGates?: boolean;
 }): VerificationVerdict {
   const { preparation, steps } = input;
   if (preparation?.status === "not_run") return { outcome: "not_run", reason: preparation.reason };
@@ -1095,6 +1159,28 @@ export function aggregateVerification(input: {
         : (input.scopeNote ?? "no tests ran"),
     };
   }
+  if (
+    input.repositoryGates &&
+    !steps.some(
+      (s) =>
+        !s.step.requirement &&
+        (s.step.role === "tests" || s.step.role === "full-tests") &&
+        s.outcome.outcome === "passed",
+    )
+  )
+    return {
+      outcome: "not_run",
+      reason:
+        "no repository test step ran and passed; the repository's gates need a detected test command",
+    };
+  const unfinished = input.repositoryGates
+    ? steps.find((s) => s.outcome.outcome !== "passed")
+    : undefined;
+  if (unfinished)
+    return {
+      outcome: "not_run",
+      reason: `${unfinished.step.command}: ${unfinished.outcome.reason} (every repository gate must run and pass)`,
+    };
   const blocking = steps.filter(
     (s) => s.step.role !== "typecheck" && s.outcome.outcome === "not_run",
   );
@@ -1106,4 +1192,37 @@ export function aggregateVerification(input: {
       reason: `${blocking[0]!.step.command}: ${blocking[0]!.outcome.reason}`,
     };
   return { outcome: "passed", reason: "passed" };
+}
+
+/**
+ * Copy the dependency trees a workspace has installed (every Git-ignored `node_modules`
+ * directory) into a snapshot of it, as files: links verbatim, nothing executed. For a
+ * sandboxed verification, which has no network and may not install on the host.
+ */
+export function copyInstalledDependencies(from: string, to: string): string[] {
+  if (!existsSync(from)) return [];
+  const listed = Bun.spawnSync(
+    hostGitArgv(
+      ["git", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+      from,
+    ),
+    { cwd: from, env: hostGitEnv(), stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+  );
+  if (listed.exitCode !== 0) throw new Error("the workspace's ignored files could not be listed");
+  const trees = listed.stdout
+    .toString()
+    .split("\0")
+    .map((entry) => entry.replace(/\/$/, ""))
+    .filter(
+      (rel) =>
+        rel &&
+        rel.split("/").at(-1) === "node_modules" &&
+        !rel.split("/").some((part) => part === ".." || part === ".git"),
+    );
+  for (const rel of trees) {
+    const source = join(from, rel);
+    if (!lstatSync(source).isDirectory()) continue;
+    cpSync(source, join(to, rel), { recursive: true, verbatimSymlinks: true, force: false });
+  }
+  return trees;
 }

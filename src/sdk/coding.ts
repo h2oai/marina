@@ -24,9 +24,11 @@ export const CODING_ACTIVITY_KINDS = [
   "other",
 ] as const;
 
-/** What the checks said. Only `passed` means checks ran on the change and passed. */
+/** What the checks said. Only `passed` means checks ran on the change and passed;
+ * `not_applicable`: the task changed no files, so there was nothing to verify. */
 export const VERIFICATIONS = [
   "passed",
+  "not_applicable",
   "failed",
   "not_run",
   "error",

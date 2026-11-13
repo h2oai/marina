@@ -7,7 +7,8 @@
  * environment was not ready) and `error` (the runner failed). `not_run` and
  * `error` are neither a pass nor a failure, so they are never shown as one.
  * Coding-attempt states (`missing`, `stale`, `unbound`, `unavailable`) pass
- * through as labels.
+ * through as labels; `not_applicable` (the task changed no files, so nothing was
+ * verified) reads "nothing to verify", never as a pass.
  */
 
 export type VerificationTone = "success" | "danger" | "muted" | "warning";
@@ -22,13 +23,14 @@ export function verificationOutcomeFromStatus(status: unknown): string | undefin
 export function verificationLabel(value: unknown, fallback = "not recorded"): string {
   if (typeof value !== "string" || !value) return fallback;
   if (value === "not_run") return "not run";
+  if (value === "not_applicable") return "nothing to verify";
   return value;
 }
 
 export function verificationTone(value: unknown): VerificationTone {
   if (value === "passed") return "success";
   if (value === "failed") return "danger";
-  if (value === "not_run") return "muted";
+  if (value === "not_run" || value === "not_applicable") return "muted";
   return "warning";
 }
 

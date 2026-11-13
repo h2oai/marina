@@ -20,6 +20,7 @@ import { renderRustOperations } from "../scripts/generate-openapi";
 import { grant } from "../src/engine/safety-gates";
 import * as wire from "../src/protocol/wire";
 import type { EntityId } from "../src/types";
+import { cratesAvailable } from "./crates-available";
 import {
   SCRIPTED_TASK,
   type ScriptedCodingServer,
@@ -60,7 +61,11 @@ const cargo = ([sub, ...rest]: string[]) =>
 const literals = (schema: unknown): string[] =>
   ((schema as { anyOf?: { const: string }[] }).anyOf ?? []).map((s) => s.const).sort();
 
+/** No crates here (no network, empty cache): the cargo-built tests cannot run. */
+const CRATES = await cratesAvailable();
+
 beforeAll(async () => {
+  if (!CRATES) return;
   const built = await cargo(["clippy", "--all-targets", "--", "-D", "warnings"]);
   if (built.code !== 0) throw new Error(`cargo clippy failed:\n${built.stdout}${built.stderr}`);
   const examples = await cargo(["build", "--examples"]);
@@ -68,29 +73,37 @@ beforeAll(async () => {
 }, 600_000);
 
 describe("Rust SDK: offline", () => {
-  it("passes its own unit tests and doc examples", async () => {
-    const result = await cargo(["test"]);
-    expect(result.stdout).toContain("14 passed");
-    expect(result.stdout).not.toContain("FAILED");
-    expect(result.code).toBe(0);
-  }, 600_000);
+  it.skipIf(!CRATES)(
+    "passes its own unit tests and doc examples",
+    async () => {
+      const result = await cargo(["test"]);
+      expect(result.stdout).toContain("14 passed");
+      expect(result.stdout).not.toContain("FAILED");
+      expect(result.code).toBe(0);
+    },
+    600_000,
+  );
 
-  it("names the wire schema's coding fields and allows its values", async () => {
-    const result = await run([example("shape")]);
-    expect(result.code).toBe(0);
-    const shape = JSON.parse(result.stdout);
-    const fields = (schema: TSchema) =>
-      Object.keys((schema as { properties: Record<string, unknown> }).properties).sort();
-    expect(shape.activity).toEqual(fields(wire.CodingActivity));
-    expect(shape.result).toEqual(fields(wire.RunResult));
-    const props = wire.CodingActivity.properties as Record<string, unknown>;
-    expect([...shape.kinds].sort()).toEqual(literals(props.kind));
-    expect([...shape.verifications].sort()).toEqual(literals(wire.Verification));
-    expect([...shape.outcomes].sort()).toEqual(
-      literals((wire.RunResult.properties as Record<string, unknown>).outcome),
-    );
-    expect(shape.protocol).toBe(wire.WIRE_PROTOCOL);
-  }, 60_000);
+  it.skipIf(!CRATES)(
+    "names the wire schema's coding fields and allows its values",
+    async () => {
+      const result = await run([example("shape")]);
+      expect(result.code).toBe(0);
+      const shape = JSON.parse(result.stdout);
+      const fields = (schema: TSchema) =>
+        Object.keys((schema as { properties: Record<string, unknown> }).properties).sort();
+      expect(shape.activity).toEqual(fields(wire.CodingActivity));
+      expect(shape.result).toEqual(fields(wire.RunResult));
+      const props = wire.CodingActivity.properties as Record<string, unknown>;
+      expect([...shape.kinds].sort()).toEqual(literals(props.kind));
+      expect([...shape.verifications].sort()).toEqual(literals(wire.Verification));
+      expect([...shape.outcomes].sort()).toEqual(
+        literals((wire.RunResult.properties as Record<string, unknown>).outcome),
+      );
+      expect(shape.protocol).toBe(wire.WIRE_PROTOCOL);
+    },
+    60_000,
+  );
 
   it("carries every HTTP operation (generated) and the repository's version", () => {
     expect(readFileSync(join(SDK, "src/operations.rs"), "utf8")).toBe(renderRustOperations());
@@ -101,7 +114,7 @@ describe("Rust SDK: offline", () => {
   });
 });
 
-describe("Rust SDK: a coding run on a live server", () => {
+describe.skipIf(!CRATES)("Rust SDK: a coding run on a live server", () => {
   let fixture: ScriptedCodingServer;
   beforeAll(async () => {
     fixture = await startScriptedCodingServer(["rsbuilder"]);
@@ -172,7 +185,7 @@ describe("Rust SDK: a coding run on a live server", () => {
   }, 180_000);
 });
 
-describe("Rust SDK: Marina::local", () => {
+describe.skipIf(!CRATES)("Rust SDK: Marina::local", () => {
   let folder: string;
   let home: string;
   beforeAll(() => {

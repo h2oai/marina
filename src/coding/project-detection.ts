@@ -352,6 +352,21 @@ export function detectProjectRunner(snapshot: ProjectSnapshot): ProjectRunnerPro
   return { language: "unknown", verify: [], reason: "no recognized project markers" };
 }
 
+/**
+ * Every runner the repository configures, one per language present, whatever the change
+ * touches: the repository's gates. A mixed repository (a Python package with a JavaScript
+ * front end) gets both suites, never just the touched language's.
+ */
+export function repositoryRunnerProfiles(snapshot: ProjectSnapshot): ProjectRunnerProfile[] {
+  const profiles: ProjectRunnerProfile[] = [];
+  for (const language of languagesPresent(snapshot.markers)) {
+    const verify = runnerFor(language, snapshot);
+    if (verify)
+      profiles.push(profileFor(language, verify, `${language} project markers`, snapshot));
+  }
+  return profiles;
+}
+
 /** The subset of a workspace detection reads; never spawns beyond `diff` / `changedPaths`. */
 export interface DetectableWorkspace {
   read(input: string, maxBytes?: number): Promise<{ content: string }>;
@@ -402,6 +417,13 @@ export async function detectWorkspaceRunner(
     ...snapshot,
     touched: touched ?? (await workspaceTouchedPaths(workspace)),
   });
+}
+
+/** The repository's gates for a workspace (`repositoryRunnerProfiles`), from its markers. */
+export async function detectRepositoryRunners(
+  workspace: DetectableWorkspace,
+): Promise<ProjectRunnerProfile[]> {
+  return repositoryRunnerProfiles(await readMarkers(workspace));
 }
 
 /** Paths named in a unified diff's `diff --git a/<path> b/<path>` headers. */

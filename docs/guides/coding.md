@@ -422,9 +422,17 @@ code ship [merge] [-- <title>]
 1. The latest trial must have measured exactly this change: the worktree now has the same Git
    tree as the trial's candidate. A trial that found a regression, or did not complete, ships
    nothing; neither does a change that moved after its trial.
-2. The worktree is committed on its own `marina/session-*` branch under the operator's Git
+2. The repository's own gates must have verified exactly this change: the session's latest
+   verification is a passed `code verify candidate gates:repository` whose snapshot has the
+   change's tree, read through the latest verification attempt (a newer request that is still
+   running, or ended without a result, is not hidden behind an older pass), with the snapshot's
+   source left intact by the checks and still current when they finished (the evidence rule a
+   task submission uses). Anything else (no verification, another kind, failed, pre-existing
+   failures, stale or altered source, or a change that moved since) is refused with the label and the command to run. A pull
+   request opened by Marina never carries a change its repository's checks fail.
+3. The worktree is committed on its own `marina/session-*` branch under the operator's Git
    identity, with no hooks and no repository-supplied drivers.
-3. The branch is pushed and a pull request is opened against the repository's default branch.
+4. The branch is pushed and a pull request is opened against the repository's default branch.
    Its description states the trial: verdict, both builds' scores, the paired interval and the
    margin. `merge` also queues it for merge.
 
@@ -777,16 +785,122 @@ the session diff and the agent's summary. The exit code says what you can rely o
 
 | Code | Meaning |
 |---|---|
-| `0` | completed, and the run's checks passed (verification `passed`; under `delivery`, every stated requirement observed by a passing check or declared not machine-checkable) |
-| `3` | completed but **not verified**: no checks ran, they failed, the source changed after them, or (under `delivery`) a stated requirement was left unobserved. The reason is printed on stderr. `--allow-unverified` makes this `0` (the notice still prints). |
+| `0` | completed and **verified**: the required verification passed (under `candidate`, the repository's own gates and every listed requirement's check; under `delivery`, every stated requirement observed by a passing check or declared not machine-checkable) |
+| `3` | completed but **not verified**: no checks ran, they failed, the source changed after them, a stated requirement was left unobserved, or nothing changed (`no_changes`: nothing to verify). The reason is printed on stderr. `--allow-unverified` makes this `0` (the notice still prints). |
 | `1` | failed: the agent died mid-task, the run was stopped, or it ended blocked (the reason is printed; edits it made stay in the folder and are listed) |
-| `2` | timed out after `MARINA_CODE_TASK_TIMEOUT_MS` (default 600000 ms); `code stop` was sent |
+| `2` | timed out after `MARINA_CODE_TASK_TIMEOUT_MS` (default 600000 ms, 1200000 ms under `candidate`); `code stop` was sent |
 
-`--verification <mode>` sets what a one-shot task must verify before it can submit: `checks`
-(the project's own checks), `candidate` (a captured Git snapshot), or `delivery` (default, or
-`MARINA_CODE_VERIFICATION` — a JSON manifest of output files and checks, run alone in a clean
-directory with `code verify delivery -- <manifest JSON>`). The mode is the task's `code do verification:<mode>`
-requirement; agents still choose the implementation and the checks.
+**What `verified` means.** `--verification <mode>` sets what a one-shot task must verify before it
+can submit. With no flag and no `MARINA_CODE_VERIFICATION`, a folder that is a Git repository's
+root with a test runner Marina detects (a `test` script, pytest, cargo, go, Maven or Gradle) gets
+`candidate`; any other folder gets `delivery`.
+
+- `candidate` (the repository's gates): the task is dispatched with `code do verification:candidate
+  gates:repository`. Verification runs on a snapshot of the whole repository and runs every
+  runner the repository configures, whatever language the change touched (a Python package
+  with a JavaScript front end gets both suites): each one's type-check (a configured mypy or
+  pyright always runs over the whole project) and lint where it has them, tests relevant to the
+  change, then the full suite under `MARINA_CODE_VERIFY_FULL_BUDGET` (scope `changed+full`).
+  Dependencies are prepared in the snapshot (`dependencies:auto`) unless the coder names a
+  manager. A saved recipe does not replace these gates, no other runner is substituted (pytest
+  missing leaves the run `not_run`, never a unittest pass), a repository with no test command
+  has no gates (lint alone never verifies), every gate must run and pass (a full suite that
+  does not finish within its budget leaves the run `not_run`), and the snapshot must still
+  match the folder.
+
+  A failed gate runs once more on the task's base commit (HEAD when the task started), checked
+  out privately with the repository's objects, under the same runner. A failure is labelled
+  `PRE-EXISTING` only on positive evidence: every test failing with the change is identified by
+  its repository-relative file and qualified name (two files' same-named tests are different
+  tests), fails on the base with the same error block (the error line and the expected and
+  received values that follow it), and fails the same way on a second base
+  run (the failing tests alone, `bun test <files>` or `pytest <node ids>`, else the whole step
+  when it took at most 5 minutes). Then the coder is told at once that the failure exists
+  without its change and to submit, noting it; the task completes but stays unverified
+  (`failed`, reason "the repository's gates already fail without this change: <step>", exit
+  `3`). A test that fails with the change but not on the base is the change's failure (`CAUSED
+  BY THIS CHANGE`). Anything less is `INCONCLUSIVE`: any unnamed failure, even beside named
+  ones (an "Unhandled error between tests", an import error, a package that failed to build, a
+  runner count above the failures it named), changed dependency manifests or lockfiles between
+  the base and the change (the base would run with the change's dependencies),
+  more than 5000 failures, a cut output line, a base that could not be prepared or run, a
+  different first error, or a failure that does not repeat. The coder is told to treat it as
+  its own failure, investigate and fix it, or report it as blocked with the evidence, never to
+  wait; the result stays unverified. Every failed step carries a digest built from its whole
+  output (the stored excerpt is only the first 64 KB): the failing tests with file:line where
+  the runner prints them (bun `(fail)`, pytest `FAILED`/`ERROR`, go `--- FAIL`), the first
+  assertion error, the last 40 lines (at most 4 KB), and for each failing test whether it also
+  fails on the base. A coder maps each stated requirement to a check run in
+  the snapshot before the gates: `code verify candidate -- {"checks":["bun test
+  test/paging.test.ts"],"requirements":[{"text":"the last page is kept","checks":[0]}]}`. The run
+  is `verified` only when the gates and every listed requirement's check pass. With no list it is
+  still verified on the gates, and the result says `requirements not mapped`.
+
+  Each candidate snapshot is pinned under `refs/marina/candidates/<uuid>` so its evidence can be
+  re-checked; capture refuses at 64 pins. Before each capture Marina retires the pins nobody
+  needs (`src/coding/candidate-retention.ts`): those of attempts that ended (approved, rejected,
+  cancelled, failed, interrupted) or were superseded by a newer candidate, any older than 14
+  days, and past 48, the oldest of the rest. It keeps, for an open task's attempt, the candidate its evidence cites
+  and its newest by Marina's own capture order (never by commit time), never touches a pin younger than 10 minutes, and deletes only refs Marina created
+  (the candidate name and Marina's fixed commit identity and message), each by compare-and-swap.
+- `delivery` (default elsewhere, or `--verification delivery`): a JSON manifest of output files and
+  checks, run alone in a clean directory with `code verify delivery -- <manifest JSON>`; every
+  stated requirement mapped to a check that observes it, or the run is unverified.
+- `checks`: the project's own checks in the live workspace.
+
+The mode is the task's `code do verification:<mode>` requirement; agents still choose the
+implementation and the checks. The coder's deadline leaves room for the full suite: under
+`candidate` the one-shot timeout defaults to 20 minutes, and the coder is told to start the gates
+well before its deadline.
+
+**Native runtimes.** `marina -p --agent claude|codex|pi` runs the native agent's turn in the
+folder; when the turn finishes, Marina verifies its result the same way: if the folder changed,
+it runs `code verify candidate gates:repository` on a snapshot of the folder and reports
+`verified` only if every gate passed and the folder still matches the snapshot, re-checked
+when the result arrives. The turn and its verification share one deadline
+(`MARINA_CODE_TASK_TIMEOUT_MS`, 20 minutes by default when the folder has gates); past it the run
+is `timeout` (exit `2`). Otherwise the run
+is `unverified` with the failing gate named (or the reason no gate could run, for example a
+folder that is not a Git repository), or `no_changes` when the turn changed nothing. A native turn
+maps no requirements, so the result always says the stated requirements were not mapped.
+
+**Questions and investigations without edits.** A task whose right answer changes no files can
+submit its answer with `code summary` and no checks. Marina compares the workspace with its state
+observed just before the attempt was dispatched; if nothing changed, verification is
+`not_applicable` with a reason that starts `nothing to verify: no files changed during this
+task`. Status, review, the terminal result, task review and `--json` all show it as such: it is
+never `passed` and earns no verified-code credit. `marina -p` reports status `no_changes` and
+exits `3` (completed but not verified, reason "nothing to verify"), like any other unverified
+completion; `--allow-unverified` makes it `0`.
+
+The baseline belongs to the attempt: steering keeps it, and a new attempt observes a new one.
+For a local workspace Marina records, without reading file contents or following links, each
+entry's type, mode, size, inode, modification and change times (nanoseconds) and symlink target.
+Any write changes a file's change time, so an edit later reverted to the same bytes still counts
+as a change (the conservative side). In a Git repository the source is what Git sees, tracked
+and untracked files, plus HEAD and the index, so a staged-only change or a commit is a change, and
+files marked assume-unchanged or skip-worktree are observed directly, so an edit Git does not
+report is still seen. Git-ignored entries (dependencies, build output, local data) are observed
+apart: when only they changed, the answer is still `not_applicable` and the reason names them,
+because no verification covers ignored files, except under `delivery`, where an ignored file
+can be a deliverable: there a changed (or unobserved) ignored file, or a delivery check the coder
+already ran, keeps the delivery verification. Changes already present when the attempt started
+are not the task's: they stay out of the comparison, and the reason names them as not verified.
+In a plain folder without Git every entry is source. Git itself is asked only for metadata (the
+index and its recorded file stats, the diff of the index against HEAD, directory listings), with
+the repository's content filters switched off, so observing never runs a filter or hashes
+contents; changes already present are found by comparing each file's stat with the index's. A
+repository with submodules, or a workspace holding a nested repository, is not observed (an edit
+inside one would escape), which keeps the normal verification.
+
+Observation is bounded: 200000 entries in all, of which at most 10000 Git-ignored ones. Past the
+ignored budget (installed dependencies alone usually exceed it) the source is still compared and
+the reason says ignored files were not observed; a plain folder over the overall limit is not
+observed at all. On this repository a dispatch observes about 13500 entries, a fraction of a
+second. An unavailable baseline (including attempts from earlier
+versions), an observation error, a changed workspace binding, or an execution target other than
+the local host keeps the normal verification requirement. There is no fallback from a sandbox to
+observing the host. A task that changed files follows its verification contract.
 
 **Time budget.** A one-shot hands its coder a budget slightly inside `MARINA_CODE_TASK_TIMEOUT_MS`
 (`code do budget:<duration>`, the shared duration grammar). The coder sees its deadline, is told to
@@ -817,13 +931,15 @@ or a dissolved crew is refused, and a member's plain `code summary` stays progre
 contract, `code do` on a crew session still stores and dispatches a crew plan.
 
 `--json` prints one JSON object as the last line of stdout and sends everything else to stderr:
-`{"status":"verified|unverified|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"requirements":…,"reason":…,"assumptions":[{"text":…,"source":"worker|block"}],"budgetForced":…,"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
+`{"status":"verified|unverified|no_changes|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"requirements":…,"reason":…,"assumptions":[{"text":…,"source":"worker|block"}],"budgetForced":…,"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
 `files` is what the run changed in the session, also when it failed or ended blocked; `reason` is
 the full reason a run failed (`null` otherwise); `assumptions` lists the interpretations made
 where no person could answer (below). The human-readable output prints the same assumptions
 after the summary.
-With `--verification delivery`, `requirements` is `{"listed":…,"verified":[…],"unverified":[…],"notCheckable":[{"text":…,"reason":…}]}`
-(otherwise `null`). A run whose checks passed but left a stated requirement unverified, recorded
+With `--verification delivery` or `candidate` (and for a native turn), `requirements` is
+`{"listed":…,"optional":…,"verified":[…],"unverified":[…],"notCheckable":[{"text":…,"reason":…}]}`
+(otherwise `null`); `optional: true` with `listed: false` means verified on the repository's gates
+with requirements not mapped. A run whose checks passed but left a stated requirement unverified, recorded
 no checklist, or declared every requirement not machine-checkable is `unverified` (exit `3`) and
 the notice names those requirements. A requirement declared not machine-checkable beside observed
 ones does not change the status: the run is `verified` (exit `0`), the requirement stays under
@@ -835,7 +951,7 @@ marina -p "fix the off-by-one in the tokenizer and add a regression test" ~/proj
 echo $?
 ```
 
-The exit code is `0` verified · `3` completed, not verified · `1` failed · `2` timed out. To read
+The exit code is `0` verified · `3` completed, not verified (including nothing changed) · `1` failed · `2` timed out. To read
 the status from the JSON object instead:
 
 ```bash
@@ -1076,8 +1192,9 @@ at once, for what cannot be worked around (missing data or credentials, a broken
 Either way the edits already made stay in the workspace. Only the attempt's worker gets automatic
 answers; attended tasks keep the behavior above.
 
-Marina's one-shot `-p` path selects `verification:checks owner:unattended` and exits successfully
-only after a matching attempt submits with current verification. Submission remains separate from
+Marina's one-shot `-p` path selects the verification mode (above) and `owner:unattended`, and
+exits `0` only after a matching attempt submits with current verification; an observed no-change
+answer (`no_changes`, verification `not_applicable`) exits `3`. Submission remains separate from
 owner approval. Old completions from another attempt cannot finish the current task. The
 `owner:unattended` contract also lets the designated active worker run `code writer <its-name>`
 to reclaim a lock handed back to the owner. It cannot reclaim a collaborator's lock, transfer the
@@ -1609,7 +1726,18 @@ code workspace runner local                   # back to the host allowlist (if a
 - **What the sandbox allows**: any program installed on the system, pipes, `&&`, redirects
   (`sh -c '<line>'` or `bash -c '<line>'`), Bun (`bun test`, `bun run typecheck`), and writes
   anywhere in the workspace. `code verify` checks (candidate and delivery checks included) accept
-  the same commands and run in the same sandbox.
+  the same commands and run in the same sandbox, and so do the repository's gates: the snapshot's
+  steps, a failed gate's re-run on the base, and the gates after a native one-shot. With no
+  network the snapshot cannot install dependencies, and the sandbox refuses a host install, so
+  the JavaScript dependency trees the workspace already installed (every Git-ignored
+  `node_modules`) are copied into the snapshot as files (nothing runs); with none installed the
+  gates are `not_run` and say to install them in the workspace. Interactive session commands get a private
+  `/tmp` on a size-capped RAM tmpfs (`MARINA_CODE_SANDBOX_TMPFS_MB`, 1024 by default); a gate or
+  base run on a snapshot (finite and Marina-owned) gets a fresh host directory beside the snapshot
+  bound at `/tmp` instead, removed with it, so a large suite cannot outgrow the tmpfs. Tests that
+  need the network or the real home are skipped there or fail as pre-existing. When the sandbox refuses a
+  snapshot or base checkout (no bubblewrap, untrusted launcher, server state inside it, …) the
+  verification states the sandbox's own reason.
 - **What it hides or blocks**: the network (none at all), your home directory (only the Bun
   executable is visible; `HOME` is an empty scratch directory), the server's environment (API
   keys, tokens, `MARINA_*` settings), `/run`, `/var` and other users' files. The system directories

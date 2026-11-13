@@ -16,6 +16,7 @@ import { grant } from "../src/engine/safety-gates";
 import * as wire from "../src/protocol/wire";
 import { MarinaClient } from "../src/sdk/client";
 import type { EntityId } from "../src/types";
+import { cratesAvailable } from "./crates-available";
 import {
   SCRIPTED_TASK,
   type ScriptedCodingServer,
@@ -202,7 +203,12 @@ const selected = (process.env.MARINA_TEST_CONFORMANCE_LANGS ?? "")
   .map((s) => s.trim())
   .filter(Boolean);
 
-for (const language of LANGUAGES.filter((l) => !selected.length || selected.includes(l.id))) {
+/** The Rust driver needs its crates (no network and an empty cache: skipped). */
+const CRATES = await cratesAvailable();
+
+for (const language of LANGUAGES.filter(
+  (l) => (!selected.length || selected.includes(l.id)) && (l.id !== "rust" || CRATES),
+)) {
   describe(`SDK conformance: ${language.id}`, () => {
     let fixture: ScriptedCodingServer;
     let peer: MarinaClient;

@@ -18,9 +18,11 @@ pub const WIRE_PROTOCOL: &str = "marina.wire.v1";
 pub const CODING_ACTIVITY_KINDS: [&str; 10] = [
     "read", "search", "edit", "write", "patch", "run", "verify", "plan", "summary", "other",
 ];
-/// What the checks said. Only `passed` means checks ran on the change and passed.
-pub const VERIFICATIONS: [&str; 8] = [
+/// What the checks said. Only `passed` means checks ran on the change and passed;
+/// `not_applicable`: the task changed no files, so there was nothing to verify.
+pub const VERIFICATIONS: [&str; 9] = [
     "passed",
+    "not_applicable",
     "failed",
     "not_run",
     "error",

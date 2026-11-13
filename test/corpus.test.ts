@@ -109,7 +109,9 @@ describe("corpus index", () => {
     expect(() => searchCorpus("../x", "q", { dir })).toThrow("invalid corpus name");
     expect(parseCorpusUrl(corpusUrl("demo", "a/b c"))).toEqual({ name: "demo", docid: "a/b c" });
     expect(parseCorpusUrl("https://example.org")).toBeUndefined();
-    expect(isUnderTempDir(corpusDir({}))).toBe(false);
+    // The default follows HOME; with an ordinary home it is never under the temp dir. (The
+    // process's own HOME is a scratch directory under the temp dir when Code Mode runs this.)
+    expect(isUnderTempDir(corpusDir({ HOME: "/nonexistent-home/person" }))).toBe(false);
     expect(isUnderTempDir("/tmp/x")).toBe(true);
   });
 });

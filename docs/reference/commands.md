@@ -3387,6 +3387,17 @@ Effect: execute.
 Effect: execute.
 
 
+### `code verify candidate gates:repository`
+
+Effect: execute.
+
+
+### `code verify candidate -- <requirements json>`
+
+Effect: execute.
+
+- `field-0` (`requirements json`): json, required.
+
 ### `code verify delivery -- <json>`
 
 Effect: execute.

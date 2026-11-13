@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ContainerWorkspace, resolveContainerRunner } from "../src/coding/container-workspace";
 import {
+  CODE_RUN_HOME,
   HOST_GIT_CONFIG_ARGS,
   hostGitArgv,
   hostGitDriverOverrides,
@@ -300,7 +301,9 @@ describe("hostGitArgv / hostGitEnv", () => {
     try {
       const env = hostGitEnv();
       expect(Object.keys(env)).not.toContain("MARINA_TEST_SERVER_SECRET");
-      expect(env.HOME).not.toBe(process.env.HOME);
+      // Always the scratch home, never the server's own. Under Code Mode (a candidate
+      // verification of Marina itself) the process's HOME already is that scratch home.
+      expect(env.HOME).toBe(CODE_RUN_HOME);
       expect(env.GIT_CONFIG_NOSYSTEM).toBe("1");
     } finally {
       delete process.env.MARINA_TEST_SERVER_SECRET;

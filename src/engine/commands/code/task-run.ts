@@ -9,6 +9,7 @@ import {
   codingRunCrewMember,
   codingRunMetadata,
   codingVerificationReadiness,
+  codingVerificationSatisfied,
   codingVerificationUnchanged,
   endCodingRun,
   heartbeatCodingRun,
@@ -684,7 +685,7 @@ export async function reviewCodingRun(
   if (
     action === "approve" &&
     (meta.candidateId || meta.verificationRequirement) &&
-    meta.verification !== "passed"
+    !codingVerificationSatisfied(meta)
   ) {
     throw new Error(
       `${meta.verificationRequirement === "checks" ? "Approval" : "Candidate approval"} withheld: verification is ${meta.verification}. ${meta.verificationReason ?? "Inspect the check output."} Reverify the intended source in a new attempt before approval.`,

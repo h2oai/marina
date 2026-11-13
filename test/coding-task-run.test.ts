@@ -557,6 +557,8 @@ describe("durable coding task attempts", () => {
         );
         expect(initial.content_text).toBe(request);
         expect(attention[0]).toContain("Finish source and regression-test edits before");
+        // The task changed a file: a summary without verification stays progress.
+        writeFileSync(join(dir, "notes.md"), "work in progress\n");
         await send(worker, "summary I forgot the verification");
         expect(db.getCodingArtifact(initial.id)?.status).toBe("active");
         expect(db.getTaskClaim(codingRunMetadata(initial).taskId, worker.id)?.status).toBe(

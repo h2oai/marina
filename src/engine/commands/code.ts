@@ -10,6 +10,7 @@
 
 import { CodeSessionDriver } from "../../coding/code-session-driver";
 import { parseCommandArgv } from "../../coding/command-argv";
+import { parseRequirementChecks } from "../../coding/delivery";
 import { parseCodeSearchInput } from "../../coding/search-input";
 import { codingRunMetadata } from "../../coding/task-run";
 import {
@@ -261,7 +262,7 @@ const stopHandler: SubcommandHandler = async (c) => {
   await stopSessionAgent(c.ctx, c.eid, c.entity, c.deps);
 };
 const VERIFY_USAGE =
-  "code verify [start|candidate|delivery] [manifest:<path>] [dependencies:none|check|auto|<manager>] [scope:auto|changed|full|changed+full] [typecheck:auto|off] [budget:<duration>] [-- <delivery manifest JSON>]";
+  "code verify [start|candidate|delivery] [manifest:<path>] [gates:repository] [dependencies:none|check|auto|<manager>] [scope:auto|changed|full|changed+full] [typecheck:auto|off] [budget:<duration>] [-- <delivery manifest JSON | candidate requirement JSON>]";
 
 /**
  * Subcommand dispatch table, keyed by the profile-canonical subcommand name.
@@ -413,21 +414,27 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
       scope: { type: "string" },
       typecheck: { type: "string" },
       budget: { type: "string" },
+      gates: { type: "string" },
     });
     const mode = parsed.rest[0]?.toLowerCase();
+    const gates = parsed.values.gates as string | undefined;
     if (
       parsed.errors.length ||
       parsed.rest.length > 1 ||
-      (mode !== undefined && mode !== "start" && mode !== "candidate" && mode !== "delivery")
+      (mode !== undefined && mode !== "start" && mode !== "candidate" && mode !== "delivery") ||
+      (gates !== undefined && (gates !== "repository" || mode !== "candidate"))
     )
       throw new Error(`Usage: ${VERIFY_USAGE}`);
     const manifest = parsed.values.manifest as string | undefined;
+    // Candidate takes an optional inline requirement list; delivery needs its manifest.
     if (
       (manifest !== undefined && inline !== undefined) ||
-      (mode === "delivery") !== (manifest !== undefined || inline !== undefined)
+      (mode === "candidate"
+        ? manifest !== undefined
+        : (mode === "delivery") !== (manifest !== undefined || inline !== undefined))
     )
       throw new Error(
-        "Delivery verification requires inline JSON after -- or manifest:<relative path>, exclusively; other modes do not accept a manifest.",
+        "Delivery verification requires inline JSON after -- or manifest:<relative path>, exclusively; candidate verification takes only an inline requirement list after --; other modes take neither.",
       );
     let options: VerificationOptions;
     try {
@@ -448,7 +455,15 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
         c.deps,
         mode === "candidate",
         options,
-        inline !== undefined ? { json: inline } : manifest,
+        mode === "delivery" ? (inline !== undefined ? { json: inline } : manifest) : undefined,
+        mode === "candidate"
+          ? {
+              ...(gates === "repository" ? { gates: true } : {}),
+              ...(inline !== undefined
+                ? { requirementChecks: parseRequirementChecks(inline) }
+                : {}),
+            }
+          : undefined,
       );
       return;
     }
@@ -719,6 +734,8 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       { syntax: "code verify", effect: "execute" },
       { syntax: "code verify start", effect: "execute" },
       { syntax: "code verify candidate", effect: "execute" },
+      { syntax: "code verify candidate gates:repository", effect: "execute" },
+      { syntax: "code verify candidate -- <requirements json>", effect: "execute" },
       { syntax: "code verify delivery -- <json>", effect: "execute" },
       { syntax: "code verify delivery manifest:<path>", effect: "execute" },
       { syntax: "code verify candidate dependencies:auto", effect: "execute" },

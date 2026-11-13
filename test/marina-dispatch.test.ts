@@ -581,6 +581,33 @@ describe("one-shot exits say whether the work was verified", () => {
     const cases: Array<[Record<string, unknown>, string, number]> = [
       [{ verification: "passed" }, "verified", 0],
       [{ verification: "passed", requirements: coverage() }, "verified", 0],
+      // On the repository's gates a requirement list is optional: unmapped is still verified.
+      [
+        {
+          verification: "passed",
+          requirements: coverage({ listed: false, optional: true, verified: [] }),
+        },
+        "verified",
+        0,
+      ],
+      // A listed requirement left unobserved unverifies a gate pass too.
+      [
+        {
+          verification: "passed",
+          requirements: coverage({ optional: true, unverified: ["keeps order"] }),
+        },
+        "unverified",
+        3,
+      ],
+      // Nothing changed: nothing was verified, so the run completed but is not verified.
+      [
+        {
+          verification: "not_applicable",
+          verificationReason: "nothing to verify: no files changed during this task",
+        },
+        "no_changes",
+        3,
+      ],
       // A prohibition no check can observe does not unverify an observed delivery.
       [
         {
