@@ -236,7 +236,13 @@ describe("request-local coding destinations", () => {
     installWorkspace(async () => {
       entered.resolve();
       await release.promise;
-      return { path: "file.ts", content: "evidence", size: 8, truncated: false };
+      return {
+        path: "file.ts",
+        content: "evidence",
+        size: 8,
+        truncated: false,
+        page: { offset: 1, limit: 2000, column: 1, endLine: 1, numberedContent: "1: evidence" },
+      };
     });
     const pending = f.send("code read file.ts");
     try {
