@@ -1582,6 +1582,83 @@ To keep images elsewhere with Podman, set `MARINA_CODE_CONTAINER_STORAGE` (and o
 `MARINA_CODE_CONTAINER_RUNROOT`) to absolute paths. `code doctor` shows where images are stored
 and warns if that is on tmpfs or under `/tmp`, where images would fill memory.
 
+### Run any command in a local sandbox
+
+`code workspace runner sandbox` runs the session's commands in a local OS sandbox
+([bubblewrap](https://github.com/containers/bubblewrap) 0.10 or newer, plus `prlimit` from
+util-linux; Linux) instead of on the host. Inside it there is no allowlist: any command runs,
+including shell lines.
+
+```text
+code workspace runner sandbox                 # this session's commands run in the sandbox
+code run rg -n TODO src
+code run sh -c "grep -rn fixme src | sort | head -20"
+code workspace runner local                   # back to the host allowlist (if allowed)
+```
+
+- **What the sandbox allows**: any program installed on the system, pipes, `&&`, redirects
+  (`sh -c '<line>'` or `bash -c '<line>'`), Bun (`bun test`, `bun run typecheck`), and writes
+  anywhere in the workspace. `code verify` checks (candidate and delivery checks included) accept
+  the same commands and run in the same sandbox.
+- **What it hides or blocks**: the network (none at all), your home directory (only the Bun
+  executable is visible; `HOME` is an empty scratch directory), the server's environment (API
+  keys, tokens, `MARINA_*` settings), `/run`, `/var` and other users' files. The system directories
+  are read-only, `/tmp` is private and size-capped, and the repository's `.git` is read-only, so
+  git commands that write (commit, checkout, stash) fail inside. Commit with your own git outside.
+- **Limits**: every tmpfs is capped (`/tmp` and the hidden home `MARINA_CODE_SANDBOX_TMPFS_MB`,
+  1024 MiB each; `/dev/shm` `MARINA_CODE_SANDBOX_SHM_MB`, 64 MiB; `/dev` is read-only), and every
+  command runs under `prlimit`: 4096 processes, 16 GiB of address space per process, 4 GiB per file, no
+  core dumps (`MARINA_CODE_SANDBOX_NPROC`, `_AS_MB`, `_FSIZE_MB`).
+- **No host fallback**: if `bwrap` or `prlimit` is missing or untrusted, or the kernel refuses
+  the user namespaces bubblewrap needs, commands fail with the reason.
+- **What a sandbox workspace must be**: a git repository root with its own `.git`. It may not
+  contain your home directory or Marina's own state (its database, spend ledger, `~/.marina`, or the
+  server's `.env`), so the Marina checkout you run the server from cannot be sandboxed. Task input
+  folders are bound read-only; task output folders are not supported in the sandbox yet. A git
+  config that includes a file from inside the work tree is refused.
+- **Held in place**: each submodule's `.git` (nested and uninitialised ones too) and anything your
+  git config runs from inside the tree — a hooks directory such as husky's `.husky/`, an
+  fsmonitor, filter, diff or merge drivers, `!` aliases — are read-only inside the sandbox and
+  cannot be moved. Every key of every git config file is checked. A setting that builds a path at
+  run time (`$`, backticks) in a section git may run, or reaches into the tree through shell
+  syntax, a symlink, or a path that does not exist yet, is refused; the message names the key and
+  the file, never the value. Content drivers (filters such as nbstripout, diff textconv or
+  external commands, merge drivers) are refused, because they can read work-tree files they do not
+  name; git-lfs's own filters are allowed. A server `PATH` with a relative entry (such as
+  `node_modules/.bin`) is refused too; this checks the server's PATH, not your shell's.
+- **Projects with git hooks**: if the repository already has hooks (pre-commit, husky,
+  `hook.<name>.command`), Marina says so at start and with every result. Those hooks run code from
+  the work tree on your next commit, so review the changes before committing. If a command still changed a submodule's `.git`, it fails, nothing is
+  restored, and every command on that folder (any session) stays held until you have looked at the
+  repository and run `code workspace runner release` (a person only); the owner and operators get
+  an ops-inbox item. Your own plain `git status` would otherwise run whatever a planted submodule
+  config names.
+- **No dependency installs**: there is no network, so `code verify dependencies:auto` reports an
+  install as not run. Install dependencies before you start.
+- **Toolchains in your home directory** (`~/.cargo`, `~/.nvm`, `~/.local/bin`, pyenv) are hidden
+  with it; tools from the system packages and Bun work.
+
+Choosing the sandbox needs the same `code.exec` gate as `code run`; it is stricter than the host,
+so no other approval is involved. Operators set `MARINA_CODE_SANDBOX`: `available` (default) lets
+sessions choose it; `default` makes it the runner for every local session without its own setting,
+and only a person can move a session back to the host; `required` makes it the only runner (no
+in-world command leaves it, and a `local` setting stored earlier makes commands fail rather than run
+on the host); `off` refuses it. These are protected settings the dashboard cannot change. An
+operator-required container (`MARINA_CODE_CONTAINER_REQUIRED`, or `MARINA_CODE_CONTAINER_IMAGE`)
+still wins. `code start` says which runner is in effect.
+
+From the terminal, `marina --sandbox .` (or `marina --sandbox -p "<task>" .`) starts the folder
+session with the sandbox required. It applies to Marina's own coder; with `--agent
+claude|codex|pi` Marina prints a notice that the native agent runs commands in its own sandbox.
+
+**What stays yours**: like any coding agent's output, files it writes (scripts, `package.json`,
+build configuration) run with your full rights when you later run them.
+
+**What it does not protect**: everything in the workspace is readable, including a project
+`.env` or credentials in `.git/config`, and what a command prints goes to the model. `/etc` and
+`/opt` are readable. The kernel is shared with the host, and there is no seccomp filter yet and no
+CPU limit beyond the command timeout.
+
 ### Sandbox providers: use the sandbox you already have
 
 Besides the host and a container image, a coding session can run its commands in an isolated

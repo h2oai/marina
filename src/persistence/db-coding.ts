@@ -265,7 +265,16 @@ export function listCodingArtifacts(
   sessionId: string,
   limit = 20,
   kind?: string,
+  status?: string,
 ): CodingArtifactRow[] {
+  // Kind and status filter BEFORE the limit, so a setting is never lost behind
+  // newer artifacts of other kinds.
+  if (kind !== undefined && status !== undefined)
+    return db
+      .query(
+        "SELECT * FROM coding_artifacts WHERE session_id = ? AND kind = ? AND status = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+      )
+      .all(sessionId, kind, status, limit) as CodingArtifactRow[];
   if (kind !== undefined)
     return db
       .query(

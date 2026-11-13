@@ -21,6 +21,7 @@ import { parseModifiers } from "../../parse-input";
 import { reassignWriter } from "./crew";
 import { clearSessionExecMode } from "./exec";
 import { formatProfileTry } from "./profiles";
+import { runnerSummary } from "./runner";
 import {
   ACTIVE_MODAL_KEY,
   ACTIVE_SESSION_KEY,
@@ -179,6 +180,7 @@ export function startSession(
       success(`Coding session started: ${session.id}`),
       `Title: ${session.title}`,
       `Workspace: ${session.workspace_root}`,
+      runnerSummary(deps.db, session),
       ...(session.execution_target === "local" && getWorkspaceRegistry(deps).fileGrants.length
         ? (workspaceForSession(deps, session).describe?.().fileGrants ?? [])
         : []

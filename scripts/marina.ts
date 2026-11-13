@@ -99,6 +99,8 @@ export type Dispatch =
       verification?: PrintVerification;
       /** The coder's thinking level (`MARINA_CODE_THINKING` for the folder server). */
       thinking?: string;
+      /** Run Marina's coder's commands in the bubblewrap sandbox (`MARINA_CODE_SANDBOX=required`). */
+      sandbox?: boolean;
       /** Code Mode driver for the session (`code driver <name>`): single (default) or crew. */
       driver?: CodeDriverName;
       json?: boolean;
@@ -272,6 +274,7 @@ export function parseDispatch(
   let allowUnverified: boolean | undefined;
   let verification: PrintVerification | undefined;
   let thinking: string | undefined;
+  let sandbox: boolean | undefined;
   let driver: CodeDriverName | undefined;
   let json: boolean | undefined;
   let print: string | undefined;
@@ -311,6 +314,10 @@ export function parseDispatch(
     }
     if (arg === "--fresh") {
       fresh = true;
+      continue;
+    }
+    if (arg === "--sandbox") {
+      sandbox = true;
       continue;
     }
     if (arg === "--verbose") {
@@ -399,6 +406,7 @@ export function parseDispatch(
     if (
       dir !== undefined ||
       fresh ||
+      sandbox ||
       print !== undefined ||
       allowExec ||
       dangerouslyAllowAll ||
@@ -435,6 +443,7 @@ export function parseDispatch(
     ...(json ? { json } : {}),
     ...(verification ? { verification } : {}),
     ...(thinking ? { thinking } : {}),
+    ...(sandbox ? { sandbox } : {}),
     ...(driver ? { driver } : {}),
     ...(fresh !== undefined ? { fresh } : {}),
     ...(print !== undefined ? { print } : {}),
@@ -531,6 +540,13 @@ Options:
                                line; everything else goes to stderr
   --verbose                    print startup details (database, server endpoints,
                                federation address) before the prompt
+  --sandbox                    run the coder's commands in a local OS sandbox
+                               (bubblewrap + prlimit, Linux) and require it for the
+                               session: any command, including sh -c pipelines; no
+                               network; home directory hidden; .git read-only; the
+                               folder stays writable. Never falls back to the host:
+                               without bwrap, commands fail. Applies to Marina's own
+                               coder; native --agent runtimes keep their own sandbox
   --fresh                      throwaway database (deleted on exit) instead of the
                                per-folder default at ~/.marina/projects/<slug>/marina.db
   --allow-exec                 permit non-allowlisted host commands, prompting for
@@ -1013,6 +1029,7 @@ if (import.meta.main) {
         allowUnverified: dispatch.allowUnverified,
         verification: dispatch.verification,
         thinking: dispatch.thinking,
+        sandbox: dispatch.sandbox,
         driver: dispatch.driver,
         json: dispatch.json,
       }).catch((error: unknown) => {

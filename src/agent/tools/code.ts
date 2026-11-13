@@ -230,7 +230,8 @@ const codeSearchSchema = Type.Object({
 
 const codeRunSchema = Type.Object({
   command: Type.String({
-    description: "Allowed workspace command, for example test or git status --short",
+    description:
+      "Workspace command, for example test or git status --short; in a sandbox session any command, e.g. sh -c 'rg foo src | head'",
   }),
 });
 
@@ -429,7 +430,7 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
     wrap(
       "marina_code_run",
       "Code Run",
-      "Run one allowed workspace command and store the command-output artifact.",
+      "Run one workspace command and store the command-output artifact. On the host only allowlisted commands run (code run allowlist); in a sandbox-runner session (code workspace runner sandbox) any command runs, including sh -c '<line>' pipelines, with no network, the home directory hidden and .git read-only.",
       codeRunSchema,
       (p) =>
         `code run ${requiredSingleLineCodeParam(p.command as string | undefined, "command", "command is required")}`,
