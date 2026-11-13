@@ -11,8 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../../src/engine/engine";
 import { Logger } from "../../src/engine/logger";
-import { closeWorldMemoryService } from "../../src/memory/world-service";
+import { closeWorldMemoryService, worldMemoryService } from "../../src/memory/world-service";
 import { DashboardBroadcaster } from "../../src/net/dashboard-ws";
+import { setMemoryRateLimit } from "../../src/net/memory/memory-service-api";
 import { setEndpointConfig } from "../../src/net/model/model-endpoint";
 import { WebSocketServer } from "../../src/net/websocket-server";
 import { MarinaDB } from "../../src/persistence/database";
@@ -168,6 +169,9 @@ export async function startScriptedCodingServer(admins: string[]): Promise<Scrip
     logger: new Logger({ level: "error" }),
   });
   engine.registerRoom(roomId("sdk/start"), { short: "Start", long: "Start", exits: {} });
+  // A tight memory budget (a burst of 20, then one write every 250 ms): the conformance
+  // memory scenario's writes meet a real rate limit however fast each SDK's client is.
+  setMemoryRateLimit(worldMemoryService(db), { burst: 20, everyMs: 250 });
   const server = new WebSocketServer(engine, 0);
   server.setDb(db);
   // Live dashboard events (`/dashboard-ws`): the panel event stream SDKs subscribe to.

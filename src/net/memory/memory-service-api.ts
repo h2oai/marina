@@ -30,6 +30,22 @@ import {
 } from "../http-utils";
 
 const limiters = new WeakMap<MemoryService, RateLimiter>();
+
+/**
+ * Set one service's per-principal pacing for network clients instead of the
+ * default (a 100-request burst, then one every 40 ms). The SDK conformance
+ * fixture uses a tight budget so every SDK meets a real rate limit, however
+ * fast its client is.
+ */
+export function setMemoryRateLimit(
+  service: MemoryService,
+  budget: { burst: number; everyMs: number },
+): void {
+  limiters.set(
+    service,
+    new RateLimiter({ maxTokens: budget.burst, refillRate: 1, refillInterval: budget.everyMs }),
+  );
+}
 const headers = {
   "Cache-Control": "no-store",
   "Access-Control-Allow-Origin": "*",
