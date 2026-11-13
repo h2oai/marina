@@ -197,6 +197,8 @@ export function registerOperationCommands(engine: Engine): void {
   }
   engine.commands.registerBuiltin(
     codeCommand({
+      // Sessions on this server's own checkout edit in a worktree, never the live tree.
+      marinaRoot: MARINA_ROOT,
       describeVisual: (source, question, entity) =>
         describeVisual(engine, source, {
           question,

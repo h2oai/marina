@@ -389,7 +389,11 @@ export function refuseTelnetDispatch(ctx: RoomContext, eid: EntityId, deps: Code
 }
 
 export interface CodeDeps {
-  /** The source tree this server runs from; defaults to `MARINA_ROOT` (test seam). */
+  /**
+   * The source tree this server runs from (the server passes its runtime
+   * root). A session on it edits in its own worktree; unset, nothing is
+   * isolated automatically.
+   */
   marinaRoot?: string;
   describeVisual?: (
     source: VisualSource,

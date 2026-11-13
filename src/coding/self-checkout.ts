@@ -7,7 +7,7 @@ import { IS_COMPILED, MARINA_ROOT } from "../runtime-paths";
 
 /**
  * Whether `root` is the source tree this Marina server runs from: same real
- * path as `MARINA_ROOT`, a git checkout, and not a compiled binary. Package
+ * path as the runtime MARINA_ROOT path, a git checkout, and not a compiled binary. Package
  * names, READMEs and remotes never count, so a fork, a second clone or a
  * linked worktree is an ordinary repository.
  */

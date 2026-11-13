@@ -57,10 +57,7 @@ export async function isolateLiveMarinaCheckout(
 ): Promise<CodingSessionRow | null> {
   if (session.execution_target !== "local") return session;
   const root = session.worktree_path ?? session.workspace_root;
-  const live = deps.marinaRoot
-    ? isLiveMarinaCheckout(root, deps.marinaRoot, false)
-    : isLiveMarinaCheckout(root);
-  if (!live) return session;
+  if (!deps.marinaRoot || !isLiveMarinaCheckout(root, deps.marinaRoot)) return session;
   const created = await createSessionWorktree(session.workspace_root, session.id, {
     hostExecForbidden: deps.hostExecForbidden === true,
   });
