@@ -52,7 +52,7 @@ it("names a failing test buried in 600 lines of output, from the whole output", 
   expect(result.digest?.tail.split("\n").length).toBeLessThanOrEqual(40);
   expect(result.digest?.tail).toContain(" 1 fail");
   const text = formatFailureDigest(result.digest!, {
-    failures: new Set(["something else"]),
+    identities: [{ file: "src/other.test.ts", name: "something else", signature: "" }],
     commit: "a".repeat(40),
   });
   expect(text).toContain("- paging > keeps the last page (/tmp/snap/src/paging.test.ts:14) — NEW");

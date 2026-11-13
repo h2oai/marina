@@ -378,10 +378,8 @@ describe("repository gates", () => {
         .filter((a) => a.kind === "verification")
         .at(-1)!.content_text;
       expect(text).toContain("CAUSED BY THIS CHANGE:");
-      expect(text).toMatch(/- add sums \(.*add\.test\.ts:3\) — NEW: passes on the base/);
-      expect(text).toMatch(
-        /- label \(.*label\.test\.ts:3\) — also fails on base [0-9a-f]{12} \(pre-existing\)/,
-      );
+      expect(text).toMatch(/- add sums \(add\.test\.ts:3\) — NEW: does not fail on the base/);
+      expect(text).toMatch(/- label \(label\.test\.ts:3\) — also fails on base [0-9a-f]{12}/);
       expect(text).toContain("First error:");
       await send("code summary Done");
       expect(f.db.getCodingArtifact(run!.id)?.status).toBe("active");
@@ -398,6 +396,107 @@ describe("repository gates", () => {
       expect(text).toContain("CAUSED BY THIS CHANGE:");
       await send("code summary Done");
       expect(f.db.getCodingArtifact(run!.id)?.status).toBe("active");
+    });
+
+    it("[R1] a test the change broke is not excused by a same-named test failing elsewhere", async () => {
+      writeFileSync(join(root, "a.test.ts"), test("same", 'expect(label).toBe("never");'));
+      writeFileSync(join(root, "b.test.ts"), test("same", 'expect(label).toBe("ok");'));
+      gitIn(root, "add", ".");
+      gitIn(root, "commit", "--quiet", "-m", "a red, b green");
+      await begin(true);
+      breakLabel();
+      const result = await verify("code verify candidate");
+      expect((result as { preexistingOnly?: boolean }).preexistingOnly).toBeFalsy();
+      const text = f.db
+        .listCodingRunArtifacts(run!.id)
+        .filter((a) => a.kind === "verification")
+        .at(-1)!.content_text;
+      expect(text).toContain("CAUSED BY THIS CHANGE");
+      expect(text).toContain("b.test.ts::same");
+    });
+
+    it("[R5] code ship refuses a pass whose checks repaired the snapshot's source", async () => {
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({
+          scripts: {
+            test: `printf '%s\\n' 'export const add = (a: number, b: number) => a + b;' 'export const label = "ok";' > src.ts && bun test`,
+          },
+        }),
+      );
+      gitIn(root, "commit", "--quiet", "-am", "a test script that rewrites source");
+      await begin(true);
+      breakLabel();
+      const result = await verify("code verify candidate");
+      expect(result.outcome).toBe("passed");
+      const evidence = result as unknown as { tree: string; freshness: string };
+      expect(evidence.freshness).toBe("stale");
+      expect(shipVerificationRefusal(f.db, "s", evidence.tree)).toContain(
+        "changed the snapshot's source",
+      );
+    });
+
+    it("[R6] code ship reads the latest verification attempt, not an older pass", async () => {
+      await begin(true);
+      writeFileSync(
+        join(root, "src.ts"),
+        `${await Bun.file(join(root, "src.ts")).text()}// tidy\n`,
+      );
+      const passed = await verify("code verify candidate");
+      const tree = (passed as unknown as { tree: string }).tree;
+      expect(shipVerificationRefusal(f.db, "s", tree)).toBeNull();
+      const later = f.db.createCodingArtifact({
+        sessionId: "s",
+        kind: "verification_request",
+        title: "Background verification",
+        status: "running",
+        contentText: "test",
+        metadata: { commands: ["test"] },
+        createdBy: "Owner",
+      });
+      expect(shipVerificationRefusal(f.db, "s", tree)).toContain("still running");
+      f.db.updateCodingArtifact(later.id, { status: "error", metadata: { error: "runner lost" } });
+      expect(shipVerificationRefusal(f.db, "s", tree)).toContain(
+        "ended without a result (runner lost)",
+      );
+    });
+
+    it("[retention] a verification at the 64-pin limit retires stale refs first instead of refusing", async () => {
+      const tree = gitIn(root, "rev-parse", "HEAD^{tree}").trim();
+      const date = `${Math.floor(Date.now() / 1000) - 86_400} +0000`;
+      for (let i = 0; i < 64; i++) {
+        const commit = Bun.spawnSync(
+          ["git", "commit-tree", tree, "-m", "Marina source candidate (not an operator branch)"],
+          {
+            cwd: root,
+            env: {
+              ...process.env,
+              GIT_AUTHOR_NAME: "Marina candidate",
+              GIT_AUTHOR_EMAIL: "candidate@marina.invalid",
+              GIT_COMMITTER_NAME: "Marina candidate",
+              GIT_COMMITTER_EMAIL: "candidate@marina.invalid",
+              GIT_AUTHOR_DATE: date,
+              GIT_COMMITTER_DATE: date,
+            },
+          },
+        )
+          .stdout.toString()
+          .trim();
+        gitIn(
+          root,
+          "update-ref",
+          `refs/marina/candidates/00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+          commit,
+        );
+      }
+      await begin(true);
+      writeFileSync(
+        join(root, "src.ts"),
+        `${await Bun.file(join(root, "src.ts")).text()}// tidy\n`,
+      );
+      expect((await verify("code verify candidate")).outcome).toBe("passed");
+      const refs = gitIn(root, "for-each-ref", "refs/marina/candidates/").trim().split("\n");
+      expect(refs.length).toBe(49);
     });
 
     it("[11] code ship refuses a change the repository's gates have not verified", async () => {
@@ -509,6 +608,18 @@ describe("repository gates", () => {
         ),
       );
       expect(end.verification).toBe("stale");
+    });
+
+    it("[R7] a completion read after the deadline is a timeout, never a pass", async () => {
+      const end = await native(
+        () =>
+          writeFileSync(
+            join(root, "src.ts"),
+            `${readFileSync(join(root, "src.ts"), "utf8")}// a\n`,
+          ),
+        { deadlineAt: Date.now() + 1 },
+      );
+      expect(end).toBe("timeout");
     });
 
     it("[9] one deadline covers the gates; past it the result is a timeout (exit 2)", async () => {

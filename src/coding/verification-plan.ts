@@ -30,11 +30,12 @@
  *    runner used and why. Such a run passes only when it reports tests ran.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { posix } from "node:path";
+import { cpSync, existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, posix } from "node:path";
 import { parseDuration } from "../engine/commands/format-duration";
 import { escapeRegExp } from "../engine/regexp";
 import type { CandidatePreparation } from "./candidate-dependencies";
+import { hostGitArgv, hostGitEnv } from "./host-git";
 import type { WorkspaceRunResult } from "./local-workspace";
 import {
   isTestCommand,
@@ -253,6 +254,12 @@ export interface PreparationPlan {
   note?: string;
   /** Prefix for Python test commands after an install into a project environment. */
   wrapTests?: string;
+  /**
+   * A sandboxed snapshot (no network, no host install): copy the dependency trees the session's
+   * own workspace already installed (`node_modules`, as files; nothing runs) from `from` into
+   * `to` when the probe finds none.
+   */
+  copyDependencies?: { from: string | readonly string[]; to: string };
   /**
    * The runner to switch to when the pytest probe shows pytest is not importable
    * (`unittest` or a workspace test script). Set only alongside fallback steps.
@@ -503,6 +510,46 @@ export async function executePreparation(
           status: "not_run",
           reason: `Dependency installation failed (${plan.install.join(" ")}, exit ${install.exitCode}${install.timedOut ? ", timed out" : ""}).${note}`,
           runs: [probe, install],
+        };
+  }
+  if (plan.copyDependencies && !ok(probe)) {
+    let copied: string[];
+    try {
+      copied = [];
+      // The first source that has installed trees: a session worktree of a checkout has none
+      // of its own, and takes the checkout's.
+      for (const from of typeof plan.copyDependencies.from === "string"
+        ? [plan.copyDependencies.from]
+        : plan.copyDependencies.from) {
+        copied = copyInstalledDependencies(from, plan.copyDependencies.to);
+        if (copied.length) break;
+      }
+    } catch (error) {
+      return {
+        status: "error",
+        reason: `Copying dependencies: ${errorText(error)}`,
+        runs: [probe],
+      };
+    }
+    if (!workspace.runPreparationStep) throw new Error("unreachable: probe ran");
+    let again: WorkspaceRunResult;
+    try {
+      again = await workspace.runPreparationStep([...plan.probe], beforeSpawn);
+    } catch (error) {
+      if (isVerificationStop(error)) throw error;
+      return { status: "error", reason: errorText(error), runs: [probe] };
+    }
+    return ok(again)
+      ? {
+          status: "ready",
+          reason: `Copied the workspace's installed dependencies into the sandboxed snapshot (${copied.join(", ")}); nothing was installed and no script ran.${note}`,
+          runs: [],
+          policy: "copied-from-workspace",
+        }
+      : {
+          status: "not_run",
+          reason: `${copied.length ? "The workspace's installed dependencies were copied, but " : "The workspace has no installed dependencies to copy, and "}the sandbox has no network to install them. Install them in the workspace (for example bun install) and verify again.${note}`,
+          runs: [probe, again],
         };
   }
   // Nothing could install pytest: switch runners rather than report no checks.
@@ -1145,4 +1192,37 @@ export function aggregateVerification(input: {
       reason: `${blocking[0]!.step.command}: ${blocking[0]!.outcome.reason}`,
     };
   return { outcome: "passed", reason: "passed" };
+}
+
+/**
+ * Copy the dependency trees a workspace has installed (every Git-ignored `node_modules`
+ * directory) into a snapshot of it, as files: links verbatim, nothing executed. For a
+ * sandboxed verification, which has no network and may not install on the host.
+ */
+export function copyInstalledDependencies(from: string, to: string): string[] {
+  if (!existsSync(from)) return [];
+  const listed = Bun.spawnSync(
+    hostGitArgv(
+      ["git", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+      from,
+    ),
+    { cwd: from, env: hostGitEnv(), stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+  );
+  if (listed.exitCode !== 0) throw new Error("the workspace's ignored files could not be listed");
+  const trees = listed.stdout
+    .toString()
+    .split("\0")
+    .map((entry) => entry.replace(/\/$/, ""))
+    .filter(
+      (rel) =>
+        rel &&
+        rel.split("/").at(-1) === "node_modules" &&
+        !rel.split("/").some((part) => part === ".." || part === ".git"),
+    );
+  for (const rel of trees) {
+    const source = join(from, rel);
+    if (!lstatSync(source).isDirectory()) continue;
+    cpSync(source, join(to, rel), { recursive: true, verbatimSymlinks: true, force: false });
+  }
+  return trees;
 }

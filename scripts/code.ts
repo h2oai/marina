@@ -666,8 +666,13 @@ export async function verifyNativeTurn(input: {
     wake();
   });
   let report: GateReport | Error | undefined;
+  // Nothing is accepted past the deadline: not admission, not a completion that arrived
+  // before it was read, not a freshness check that ran over.
+  const late = () => Date.now() >= input.deadlineAt;
   try {
+    if (late()) return "timeout";
     const admitted = await input.run("code verify candidate gates:repository");
+    if (late()) return "timeout";
     const receipt = admitted
       .map((p) => p.data?.code as { event?: string; artifactId?: string } | undefined)
       .find((code) => code?.event === "verification_started")?.artifactId;
@@ -676,9 +681,10 @@ export async function verifyNativeTurn(input: {
       finished.find(
         (p) => (p.data?.code as { artifactId?: string } | undefined)?.artifactId === receipt,
       );
-    while (!mine()) {
+    for (;;) {
+      if (late()) return "timeout";
+      if (mine()) break;
       const left = input.deadlineAt - Date.now();
-      if (left <= 0) return "timeout";
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, left);
         wake = () => {
@@ -698,6 +704,7 @@ export async function verifyNativeTurn(input: {
       if (!report.candidateFingerprint || current !== report.candidateFingerprint)
         report = { ...report, freshness: "stale" };
     }
+    if (late()) return "timeout";
   } catch (error) {
     report = error instanceof Error ? error : new Error(String(error));
   } finally {

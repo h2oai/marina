@@ -424,8 +424,11 @@ code ship [merge] [-- <title>]
    nothing; neither does a change that moved after its trial.
 2. The repository's own gates must have verified exactly this change: the session's latest
    verification is a passed `code verify candidate gates:repository` whose snapshot has the
-   change's tree. Anything else (no verification, another kind, failed, pre-existing failures,
-   or a change that moved since) is refused with the label and the command to run. A pull
+   change's tree, read through the latest verification attempt (a newer request that is still
+   running, or ended without a result, is not hidden behind an older pass), with the snapshot's
+   source left intact by the checks and still current when they finished (the evidence rule a
+   task submission uses). Anything else (no verification, another kind, failed, pre-existing
+   failures, stale or altered source, or a change that moved since) is refused with the label and the command to run. A pull
    request opened by Marina never carries a change its repository's checks fail.
 3. The worktree is committed on its own `marina/session-*` branch under the operator's Git
    identity, with no hooks and no repository-supplied drivers.
@@ -806,20 +809,36 @@ root with a test runner Marina detects (a `test` script, pytest, cargo, go, Mave
   match the folder.
 
   A failed gate runs once more on the task's base commit (HEAD when the task started), checked
-  out privately with the repository's objects. If every test that failed with the change also
-  fails there, the step is `PRE-EXISTING`: the coder is told at once that the failure exists
+  out privately with the repository's objects, under the same runner. A failure is labelled
+  `PRE-EXISTING` only on positive evidence: every test failing with the change is identified by
+  its repository-relative file and qualified name (two files' same-named tests are different
+  tests), fails on the base with the same first error, and fails the same way on a second base
+  run (the failing tests alone, `bun test <files>` or `pytest <node ids>`, else the whole step
+  when it took at most 5 minutes). Then the coder is told at once that the failure exists
   without its change and to submit, noting it; the task completes but stays unverified
   (`failed`, reason "the repository's gates already fail without this change: <step>", exit
-  `3`). If the step passes on the base, or a test fails that does not fail there, it is the
-  change's failure (`CAUSED BY THIS CHANGE`). Every failed step carries a digest built from its
-  whole output (the stored excerpt is only the first 64 KB): the failing tests with file:line
-  where the runner prints them (bun `(fail)`, pytest `FAILED`/`ERROR`, go `--- FAIL`), the first
+  `3`). A test that fails with the change but not on the base is the change's failure (`CAUSED
+  BY THIS CHANGE`). Anything less is `INCONCLUSIVE`: unnamed failures (a syntax error, a crash),
+  more than 5000 failures, a cut output line, a base that could not be prepared or run, a
+  different first error, or a failure that does not repeat. The coder is told to treat it as
+  its own failure, investigate and fix it, or report it as blocked with the evidence, never to
+  wait; the result stays unverified. Every failed step carries a digest built from its whole
+  output (the stored excerpt is only the first 64 KB): the failing tests with file:line where
+  the runner prints them (bun `(fail)`, pytest `FAILED`/`ERROR`, go `--- FAIL`), the first
   assertion error, the last 40 lines (at most 4 KB), and for each failing test whether it also
   fails on the base. A coder maps each stated requirement to a check run in
   the snapshot before the gates: `code verify candidate -- {"checks":["bun test
   test/paging.test.ts"],"requirements":[{"text":"the last page is kept","checks":[0]}]}`. The run
   is `verified` only when the gates and every listed requirement's check pass. With no list it is
   still verified on the gates, and the result says `requirements not mapped`.
+
+  Each candidate snapshot is pinned under `refs/marina/candidates/<uuid>` so its evidence can be
+  re-checked; capture refuses at 64 pins. Before each capture Marina retires the pins nobody
+  needs (`src/coding/candidate-retention.ts`): those of attempts that ended (approved, rejected,
+  cancelled, failed, interrupted) or were superseded by a newer candidate, any older than 14
+  days, and past 48, the oldest of the rest. It keeps the latest candidate of an open task's
+  attempt, never touches a pin younger than 10 minutes, and deletes only refs Marina created
+  (the candidate name and Marina's fixed commit identity and message), each by compare-and-swap.
 - `delivery` (default elsewhere, or `--verification delivery`): a JSON manifest of output files and
   checks, run alone in a clean directory with `code verify delivery -- <manifest JSON>`; every
   stated requirement mapped to a check that observes it, or the run is unverified.
@@ -1703,7 +1722,18 @@ code workspace runner local                   # back to the host allowlist (if a
 - **What the sandbox allows**: any program installed on the system, pipes, `&&`, redirects
   (`sh -c '<line>'` or `bash -c '<line>'`), Bun (`bun test`, `bun run typecheck`), and writes
   anywhere in the workspace. `code verify` checks (candidate and delivery checks included) accept
-  the same commands and run in the same sandbox.
+  the same commands and run in the same sandbox, and so do the repository's gates: the snapshot's
+  steps, a failed gate's re-run on the base, and the gates after a native one-shot. With no
+  network the snapshot cannot install dependencies, and the sandbox refuses a host install, so
+  the JavaScript dependency trees the workspace already installed (every Git-ignored
+  `node_modules`) are copied into the snapshot as files (nothing runs); with none installed the
+  gates are `not_run` and say to install them in the workspace. The sandbox's private `/tmp` is a
+  size-capped tmpfs (`MARINA_CODE_SANDBOX_TMPFS_MB`, 1024 by default): a large suite can fill it.
+  Marina's own full suite does (its Python SDK conformance run then stalls past its 120 s limit),
+  and passes in the sandbox with 16384; set it when the gates verify a large repository. Tests that
+  need the network or the real home are skipped there or fail as pre-existing. When the sandbox refuses a
+  snapshot or base checkout (no bubblewrap, untrusted launcher, server state inside it, …) the
+  verification states the sandbox's own reason.
 - **What it hides or blocks**: the network (none at all), your home directory (only the Bun
   executable is visible; `HOME` is an empty scratch directory), the server's environment (API
   keys, tokens, `MARINA_*` settings), `/run`, `/var` and other users' files. The system directories

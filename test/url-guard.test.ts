@@ -351,6 +351,8 @@ describe("guardedFetch (redirect-aware SSRF guard)", () => {
   });
 
   it("passes a normal non-redirect response through", async () => {
+    // A stubbed resolver: the guard fails closed, so real DNS would make this need a network.
+    __setDnsResolverForTest(async () => [PUBLIC_IP]);
     globalThis.fetch = (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch;
     const resp = await guardedFetch("http://example.com");
     expect(resp.status).toBe(200);

@@ -7,6 +7,7 @@ import {
   materializeGitCommit,
   observeCandidate,
 } from "../../../coding/candidate";
+import { retireCandidateRefs } from "../../../coding/candidate-retention";
 import { parseCommandArgv } from "../../../coding/command-argv";
 import {
   captureDelivery,
@@ -16,6 +17,7 @@ import {
   type RequirementChecks,
   readDeliveryManifest,
 } from "../../../coding/delivery";
+import { attributeFailure, type FailureDigest } from "../../../coding/failure-digest";
 import { LocalWorkspace, normalizeAllowedCodeCommand } from "../../../coding/local-workspace";
 import {
   assessCodingVerification,
@@ -35,7 +37,8 @@ import { assertBoundedVerification } from "../../../coding/verification-runner";
 import { codingRunContext } from "../../../persistence/coding-run-context";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
-import { getErrorMessage } from "../../errors";
+import { getErrorMessage, tryLog } from "../../errors";
+import { Logger } from "../../logger";
 import { checkUnattendedGate } from "../../safety-gates";
 import { isLocalUngated } from "../../trust-profile";
 import {
@@ -56,6 +59,8 @@ import {
   sendCode,
 } from "./shared";
 import { workspaceForSession } from "./workspace";
+
+const logger = new Logger();
 
 /** Opt-in admission receipt; ordinary verify retains its synchronous completion contract. */
 export async function startVerification(
@@ -281,6 +286,18 @@ export async function startVerification(
           livePlan,
         );
       let base: ReturnType<typeof baseRerun> | undefined;
+      // Retire candidate refs nobody needs before pinning another, so retained snapshots
+      // never reach the capture limit and stop verification (src/coding/candidate-retention.ts).
+      tryLog(logger, "code", "candidate ref retirement failed", () => {
+        const { retired } = retireCandidateRefs(root, deps.db);
+        if (retired.length)
+          deps.db.createCodingEvent({
+            sessionId: session.id,
+            actor: entity.name,
+            kind: "candidate_refs_retired",
+            payload: { count: retired.length, refs: retired },
+          });
+      });
       const snapshot = await workspace.captureCandidate!(undefined, beforeSpawn);
       try {
         const captured = deps.db.createCodingArtifact({
@@ -334,6 +351,18 @@ export async function startVerification(
             command: forCandidate(step.command),
           })),
         });
+        // A sandboxed snapshot has no network and may not install on the host: its JavaScript
+        // dependencies are the workspace's own installed trees, copied in as files.
+        if (prepared.describe().runner?.kind === "sandbox")
+          for (const preparation of [
+            ...(snapshotPlan.preparation ? [snapshotPlan.preparation] : []),
+            ...(snapshotPlan.morePreparation ?? []),
+          ])
+            if (preparation.language === "javascript")
+              preparation.copyDependencies = {
+                from: [root, session.workspace_root],
+                to: snapshot.directory,
+              };
         const plan = {
           ...snapshotPlan,
           commands: [...(requirementChecks?.checks ?? []), ...snapshotPlan.commands].map(
@@ -558,7 +587,16 @@ function baseRerun(input: {
       ...(input.plan.preparation ? [input.plan.preparation] : []),
       ...(input.plan.morePreparation ?? []),
     ]) {
-      const result = await executePreparation(preparation, workspace, input.beforeSpawn);
+      const result = await executePreparation(
+        preparation.copyDependencies
+          ? {
+              ...preparation,
+              copyDependencies: { ...preparation.copyDependencies, to: checkout.directory },
+            }
+          : preparation,
+        workspace,
+        input.beforeSpawn,
+      );
       if (result.status === "not_run" || result.status === "error")
         return { workspace, dispose: checkout.dispose, unready: result.reason };
       wrapTests ??= result.wrapTests;
@@ -569,35 +607,65 @@ function baseRerun(input: {
     rerun: async (
       step: VerificationStep,
       command: string[],
-      failing?: readonly string[],
-    ): Promise<BaseRerun | undefined> => {
-      if (!input.baseCommit) return undefined;
+      change: FailureDigest | undefined,
+    ): Promise<BaseRerun> => {
+      const baseCommit = input.baseCommit ?? "";
+      const inconclusive = (why: string): BaseRerun => ({
+        baseCommit,
+        attribution: attributeFailure({ change, baseUnavailable: why }),
+      });
+      if (!input.baseCommit) return inconclusive("the task has no base commit");
       ready ??= open();
       const base = await ready;
-      if (base.unready) return undefined;
-      const stored = await executeWorkspaceCommand(
-        input.entity,
-        input.deps,
-        input.session,
-        command,
-        { workspace: base.workspace, beforeSpawn: input.beforeSpawn },
-        step.timeoutMs,
-      );
-      const outcome = classifyStep(step, stored.result);
-      const baseFailures = stored.result.digest?.failures.map((failure) => failure.name);
-      // Pre-existing only when nothing new fails: every test failing with the change (when
-      // the runner names them) also fails on the base. A new failing test is the change's.
-      const onlyOld =
-        !failing?.length || !baseFailures || failing.every((name) => baseFailures.includes(name));
+      if (base.unready) return inconclusive(`the base could not be prepared: ${base.unready}`);
+      const runOnBase = async (argv: string[]) => {
+        const stored = await executeWorkspaceCommand(
+          input.entity,
+          input.deps,
+          input.session,
+          argv,
+          { workspace: base.workspace, beforeSpawn: input.beforeSpawn },
+          step.timeoutMs,
+        );
+        const outcome = classifyStep(step, stored.result);
+        return {
+          stored,
+          outcome,
+          run: { passed: outcome.outcome === "passed", digest: stored.result.digest },
+        };
+      };
+      const first = await runOnBase(command);
+      // A base that did not run its tests (setup error, nothing collected) proves nothing.
+      if (first.outcome.outcome !== "passed" && first.outcome.outcome !== "failed")
+        return {
+          ...inconclusive(`the step did not run on the base: ${first.outcome.reason}`),
+          outcome: first.outcome.outcome,
+          artifactIds: [first.stored.artifact.id],
+        };
+      let attribution = attributeFailure({ change, base: first.run });
+      const artifactIds = [first.stored.artifact.id];
+      // Every failure matches the base once: confirm on a second base run before excusing it.
+      if (attribution.kind === "inconclusive" && attribution.reason.includes("not confirmed")) {
+        const again = confirmationCommand(command, change, first.stored.result.durationMs);
+        if (again) {
+          const second = await runOnBase(again);
+          artifactIds.push(second.stored.artifact.id);
+          attribution = attributeFailure({ change, base: first.run, again: second.run });
+        } else
+          attribution = {
+            kind: "inconclusive",
+            reason:
+              "the base failure was not confirmed: the step is too slow to run twice and its failing tests cannot be run alone",
+          };
+      }
       return {
-        preexisting: outcome.outcome === "failed" && onlyOld,
-        baseCommit: input.baseCommit,
-        outcome: outcome.outcome,
-        reason: outcome.reason,
-        artifactId: stored.artifact.id,
-        ...(stored.result.digest
-          ? { failures: stored.result.digest.failures.map((failure) => failure.name) }
+        baseCommit,
+        attribution,
+        outcome: first.outcome.outcome,
+        ...(first.stored.result.digest
+          ? { identities: first.stored.result.digest.identities }
           : {}),
+        artifactIds,
       };
     },
     dispose: async () => {
@@ -605,6 +673,37 @@ function baseRerun(input: {
       if (ready) await (await ready.catch(() => undefined))?.dispose();
     },
   };
+}
+
+/** A base step longer than this is not repeated whole to confirm a failure. */
+const CONFIRM_FULL_RERUN_MS = 5 * 60 * 1000;
+
+/**
+ * The command that confirms a base failure: only the failing tests where the runner can run
+ * them alone (`bun test <files>`, `pytest <node ids>`), else the whole step when it is cheap.
+ */
+export function confirmationCommand(
+  command: readonly string[],
+  change: FailureDigest | undefined,
+  durationMs: number,
+): string[] | undefined {
+  const identities = change?.identities ?? [];
+  const files = [...new Set(identities.map((identity) => identity.file))];
+  if (identities.length && files.every((file) => !!file)) {
+    if (command[0] === "bun" && command[1] === "test")
+      return ["bun", "test", ...(files as string[]).map((file) => `./${file}`)];
+    const pytest = command.indexOf("pytest");
+    if (pytest > 0 && command[pytest - 1] === "-m")
+      return [
+        ...command.slice(0, pytest + 1),
+        ...identities.map((identity) =>
+          identity.name.startsWith(`${identity.file}::`)
+            ? identity.name.split(" ")[0]!
+            : identity.file!,
+        ),
+      ];
+  }
+  return durationMs <= CONFIRM_FULL_RERUN_MS ? [...command] : undefined;
 }
 
 /**

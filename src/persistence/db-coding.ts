@@ -425,6 +425,25 @@ export function listCodingRunArtifacts(
     .all(runId, ...(kinds ?? [])) as CodingArtifactRow[];
 }
 
+export function listCodingCandidatesByRef(
+  db: Database,
+  refs: readonly string[],
+): CodingArtifactRow[] {
+  const out: CodingArtifactRow[] = [];
+  // Bounded batches: a repository holds at most a few dozen candidate refs.
+  for (let i = 0; i < refs.length; i += 200) {
+    const batch = refs.slice(i, i + 200);
+    out.push(
+      ...(db
+        .query(
+          `SELECT * FROM coding_artifacts WHERE kind = 'candidate' AND json_extract(metadata_json, '$.ref') IN (${batch.map(() => "?").join(",")}) ORDER BY rowid DESC`,
+        )
+        .all(...batch) as CodingArtifactRow[]),
+    );
+  }
+  return out;
+}
+
 function withCodingRun(db: Database, sessionId: string, value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const existing = value as Record<string, unknown>;

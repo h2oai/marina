@@ -1535,7 +1535,7 @@ export async function runWorkspaceCommand(
 
   let timedOut = false;
   let exitCode = -1;
-  const digester = new FailureDigester();
+  const digester = new FailureDigester(cwd);
   let stdout = "";
   let stderr = "";
   let truncated = false;
@@ -1624,7 +1624,7 @@ export async function runWorkspaceCommand(
     output: content.length > maxBytes ? content.slice(0, maxBytes) : content,
     truncated: truncated || content.length > maxBytes,
     timedOut,
-    ...(exitCode !== 0 || timedOut ? { digest: digester.digest() } : {}),
+    ...(exitCode !== 0 || timedOut ? { digest: digester.digest(exitCode) } : {}),
   };
 }
 

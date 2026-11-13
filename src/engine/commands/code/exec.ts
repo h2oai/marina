@@ -20,7 +20,12 @@ import {
   renderArgv,
   settleExecApproval,
 } from "../../../coding/exec-approver";
-import { formatFailureDigest } from "../../../coding/failure-digest";
+import {
+  type Attribution,
+  type FailureDigest,
+  type FailureIdentity,
+  formatFailureDigest,
+} from "../../../coding/failure-digest";
 import type { WorkspaceRunResult, WorkspaceRuntime } from "../../../coding/local-workspace";
 import {
   detectRepositoryRunners,
@@ -67,6 +72,7 @@ import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../per
 import type { Connection, CrewId, Entity, EntityId, RoomContext } from "../../../types";
 import { raiseForTool, redispatchHeldCommand } from "../../challenges";
 import { refuseCommand } from "../../command-response";
+import { getErrorMessage } from "../../errors";
 import { principalOf } from "../../gate-context";
 import { getRank } from "../../permissions";
 import { isImplicitLocalUngated, isLocalUngated } from "../../trust-profile";
@@ -684,7 +690,7 @@ async function planRepositoryGates(
   const target = {
     installsPermitted: workspace.installsPermitted?.() ?? false,
     hostCandidate: candidate && !runner,
-    ephemeral: runner?.sync === "patch",
+    ephemeral: runner?.kind === "container" && runner.sync === "patch",
   };
   const root = workspace.displayRoot();
   const exists = (path: string) => existsSync(join(root, path));
@@ -757,7 +763,7 @@ export async function runVerificationCommands(
     onGateFailure?: (
       step: VerificationStep,
       command: string[],
-      failing?: readonly string[],
+      change: FailureDigest | undefined,
     ) => Promise<BaseRerun | undefined>;
   },
   plan?: VerificationRun,
@@ -866,27 +872,29 @@ export async function runVerificationCommands(
       background?.onGateFailure
     ) {
       try {
-        item.base = await background.onGateFailure(
-          step,
-          command,
-          stored?.result.digest?.failures.map((failure) => failure.name),
-        );
+        item.base = await background.onGateFailure(step, command, stored?.result.digest);
       } catch (error) {
         if (isVerificationStop(error)) throw stopCause(error);
-        // A base that cannot be checked leaves the failure the change's.
+        item.base = {
+          baseCommit: "",
+          attribution: {
+            kind: "inconclusive",
+            reason: `the base could not be checked (${getErrorMessage(error)})`,
+          },
+        };
       }
       // A failure that exists without the change: record it and run the remaining gates.
-      if (item.base?.preexisting) continue;
+      if (item.base?.attribution.kind === "preexisting") continue;
     }
     if (outcome.outcome === "failed" || outcome.outcome === "error") break;
   }
-  const preexisting = ran.filter((item) => item.base?.preexisting);
+  const preexisting = ran.filter((item) => item.base?.attribution.kind === "preexisting");
   // A gate that already fails on the base is not the change's failure; every other gate
   // still decides. If nothing else failed, the result is still not a pass.
   let verdict = aggregateVerification({
     preparation,
     steps: ran.map((item) =>
-      item.base?.preexisting
+      item.base?.attribution.kind === "preexisting"
         ? { ...item, outcome: { outcome: "passed" as const, reason: "fails on the base too" } }
         : item,
     ),
@@ -997,12 +1005,11 @@ export async function runVerificationCommands(
           ? {
               base: {
                 commit: item.base.baseCommit,
-                outcome: item.base.outcome,
-                reason: item.base.reason,
-                artifactId: item.base.artifactId,
-                ...(item.base.failures ? { failures: item.base.failures } : {}),
+                attribution: item.base.attribution,
+                ...(item.base.outcome ? { outcome: item.base.outcome } : {}),
+                ...(item.base.artifactIds ? { artifactIds: item.base.artifactIds } : {}),
               },
-              ...(item.base.preexisting ? { preexisting: true } : {}),
+              ...(item.base.attribution.kind === "preexisting" ? { preexisting: true } : {}),
             }
           : {}),
       })),
@@ -1131,9 +1138,11 @@ function baseRerunLines(ran: readonly RanStep[]): string {
     .flatMap((item) =>
       item.base
         ? [
-            item.base.preexisting
-              ? `\nPRE-EXISTING: ${item.step.command} also fails on the task's base commit ${item.base.baseCommit.slice(0, 12)} (without this change). Do not try to fix unrelated code unless the task asks for it; submit your summary and note this failure. The result stays unverified.`
-              : `\nCAUSED BY THIS CHANGE: ${item.step.command} passes on the task's base commit ${item.base.baseCommit.slice(0, 12)} and fails with the change. Fix it, then verify again.`,
+            item.base.attribution.kind === "preexisting"
+              ? `\nPRE-EXISTING: ${item.step.command} also fails on the task's base commit ${item.base.baseCommit.slice(0, 12)} without this change (${item.base.attribution.reason}). Do not try to fix unrelated code unless the task asks for it; submit your summary and note this failure. The result stays unverified.`
+              : item.base.attribution.kind === "change"
+                ? `\nCAUSED BY THIS CHANGE: ${item.step.command}: ${item.base.attribution.reason}${item.base.attribution.newFailures.length ? ` (${item.base.attribution.newFailures.slice(0, 8).join(", ")})` : ""}. Fix it, then verify again.`
+                : `\nINCONCLUSIVE: ${item.step.command}: Marina could not show this failure exists without your change (${item.base.attribution.reason}). Treat it as your own: run the failing tests on your change (code run …), read the digest below, fix it and verify again. If, after investigating, it is outside the task, report it with marina_code blocked and your evidence. Do not wait for the deadline. The result stays unverified.`,
           ]
         : [],
     )
@@ -1154,8 +1163,8 @@ function failureDigestLines(ran: readonly RanStep[]): string {
       return [
         `\nDigest of ${item.step.command} (from its whole output):\n${formatFailureDigest(
           digest,
-          item.base?.failures
-            ? { failures: new Set(item.base.failures), commit: item.base.baseCommit }
+          item.base?.identities
+            ? { identities: item.base.identities, commit: item.base.baseCommit }
             : undefined,
         )}`,
       ];
@@ -1165,13 +1174,14 @@ function failureDigestLines(ran: readonly RanStep[]): string {
 
 /** A failed gate step re-run on the task's base commit, without the change. */
 export interface BaseRerun {
-  /** The failing test names on the base, from its digest. */
-  failures?: string[];
-  preexisting: boolean;
   baseCommit: string;
-  outcome: VerificationOutcome;
-  reason: string;
-  artifactId?: string;
+  /** Pre-existing only on positive evidence (`attributeFailure`). */
+  attribution: Attribution;
+  /** The first base run's outcome, when it ran. */
+  outcome?: VerificationOutcome;
+  /** The failures on the base (first run), for marking each failing test. */
+  identities?: FailureIdentity[];
+  artifactIds?: string[];
 }
 
 export async function executeWorkspaceCommand(

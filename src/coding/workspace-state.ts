@@ -68,7 +68,17 @@ class EntryLimit extends Error {}
  * no longer matches the file, from `git ls-files --debug -z`: a change already present,
  * found without reading or filtering any content.
  */
-export function statDirty(root: string, debug: string): string[] {
+export function statDirty(
+  root: string,
+  debug: string,
+  /** `git ls-files --stage -z`: each entry's recorded mode (file type and executable bit). */
+  stage = "",
+): string[] {
+  const modes = new Map<string, string>();
+  for (const entry of stage.split("\0")) {
+    const tab = entry.indexOf("\t");
+    if (tab > 0) modes.set(entry.slice(tab + 1), entry.slice(0, 6));
+  }
   const dirty: string[] = [];
   const chunks = debug.split("\0");
   let name = chunks[0] ?? "";
@@ -82,12 +92,25 @@ export function statDirty(root: string, debug: string): string[] {
         const s = statOf(join(root, name));
         const mtime = field("mtime");
         const ctime = field("ctime");
+        // The mode Git would record for the file as it is now.
+        const mode = s.isSymbolicLink()
+          ? "120000"
+          : s.isFile()
+            ? Number(s.mode) & 0o111
+              ? "100755"
+              : "100644"
+            : "other";
+        const recorded = modes.get(name);
+        const nsec = !!mtime && !!ctime && (mtime[2] !== "0" || ctime[2] !== "0");
         const same =
           !!mtime &&
           !!ctime &&
+          (!recorded || recorded === mode) &&
           mod32(s.mtimeNs / 1_000_000_000n) === BigInt(mtime[1]!) &&
-          s.mtimeNs % 1_000_000_000n === BigInt(mtime[2] ?? 0) &&
+          // A Git built without nanosecond stats records 0: compare seconds alone then.
+          (nsec ? s.mtimeNs % 1_000_000_000n === BigInt(mtime[2] ?? 0) : true) &&
           mod32(s.ctimeNs / 1_000_000_000n) === BigInt(ctime[1]!) &&
+          (nsec ? s.ctimeNs % 1_000_000_000n === BigInt(ctime[2] ?? 0) : true) &&
           mod32(s.size) === BigInt(field("size")?.[1] ?? -1) &&
           mod32(s.ino) === BigInt(field("ino")?.[1] ?? -1);
         if (!same) dirty.push(name);
@@ -223,7 +246,7 @@ export async function observeWorkspaceState(
     const changed = [
       ...new Set([
         ...staged,
-        ...statDirty(root, (await git(["ls-files", "--debug", "-z"]))!),
+        ...statDirty(root, (await git(["ls-files", "--debug", "-z"]))!, index),
         ...untracked,
       ]),
     ].sort();

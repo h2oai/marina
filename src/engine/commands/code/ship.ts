@@ -62,17 +62,43 @@ export function shipVerificationRefusal(
   sessionId: string,
   tree: string,
 ): string | null {
-  const latest = db
-    .listCodingArtifacts(sessionId, 50)
-    .find((artifact) => artifact.kind === "verification");
-  const evidence = latest ? (JSON.parse(latest.metadata_json) as Record<string, unknown>) : {};
   const how =
     "Run code verify candidate gates:repository and ship once the repository's gates pass.";
-  if (!latest) return `Not verified: no verification of this change. ${how}`;
+  // The latest attempt, request or result: a newer request that is still running, or that
+  // ended without a result, is not hidden behind an older pass.
+  const attempt = db
+    .listCodingArtifacts(sessionId, 50)
+    .find(
+      (artifact) => artifact.kind === "verification" || artifact.kind === "verification_request",
+    );
+  if (!attempt) return `Not verified: no verification of this change. ${how}`;
+  let latest = attempt;
+  if (attempt.kind === "verification_request") {
+    if (attempt.status === "running")
+      return `Not verified: the latest verification (${attempt.id}) is still running. Ship when it has passed.`;
+    const receipt = JSON.parse(attempt.metadata_json) as Record<string, unknown>;
+    const result =
+      typeof receipt.resultArtifactId === "string"
+        ? db.getCodingArtifact(receipt.resultArtifactId)
+        : undefined;
+    if (!result)
+      return `Not verified: the latest verification (${attempt.id}) ended without a result${typeof receipt.error === "string" ? ` (${receipt.error})` : ""}. ${how}`;
+    latest = result;
+  }
+  const evidence = JSON.parse(latest.metadata_json) as Record<string, unknown>;
   if (evidence.gates !== "repository")
     return `Not verified: the latest verification (${latest.id}) was not the repository's gates. ${how}`;
   if (evidence.outcome !== "passed" || evidence.preexistingOnly)
     return `Not verified: the repository's gates ${evidence.outcome === "passed" ? "did not pass" : evidence.outcome} (${latest.id}${typeof evidence.outcomeReason === "string" ? `: ${evidence.outcomeReason}` : ""}). ${how}`;
+  // The same evidence rule a task submission applies: the checks left the snapshot's source
+  // intact, and the snapshot was still the workspace when they finished.
+  if (
+    typeof evidence.candidateFingerprint !== "string" ||
+    evidence.materializedFingerprint !== evidence.candidateFingerprint
+  )
+    return `Not verified: the checks changed the snapshot's source (${latest.id}), so their pass does not describe this change. ${how}`;
+  if (evidence.freshness !== "current")
+    return `Not verified: the verification (${latest.id}) is ${String(evidence.freshness ?? "not current")}. ${how}`;
   if (evidence.tree !== tree)
     return `Not verified: the change moved since the repository's gates passed on it (${latest.id}). ${how}`;
   return null;
