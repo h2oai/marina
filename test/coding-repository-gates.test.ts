@@ -6,7 +6,7 @@
 // runtime's result the same way.
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -29,6 +29,7 @@ import { WorkspaceRegistry } from "../src/coding/workspace-registry";
 import { observeWorkspaceState } from "../src/coding/workspace-state";
 import { codeCommand } from "../src/engine/commands/code";
 import { parseCodingTask } from "../src/engine/commands/code/driver";
+import { shipVerificationRefusal } from "../src/engine/commands/code/ship";
 import { grant } from "../src/engine/safety-gates";
 import type { CodingArtifactRow } from "../src/persistence/database";
 import type { EntityId, Perception } from "../src/types";
@@ -278,27 +279,187 @@ describe("repository gates", () => {
     );
   });
 
+  describe("review findings", () => {
+    it("[1] refuses gates when the repository has no test command, even with lint", async () => {
+      writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { lint: "bun -e 0" } }));
+      gitIn(root, "commit", "--quiet", "-am", "no test script");
+      expect(repositoryGates(root).ok).toBe(false);
+      await begin(true);
+      breakLabel();
+      await send("code verify candidate");
+      await f.engine.drainCommands();
+      expect(output.map((p) => p.data?.text ?? "").join("\n")).toContain(
+        "Repository gates need a detected test runner",
+      );
+      await send("code summary Done");
+      expect(meta().verification).not.toBe("passed");
+      // Nor does a requirement check stand in for the repository's tests.
+      expect(
+        aggregateVerification({
+          steps: [
+            {
+              step: { command: "bun test add.test.ts", role: "tests", requirement: true },
+              outcome: { outcome: "passed", reason: "passed" },
+            },
+            {
+              step: { command: "lint", role: "check" },
+              outcome: { outcome: "passed", reason: "passed" },
+            },
+          ],
+          testsPlanned: true,
+          repositoryGates: true,
+        }).outcome,
+      ).toBe("not_run");
+    });
+
+    it("[4] counts an ignored deliverable as a change under delivery", async () => {
+      writeFileSync(join(root, ".gitignore"), "report.txt\n");
+      gitIn(root, "add", ".gitignore");
+      gitIn(root, "commit", "--quiet", "-m", "ignore");
+      const actor = f.engine.entities.get(owner.entityId)!;
+      run = beginCodingRun(f.db, {
+        session: f.db.getCodingSession("s")!,
+        owner: actor,
+        worker: actor,
+        prompt: "Write report.txt",
+        profile: "marina",
+        verificationRequirement: "delivery",
+        initialWorkspace: await observeWorkspaceState(root),
+      });
+      writeFileSync(join(root, "report.txt"), "the report\n");
+      await send("code summary Report written");
+      expect(f.db.getCodingArtifact(run.id)?.status).toBe("active");
+      expect(meta().verification).not.toBe("not_applicable");
+    });
+
+    it("[10] a gate that already fails on the base is labelled pre-existing; the coder may submit, unverified", async () => {
+      // The base itself is red: label.test.ts fails before the task.
+      writeFileSync(join(root, "label.test.ts"), test("label", 'expect(label).toBe("other");'));
+      gitIn(root, "commit", "--quiet", "-am", "red base");
+      await begin(true);
+      writeFileSync(
+        join(root, "src.ts"),
+        `${await Bun.file(join(root, "src.ts")).text()}// tidy\n`,
+      );
+      const result = await verify("code verify candidate");
+      expect(result.outcome).toBe("failed");
+      expect(result).toMatchObject({ preexistingOnly: true });
+      expect(result.steps.some((step) => (step as { preexisting?: boolean }).preexisting)).toBe(
+        true,
+      );
+      const text = f.db
+        .listCodingRunArtifacts(run!.id)
+        .filter((a) => a.kind === "verification")
+        .at(-1)!.content_text;
+      expect(text).toContain("PRE-EXISTING:");
+      expect(text).toContain("submit your summary");
+      await send("code summary Tidied src.ts; label.test.ts already failed on the base");
+      expect(f.db.getCodingArtifact(run!.id)?.status).toBe("submitted");
+      expect(meta()).toMatchObject({ verification: "failed", preexistingFailure: true });
+      const outcome = printOutcome(completion());
+      expect(outcome).toMatchObject({ status: "unverified", exitCode: 3 });
+      expect(outcome.notice).toContain("the repository's gates already fail without this change");
+    });
+
+    it("[13] names each failing test, and says which also fail on the base and which are new", async () => {
+      writeFileSync(join(root, "label.test.ts"), test("label", 'expect(label).toBe("other");'));
+      gitIn(root, "commit", "--quiet", "-am", "red base");
+      await begin(true);
+      // The change breaks add while label was already red: the step is not pre-existing.
+      writeFileSync(
+        join(root, "src.ts"),
+        'export const add = (a: number, b: number) => a - b;\nexport const label = "ok";\n',
+      );
+      const result = await verify("code verify candidate");
+      expect(result.outcome).toBe("failed");
+      expect((result as { preexistingOnly?: boolean }).preexistingOnly).toBeFalsy();
+      const text = f.db
+        .listCodingRunArtifacts(run!.id)
+        .filter((a) => a.kind === "verification")
+        .at(-1)!.content_text;
+      expect(text).toContain("CAUSED BY THIS CHANGE:");
+      expect(text).toMatch(/- add sums \(.*add\.test\.ts:3\) — NEW: passes on the base/);
+      expect(text).toMatch(
+        /- label \(.*label\.test\.ts:3\) — also fails on base [0-9a-f]{12} \(pre-existing\)/,
+      );
+      expect(text).toContain("First error:");
+      await send("code summary Done");
+      expect(f.db.getCodingArtifact(run!.id)?.status).toBe("active");
+    });
+
+    it("[10] a gate that passes on the base is the change's failure", async () => {
+      await begin(true);
+      breakLabel();
+      await verify("code verify candidate");
+      const text = f.db
+        .listCodingRunArtifacts(run!.id)
+        .filter((a) => a.kind === "verification")
+        .at(-1)!.content_text;
+      expect(text).toContain("CAUSED BY THIS CHANGE:");
+      await send("code summary Done");
+      expect(f.db.getCodingArtifact(run!.id)?.status).toBe("active");
+    });
+
+    it("[11] code ship refuses a change the repository's gates have not verified", async () => {
+      await begin(true);
+      writeFileSync(
+        join(root, "src.ts"),
+        `${await Bun.file(join(root, "src.ts")).text()}// tidy\n`,
+      );
+      expect(shipVerificationRefusal(f.db, "s", "x")).toContain("no verification");
+      await verify("code verify candidate");
+      const latest = f.db.listCodingArtifacts("s", 50).find((a) => a.kind === "verification")!;
+      const tree = (JSON.parse(latest.metadata_json) as { tree: string }).tree;
+      expect(shipVerificationRefusal(f.db, "s", tree)).toBeNull();
+      expect(shipVerificationRefusal(f.db, "s", "another-tree")).toContain("moved");
+      breakLabel();
+      await verify("code verify candidate");
+      expect(shipVerificationRefusal(f.db, "s", tree)).toContain("gates failed");
+    });
+  });
+
   describe("native runtimes", () => {
-    const native = async (change?: () => void) => {
+    const native = async (
+      change?: () => void,
+      options: { deadlineAt?: number; drain?: boolean; onFinished?: () => void } = {},
+    ) => {
       const baseline = await observeWorkspaceState(root);
       change?.(); // what the native turn did to the folder
       return verifyNativeTurn({
         dir: root,
         baseline,
         gates: repositoryGates(root),
-        arm: () => new Promise((resolve) => (finished = resolve)),
+        deadlineAt: options.deadlineAt ?? Date.now() + 120_000,
+        subscribe: (handler) => {
+          finished = (p) => {
+            options.onFinished?.();
+            handler(p);
+          };
+          return () => {
+            finished = undefined;
+          };
+        },
         run: async (command) => {
+          const from = output.length;
           await send(command);
-          await f.engine.drainCommands();
+          const admitted = output.slice(from);
+          if (options.drain !== false) await f.engine.drainCommands();
+          return admitted;
         },
       });
     };
+    const ended = (end: Awaited<ReturnType<typeof native>>) => {
+      if (end === "timeout") throw new Error("unexpected timeout");
+      return end;
+    };
 
     it("verifies a native turn's change on the repository's gates; requirements not mapped", async () => {
-      const end = await native(() =>
-        writeFileSync(
-          join(root, "src.ts"),
-          'export const add = (a: number, b: number) => b + a;\nexport const label = "ok";\n',
+      const end = ended(
+        await native(() =>
+          writeFileSync(
+            join(root, "src.ts"),
+            'export const add = (a: number, b: number) => b + a;\nexport const label = "ok";\n',
+          ),
         ),
       );
       expect(end).toMatchObject({
@@ -315,7 +476,7 @@ describe("repository gates", () => {
     });
 
     it("reports a native turn that breaks a test as unverified, naming the failing gate", async () => {
-      const end = await native(breakLabel);
+      const end = ended(await native(breakLabel));
       expect(end.verification).toBe("failed");
       expect(end.verificationReason).toContain("Repository gate failed: bun test");
       const outcome = printOutcome(end);
@@ -324,7 +485,7 @@ describe("repository gates", () => {
     });
 
     it("reports a native turn that changed nothing as nothing to verify", async () => {
-      const end = await native();
+      const end = ended(await native());
       expect(end).toMatchObject({
         verification: "not_applicable",
         verificationReason: "nothing to verify: no files changed during this task",
@@ -333,6 +494,35 @@ describe("repository gates", () => {
       expect(
         output.some((p) => (p.data?.code as { event?: string })?.event === "verification_started"),
       ).toBe(false);
+    });
+
+    it("[8] re-checks the folder against the snapshot when the result arrives", async () => {
+      const end = ended(
+        await native(
+          () =>
+            writeFileSync(
+              join(root, "src.ts"),
+              `${readFileSync(join(root, "src.ts"), "utf8")}// a\n`,
+            ),
+          // An edit lands while verification_finished is being delivered.
+          { onFinished: () => writeFileSync(join(root, "src.ts"), "export const add = 1;\n") },
+        ),
+      );
+      expect(end.verification).toBe("stale");
+    });
+
+    it("[9] one deadline covers the gates; past it the result is a timeout (exit 2)", async () => {
+      const end = await native(
+        () =>
+          writeFileSync(
+            join(root, "src.ts"),
+            `${readFileSync(join(root, "src.ts"), "utf8")}// a\n`,
+          ),
+        { deadlineAt: Date.now(), drain: false },
+      );
+      expect(end).toBe("timeout");
+      expect(printOutcome("timeout").exitCode).toBe(2);
+      await f.engine.drainCommands();
     });
 
     it("names why a folder without gates could not be verified", () => {
@@ -357,7 +547,7 @@ describe("repository gates", () => {
         gates: true,
         freshness: "current",
         workspace: "/r",
-        steps: [],
+        steps: [{ command: "bun test", role: "tests", outcome: "passed" }],
       };
       expect(
         nativeVerificationEnd({ comparison: changed, gates, report: passed, folder: "/r" })

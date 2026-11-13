@@ -18,6 +18,8 @@ export interface WorkspaceState {
   root?: string;
   /** Whether the root is a Git working-tree root. */
   git?: boolean;
+  /** HEAD when observed: the task's base commit, for re-running a failed gate without it. */
+  head?: string;
   /**
    * The source: in a Git repository HEAD, the index (staged-only changes), the index flags,
    * and every tracked or untracked-not-ignored path; in a plain folder, every entry.
@@ -62,6 +64,43 @@ function entryLine(path: string, rel: string, s: Stat): string {
 class EntryLimit extends Error {}
 
 /**
+ * Index entries whose recorded stat (mtime, ctime, size, inode; Git keeps 32 bits of each)
+ * no longer matches the file, from `git ls-files --debug -z`: a change already present,
+ * found without reading or filtering any content.
+ */
+export function statDirty(root: string, debug: string): string[] {
+  const dirty: string[] = [];
+  const chunks = debug.split("\0");
+  let name = chunks[0] ?? "";
+  for (const chunk of chunks.slice(1)) {
+    const end = chunk.lastIndexOf("\n");
+    const meta = chunk.slice(0, end + 1);
+    const field = (key: string) => new RegExp(`\\b${key}:\\s*(\\d+)(?::(\\d+))?`).exec(meta);
+    if (name) {
+      const mod32 = (value: bigint) => value & 0xffffffffn;
+      try {
+        const s = statOf(join(root, name));
+        const mtime = field("mtime");
+        const ctime = field("ctime");
+        const same =
+          !!mtime &&
+          !!ctime &&
+          mod32(s.mtimeNs / 1_000_000_000n) === BigInt(mtime[1]!) &&
+          s.mtimeNs % 1_000_000_000n === BigInt(mtime[2] ?? 0) &&
+          mod32(s.ctimeNs / 1_000_000_000n) === BigInt(ctime[1]!) &&
+          mod32(s.size) === BigInt(field("size")?.[1] ?? -1) &&
+          mod32(s.ino) === BigInt(field("ino")?.[1] ?? -1);
+        if (!same) dirty.push(name);
+      } catch {
+        dirty.push(name); // missing or unreadable: changed
+      }
+    }
+    name = chunk.slice(end + 1);
+  }
+  return dirty;
+}
+
+/**
  * Observe a workspace, read-only and bounded. Entries are hashed by metadata (type, mode,
  * size, inode, mtime and ctime in nanoseconds, symlink target), never read and never
  * followed. In a Git repository the source is what Git sees plus HEAD and the index; ignored
@@ -78,8 +117,10 @@ export async function observeWorkspaceState(
   const ignoredLimit = limits.ignored ?? WORKSPACE_MAX_IGNORED_ENTRIES;
   try {
     const root = await realpath(inputRoot);
+    // Only plumbing that reads metadata, the index and directory listings runs here; the
+    // repository's content drivers are switched off all the same (`hostGitArgv` with cwd).
     const git = async (args: string[], optional = false) => {
-      const proc = Bun.spawn(hostGitArgv(["git", "--no-optional-locks", ...args]), {
+      const proc = Bun.spawn(hostGitArgv(["git", "--no-optional-locks", ...args], root), {
         cwd: root,
         env: hostGitEnv(),
         stdin: "ignore",
@@ -146,19 +187,46 @@ export async function observeWorkspaceState(
       throw new Error("workspace observation needs the Git working-tree root");
     const state: WorkspaceState = { version: 2, root, git: true };
     const whole = createHash("sha256");
-    whole.update(
-      `head\0${(await git(["rev-parse", "--verify", "HEAD"], true))?.trim() ?? "unborn"}\0`,
-    );
+    const head = (await git(["rev-parse", "--verify", "HEAD"], true))?.trim();
+    if (head) state.head = head;
+    whole.update(`head\0${head ?? "unborn"}\0`);
     // Staged-only changes live in the index, not in the working tree.
-    whole.update("index\0").update((await git(["ls-files", "--stage", "-z"]))!);
+    const index = (await git(["ls-files", "--stage", "-z"]))!;
+    // A submodule is one gitlink here and its own repository below: edits inside it would
+    // escape a directory stat, so such a workspace is not observed (normal verification).
+    if (index.split("\0").some((entry) => entry.startsWith("160000 ")))
+      throw new Error("the repository has submodules, whose changes cannot be observed here");
+    whole.update("index\0").update(index);
     const flags = (await git(["ls-files", "-v", "-z"]))!.split("\0").filter(Boolean);
     whole.update("flags\0").update(flags.map((entry) => entry.slice(0, 1)).join(""));
     const hidden = flags.filter((entry) => /^[a-zS] /.test(entry)).map((e) => e.slice(2));
     if (hidden.length) state.hidden = { count: hidden.length, sample: hidden.slice(0, SAMPLE) };
-    const changed = (await git(["status", "--porcelain=v1", "-z", "--untracked-files=all"]))!
+    const untracked = (await git(["ls-files", "-z", "--others", "--exclude-standard"]))!
       .split("\0")
-      .filter((entry) => /^.. /.test(entry))
-      .map((entry) => entry.slice(3));
+      .filter(Boolean);
+    // A nested repository is listed as one directory: the same escape as a submodule.
+    const nested = untracked.find((rel) => rel.endsWith("/"));
+    if (nested)
+      throw new Error(
+        `the workspace holds a nested Git repository (${nested}) whose changes cannot be observed here`,
+      );
+    // What was already changed, by metadata only (never `git status`, which may hash
+    // contents): index entries that differ from HEAD's tree, entries whose stat differs from
+    // the index's record, and untracked files.
+    const staged = (
+      (await git(["diff-index", "--cached", "--name-only", "-z", "HEAD"], true)) ??
+      // An unborn HEAD: everything in the index is new.
+      (await git(["ls-files", "-z"]))!
+    )
+      .split("\0")
+      .filter(Boolean);
+    const changed = [
+      ...new Set([
+        ...staged,
+        ...statDirty(root, (await git(["ls-files", "--debug", "-z"]))!),
+        ...untracked,
+      ]),
+    ].sort();
     if (changed.length)
       state.preexisting = { count: changed.length, sample: changed.slice(0, SAMPLE) };
     // Every path Git sees, by metadata: assume-unchanged and skip-worktree files included,

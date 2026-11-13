@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { realpathSync } from "node:fs";
-import { candidateFingerprint, observeCandidate } from "../../../coding/candidate";
+import {
+  candidateFingerprint,
+  materializeGitCommit,
+  observeCandidate,
+} from "../../../coding/candidate";
 import { parseCommandArgv } from "../../../coding/command-argv";
 import {
   captureDelivery,
@@ -20,18 +24,28 @@ import {
   codingVerificationUnchanged,
 } from "../../../coding/task-run";
 import {
+  classifyStep,
+  executePreparation,
   recipeSteps,
   resolveVerificationOptions,
   type VerificationOptions,
+  type VerificationStep,
 } from "../../../coding/verification-plan";
 import { assertBoundedVerification } from "../../../coding/verification-runner";
 import { codingRunContext } from "../../../persistence/coding-run-context";
-import type { MarinaDB } from "../../../persistence/database";
+import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
 import { getErrorMessage } from "../../errors";
 import { checkUnattendedGate } from "../../safety-gates";
 import { isLocalUngated } from "../../trust-profile";
-import { normalizeCodeRunArgs, planVerification, runVerificationCommands } from "./exec";
+import {
+  type BaseRerun,
+  executeWorkspaceCommand,
+  normalizeCodeRunArgs,
+  planVerification,
+  runVerificationCommands,
+  type VerificationRun,
+} from "./exec";
 import { applySessionRunner } from "./runner";
 import {
   type CodeDeps,
@@ -136,7 +150,7 @@ export async function startVerification(
   const livePlan = delivery
     ? { commands: delivery.manifest.checks, steps: recipeSteps(delivery.manifest.checks), options }
     : await planVerification(deps, session, workspace, options, candidate, undefined, gates);
-  if (gates && (!("language" in livePlan) || !livePlan.language))
+  if (gates && (!("gateTests" in livePlan) || !livePlan.gateTests))
     throw new Error(
       "Repository gates need a detected test runner (package.json test script, pytest, cargo, go, maven or gradle); none was found in this workspace.",
     );
@@ -266,6 +280,7 @@ export async function startVerification(
           },
           livePlan,
         );
+      let base: ReturnType<typeof baseRerun> | undefined;
       const snapshot = await workspace.captureCandidate!(undefined, beforeSpawn);
       try {
         const captured = deps.db.createCodingArtifact({
@@ -305,7 +320,12 @@ export async function startVerification(
           gates,
         );
         // Requirement checks run first, so their indexes are the requirements' step indexes.
-        const required = requirementChecks ? recipeSteps(requirementChecks.checks).steps : [];
+        const required = requirementChecks
+          ? recipeSteps(requirementChecks.checks).steps.map((step) => ({
+              ...step,
+              requirement: true,
+            }))
+          : [];
         const withRequired = (steps: typeof snapshotPlan.steps) => ({
           ...steps,
           testsPlanned: steps.testsPlanned || required.some((step) => step.role === "tests"),
@@ -334,6 +354,21 @@ export async function startVerification(
             : {}),
         };
         const runner = prepared.describe().runner;
+        // A failed gate runs once more on the task's base commit (its start, without the
+        // change): the base is checked out and prepared once, on the first failure.
+        const baseCommit =
+          (activeRun?.kind === "task_run"
+            ? codingRunMetadata(activeRun).initialWorkspace?.head
+            : undefined) ?? snapshot.candidate.baseCommit;
+        base = baseRerun({
+          deps,
+          entity,
+          session,
+          repository: root,
+          baseCommit,
+          plan,
+          beforeSpawn,
+        });
         return await runVerificationCommands(
           backgroundContext,
           eid,
@@ -347,6 +382,7 @@ export async function startVerification(
             workspace: prepared,
             beforeSpawn,
             candidateId: captured.id,
+            ...(gates ? { onGateFailure: base.rerun } : {}),
             candidateEvidence: async () => {
               const evidence: Record<string, unknown> = {
                 ...(gates ? { gates: "repository" } : {}),
@@ -413,6 +449,7 @@ export async function startVerification(
           plan,
         );
       } finally {
+        await base?.dispose();
         await snapshot.dispose();
       }
     },
@@ -487,6 +524,90 @@ export async function startVerification(
 }
 
 /**
+ * Re-run failed repository gates on the task's base commit, bounded to one run per failing
+ * step. The base is materialized and its dependencies prepared under the session's runner
+ * the first time a gate fails, and disposed with the snapshot.
+ */
+function baseRerun(input: {
+  deps: CodeDeps & { db: MarinaDB };
+  entity: Entity;
+  session: CodingSessionRow;
+  repository: string;
+  baseCommit: string | null | undefined;
+  plan: VerificationRun;
+  beforeSpawn: () => void;
+}) {
+  let ready:
+    | Promise<{
+        workspace: ReturnType<typeof applySessionRunner>;
+        dispose: () => Promise<void>;
+        wrapTests?: string;
+        unready?: string;
+      }>
+    | undefined;
+  const open = async () => {
+    const checkout = await materializeGitCommit(input.repository, input.baseCommit!);
+    const workspace = applySessionRunner(
+      new LocalWorkspace(checkout.directory),
+      input.deps.db,
+      input.session,
+    );
+    workspace.setHostExecForbidden?.(input.deps.hostExecForbidden === true);
+    let wrapTests: string | undefined;
+    for (const preparation of [
+      ...(input.plan.preparation ? [input.plan.preparation] : []),
+      ...(input.plan.morePreparation ?? []),
+    ]) {
+      const result = await executePreparation(preparation, workspace, input.beforeSpawn);
+      if (result.status === "not_run" || result.status === "error")
+        return { workspace, dispose: checkout.dispose, unready: result.reason };
+      wrapTests ??= result.wrapTests;
+    }
+    return { workspace, dispose: checkout.dispose, wrapTests };
+  };
+  return {
+    rerun: async (
+      step: VerificationStep,
+      command: string[],
+      failing?: readonly string[],
+    ): Promise<BaseRerun | undefined> => {
+      if (!input.baseCommit) return undefined;
+      ready ??= open();
+      const base = await ready;
+      if (base.unready) return undefined;
+      const stored = await executeWorkspaceCommand(
+        input.entity,
+        input.deps,
+        input.session,
+        command,
+        { workspace: base.workspace, beforeSpawn: input.beforeSpawn },
+        step.timeoutMs,
+      );
+      const outcome = classifyStep(step, stored.result);
+      const baseFailures = stored.result.digest?.failures.map((failure) => failure.name);
+      // Pre-existing only when nothing new fails: every test failing with the change (when
+      // the runner names them) also fails on the base. A new failing test is the change's.
+      const onlyOld =
+        !failing?.length || !baseFailures || failing.every((name) => baseFailures.includes(name));
+      return {
+        preexisting: outcome.outcome === "failed" && onlyOld,
+        baseCommit: input.baseCommit,
+        outcome: outcome.outcome,
+        reason: outcome.reason,
+        artifactId: stored.artifact.id,
+        ...(stored.result.digest
+          ? { failures: stored.result.digest.failures.map((failure) => failure.name) }
+          : {}),
+      };
+    },
+    dispose: async () => {
+      // allow-empty-catch: a base that failed to open already removed its own directory
+      if (ready) await (await ready.catch(() => undefined))?.dispose();
+    },
+  };
+}
+
+/**
  * What a repository-gate verification found, from its stored result: the verdict, whether
  * the snapshot still matches the workspace, and each gate. Sent with `verification_finished`
  * so a client that ran the gates outside a task attempt (a native one-shot) can report them.
@@ -513,11 +634,25 @@ export function repositoryGateReport(db: MarinaDB, receipt: Record<string, unkno
     freshness: typeof evidence.freshness === "string" ? evidence.freshness : "unavailable",
     workspace: typeof receipt.workspace === "string" ? receipt.workspace : undefined,
     resultId: result.id,
+    ...(evidence.preexistingOnly === true ? { preexistingOnly: true } : {}),
+    ...(typeof evidence.candidateFingerprint === "string"
+      ? { candidateFingerprint: evidence.candidateFingerprint }
+      : {}),
+    ...(() => {
+      const row =
+        typeof evidence.candidateId === "string"
+          ? db.getCodingArtifact(evidence.candidateId)
+          : undefined;
+      const base = row ? parseJsonObject(row.metadata_json).baseCommit : undefined;
+      return base === null || typeof base === "string" ? { baseCommit: base } : {};
+    })(),
     steps: steps.map((step: Record<string, unknown>) => ({
       command: Array.isArray(step.command) ? step.command.join(" ") : String(step.command ?? ""),
       role: step.role,
       outcome: step.outcome,
       reason: step.reason,
+      ...(step.preexisting === true ? { preexisting: true } : {}),
+      ...(step.digest && typeof step.digest === "object" ? { digest: step.digest } : {}),
     })),
   };
 }

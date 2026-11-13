@@ -18,7 +18,7 @@ import {
   shipChange,
   shipRefusal,
 } from "../../../coding/code-ship";
-import type { CodeTrialResult, GitRunner } from "../../../coding/code-trial";
+import { type CodeTrialResult, type GitRunner, snapshotCommit } from "../../../coding/code-trial";
 import { HOST_GIT_CONFIG_ARGS } from "../../../coding/host-git";
 import { protectedChanges, protectedHold } from "../../../coding/protected-paths";
 import { isLiveMarinaCheckout } from "../../../coding/self-checkout";
@@ -49,6 +49,34 @@ const asGitRunner =
       : run(cwd, ["git", ...HOST_GIT_CONFIG_ARGS, ...argv]);
     return { exitCode: r.exitCode, stdout: r.stdout.trim(), stderr: r.stderr.trim() };
   };
+
+/**
+ * A change ships only when the repository's own gates verified exactly it: the session's
+ * latest verification is a passed repository-gate run on a snapshot whose tree is the
+ * change's tree now. Showing a label instead would let a pull request opened by Marina
+ * carry a change its own repository's checks fail; the merge queue would catch it later,
+ * after review time was spent on it, and "measured" would read as "verified" when it was not.
+ */
+export function shipVerificationRefusal(
+  db: MarinaDB,
+  sessionId: string,
+  tree: string,
+): string | null {
+  const latest = db
+    .listCodingArtifacts(sessionId, 50)
+    .find((artifact) => artifact.kind === "verification");
+  const evidence = latest ? (JSON.parse(latest.metadata_json) as Record<string, unknown>) : {};
+  const how =
+    "Run code verify candidate gates:repository and ship once the repository's gates pass.";
+  if (!latest) return `Not verified: no verification of this change. ${how}`;
+  if (evidence.gates !== "repository")
+    return `Not verified: the latest verification (${latest.id}) was not the repository's gates. ${how}`;
+  if (evidence.outcome !== "passed" || evidence.preexistingOnly)
+    return `Not verified: the repository's gates ${evidence.outcome === "passed" ? "did not pass" : evidence.outcome} (${latest.id}${typeof evidence.outcomeReason === "string" ? `: ${evidence.outcomeReason}` : ""}). ${how}`;
+  if (evidence.tree !== tree)
+    return `Not verified: the change moved since the repository's gates passed on it (${latest.id}). ${how}`;
+  return null;
+}
 
 export async function shipCode(
   ctx: RoomContext,
@@ -105,7 +133,16 @@ export async function shipCode(
   let refusal: string | null;
   try {
     mkdirSync(scratch, { recursive: true });
-    refusal = shipRefusal(git, { tree: session.worktree_path, trial, scratch });
+    refusal =
+      shipRefusal(git, { tree: session.worktree_path, trial, scratch }) ??
+      shipVerificationRefusal(
+        deps.db,
+        session.id,
+        git(session.worktree_path, [
+          "rev-parse",
+          `${snapshotCommit(git, session.worktree_path, scratch)}^{tree}`,
+        ]).stdout,
+      );
   } catch (error) {
     refusal = `Could not read the change: ${getErrorMessage(error)}`;
   }

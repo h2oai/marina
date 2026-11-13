@@ -20,8 +20,10 @@ import {
   renderArgv,
   settleExecApproval,
 } from "../../../coding/exec-approver";
+import { formatFailureDigest } from "../../../coding/failure-digest";
 import type { WorkspaceRunResult, WorkspaceRuntime } from "../../../coding/local-workspace";
 import {
+  detectRepositoryRunners,
   detectWorkspaceRunner,
   isTestCommand,
   workspaceTouchedPaths,
@@ -545,6 +547,10 @@ export interface VerificationRun {
   workspace?: WorkspaceRuntime;
   /** Paths the change touches (reused for a candidate snapshot of the same bytes). */
   touched?: string[];
+  /** Repository gates: further runners' preparation, after `preparation`. */
+  morePreparation?: PreparationPlan[];
+  /** Repository gates: whether any detected runner has a test command. */
+  gateTests?: boolean;
   /**
    * Steps to run instead when preparation finds pytest is not importable
    * (`PreparationPlan.fallback`): the same plan with the fallback runner.
@@ -568,9 +574,8 @@ export async function planVerification(
   /** Repository gates: the detected project's own checks, never a stored recipe. */
   gates = false,
 ): Promise<VerificationRun> {
-  const recipe = gates
-    ? undefined
-    : await resolveRecipeCommands(deps.db, session, workspace, "default");
+  if (gates) return planRepositoryGates(session, workspace, options, candidate, knownTouched);
+  const recipe = await resolveRecipeCommands(deps.db, session, workspace, "default");
   if (session.execution_target !== "local") {
     const commands = recipe ?? ["git diff --check"];
     return { commands, steps: recipeSteps(commands), options };
@@ -657,6 +662,73 @@ export async function planVerification(
   };
 }
 
+/**
+ * The repository's gates: every runner the repository configures (`detectRepositoryRunners`),
+ * whatever language the change touched; touched paths only choose relevant tests. Each
+ * runner's type-check, checks, relevant tests and full suite, with no stored recipe and no
+ * runner substitution (no pytest fallback: tests that cannot run leave the gates not_run).
+ */
+async function planRepositoryGates(
+  session: CodingSessionRow,
+  workspace: WorkspaceRuntime,
+  options: VerificationOptions,
+  candidate: boolean,
+  knownTouched?: readonly string[],
+): Promise<VerificationRun> {
+  const touched = knownTouched
+    ? [...knownTouched]
+    : await workspaceTouchedPaths(workspace).catch(() => [] as string[]);
+  // allow-empty-catch: an unreadable workspace has no detectable gates; admission refuses
+  const profiles = await detectRepositoryRunners(workspace).catch(() => []);
+  const runner = workspace.describe?.().runner;
+  const target = {
+    installsPermitted: workspace.installsPermitted?.() ?? false,
+    hostCandidate: candidate && !runner,
+    ephemeral: runner?.sync === "patch",
+  };
+  const root = workspace.displayRoot();
+  const exists = (path: string) => existsSync(join(root, path));
+  const plans = profiles.map((profile) => {
+    const relevant =
+      options.scope === "full"
+        ? { files: [], reasons: [], packages: [] }
+        : findRelevantTests(root, profile, touched);
+    return {
+      profile,
+      preparation:
+        session.execution_target === "local"
+          ? planPreparation(profile, options.dependencies, target)
+          : undefined,
+      steps: detectedSteps({ profile, options, touched, relevant, exists, gates: true }),
+    };
+  });
+  const steps: StepPlan = {
+    steps: plans.flatMap((plan) => plan.steps.steps),
+    testsPlanned: true,
+    scopeNote:
+      plans.map((plan) => `${plan.profile.language}: ${plan.steps.scopeNote}`).join("; ") ||
+      "no test runner detected",
+    relevant: {
+      files: plans.flatMap((plan) => plan.steps.relevant?.files ?? []),
+      reasons: plans.flatMap((plan) => plan.steps.relevant?.reasons ?? []),
+      packages: plans.flatMap((plan) => plan.steps.relevant?.packages ?? []),
+    },
+    repositoryGates: true,
+  };
+  const preparations = plans.flatMap((plan) => (plan.preparation ? [plan.preparation] : []));
+  return {
+    commands: steps.steps.map((step) => step.command),
+    steps,
+    options,
+    ...(profiles.length ? { language: profiles.map((p) => p.language).join("+") } : {}),
+    ...(preparations[0] ? { preparation: preparations[0] } : {}),
+    ...(preparations.length > 1 ? { morePreparation: preparations.slice(1) } : {}),
+    gateTests: profiles.some((profile) => !!profile.testCommand),
+    workspace,
+    touched,
+  };
+}
+
 const OUTCOME_LABEL: Record<VerificationOutcome, string> = {
   passed: "passed",
   failed: "failed",
@@ -678,6 +750,15 @@ export async function runVerificationCommands(
     beforeSpawn: () => void;
     candidateId?: string;
     candidateEvidence?: () => Promise<Record<string, unknown>>;
+    /**
+     * Repository gates: a failed gate step runs once more on the task's base (without the
+     * change). `preexisting` when it fails there too: not the change's failure.
+     */
+    onGateFailure?: (
+      step: VerificationStep,
+      command: string[],
+      failing?: readonly string[],
+    ) => Promise<BaseRerun | undefined>;
   },
   plan?: VerificationRun,
 ): Promise<CodingArtifactRow> {
@@ -693,6 +774,21 @@ export async function runVerificationCommands(
       plan?.preparation && preparationWorkspace && session.execution_target === "local"
         ? await executePreparation(plan.preparation, preparationWorkspace, guarded?.beforeSpawn)
         : undefined;
+    // A repository with several runners prepares each; the first that is not ready decides.
+    for (const more of plan?.morePreparation ?? []) {
+      if (!preparation || !preparationWorkspace || session.execution_target !== "local") break;
+      if (preparation.status === "not_run" || preparation.status === "error") break;
+      const next = await executePreparation(more, preparationWorkspace, guarded?.beforeSpawn);
+      preparation = {
+        ...next,
+        status: next.status === "skipped" ? preparation.status : next.status,
+        reason: `${preparation.reason} ${next.reason}`,
+        runs: [...preparation.runs, ...next.runs],
+        wrapTests: preparation.wrapTests ?? next.wrapTests,
+        policy: preparation.policy ?? next.policy,
+        lockfileSha256: preparation.lockfileSha256 ?? next.lockfileSha256,
+      };
+    }
   } catch (error) {
     throw stopCause(error);
   }
@@ -761,16 +857,49 @@ export async function runVerificationCommands(
       if (isVerificationStop(error)) throw stopCause(error);
       outcome = classifyStep(step, error instanceof Error ? error : new Error(String(error)));
     }
-    ran.push({ step, command, stored, outcome });
+    const item: RanStep = { step, command, stored, outcome };
+    ran.push(item);
+    if (
+      outcome.outcome === "failed" &&
+      stepPlan.repositoryGates &&
+      !step.requirement &&
+      background?.onGateFailure
+    ) {
+      try {
+        item.base = await background.onGateFailure(
+          step,
+          command,
+          stored?.result.digest?.failures.map((failure) => failure.name),
+        );
+      } catch (error) {
+        if (isVerificationStop(error)) throw stopCause(error);
+        // A base that cannot be checked leaves the failure the change's.
+      }
+      // A failure that exists without the change: record it and run the remaining gates.
+      if (item.base?.preexisting) continue;
+    }
     if (outcome.outcome === "failed" || outcome.outcome === "error") break;
   }
-  const verdict = aggregateVerification({
+  const preexisting = ran.filter((item) => item.base?.preexisting);
+  // A gate that already fails on the base is not the change's failure; every other gate
+  // still decides. If nothing else failed, the result is still not a pass.
+  let verdict = aggregateVerification({
     preparation,
-    steps: ran,
+    steps: ran.map((item) =>
+      item.base?.preexisting
+        ? { ...item, outcome: { outcome: "passed" as const, reason: "fails on the base too" } }
+        : item,
+    ),
     testsPlanned: stepPlan.testsPlanned,
     scopeNote: stepPlan.scopeNote,
     repositoryGates: stepPlan.repositoryGates,
   });
+  const preexistingOnly = preexisting.length > 0 && verdict.outcome === "passed";
+  if (preexistingOnly)
+    verdict = {
+      outcome: "failed",
+      reason: `the repository's gates already fail without this change: ${preexisting.map((item) => item.step.command).join(", ")}`,
+    };
   const results = ran.flatMap((item) => (item.stored ? [item.stored] : []));
   const failedRun = ran.find((item) => item.outcome.outcome === verdict.outcome && item.stored);
   const status = OUTCOME_STATUS[verdict.outcome];
@@ -800,6 +929,8 @@ export async function runVerificationCommands(
       : "") +
     (fallback ? `${dim(`runner: ${fallback.runner} (pytest unavailable)`)}\n` : "") +
     formatVerificationSummary(verdict, ran, preparation) +
+    baseRerunLines(ran) +
+    failureDigestLines(ran) +
     (!passed && failedRun?.stored
       ? `\nCheck output (untrusted command output):\n${failedRun.stored.result.output.slice(-4096)}\nFull output: code show ${failedRun.stored.artifact.id}`
       : "") +
@@ -854,10 +985,30 @@ export async function runVerificationCommands(
       steps: ran.map((item) => ({
         command: item.command,
         role: item.step.role,
+        ...(item.step.requirement ? { requirement: true } : {}),
         outcome: item.outcome.outcome,
         reason: item.outcome.reason,
         artifactId: item.stored?.artifact.id,
+        ...(item.stored?.result.digest &&
+        (item.outcome.outcome === "failed" || item.outcome.outcome === "error")
+          ? { digest: item.stored.result.digest }
+          : {}),
+        ...(item.base
+          ? {
+              base: {
+                commit: item.base.baseCommit,
+                outcome: item.base.outcome,
+                reason: item.base.reason,
+                artifactId: item.base.artifactId,
+                ...(item.base.failures ? { failures: item.base.failures } : {}),
+              },
+              ...(item.base.preexisting ? { preexisting: true } : {}),
+            }
+          : {}),
       })),
+      ...(preexisting.length
+        ? { preexisting: preexisting.map((item) => item.step.command), preexistingOnly }
+        : {}),
       ...(preparation
         ? {
             preparation: {
@@ -967,9 +1118,63 @@ interface RanStep {
   command: string[];
   stored?: StoredCommandResult;
   outcome: StepOutcome;
+  /** The same step re-run on the task's base commit after it failed. */
+  base?: BaseRerun;
 }
 
-async function executeWorkspaceCommand(
+/**
+ * What the coder must know at once about each failed gate that was re-run on the base: the
+ * failure exists without the change (submit, noting it), or the change caused it (fix it).
+ */
+function baseRerunLines(ran: readonly RanStep[]): string {
+  return ran
+    .flatMap((item) =>
+      item.base
+        ? [
+            item.base.preexisting
+              ? `\nPRE-EXISTING: ${item.step.command} also fails on the task's base commit ${item.base.baseCommit.slice(0, 12)} (without this change). Do not try to fix unrelated code unless the task asks for it; submit your summary and note this failure. The result stays unverified.`
+              : `\nCAUSED BY THIS CHANGE: ${item.step.command} passes on the task's base commit ${item.base.baseCommit.slice(0, 12)} and fails with the change. Fix it, then verify again.`,
+          ]
+        : [],
+    )
+    .join("");
+}
+
+/**
+ * Each failed or errored step's digest: failing tests with file:line, the first error and
+ * the output's tail, all taken from the whole output (the stored excerpt is only its head).
+ * After a base re-run, each failing test says whether it also fails without the change.
+ */
+function failureDigestLines(ran: readonly RanStep[]): string {
+  return ran
+    .flatMap((item) => {
+      const digest = item.stored?.result.digest;
+      if (!digest || (item.outcome.outcome !== "failed" && item.outcome.outcome !== "error"))
+        return [];
+      return [
+        `\nDigest of ${item.step.command} (from its whole output):\n${formatFailureDigest(
+          digest,
+          item.base?.failures
+            ? { failures: new Set(item.base.failures), commit: item.base.baseCommit }
+            : undefined,
+        )}`,
+      ];
+    })
+    .join("");
+}
+
+/** A failed gate step re-run on the task's base commit, without the change. */
+export interface BaseRerun {
+  /** The failing test names on the base, from its digest. */
+  failures?: string[];
+  preexisting: boolean;
+  baseCommit: string;
+  outcome: VerificationOutcome;
+  reason: string;
+  artifactId?: string;
+}
+
+export async function executeWorkspaceCommand(
   entity: Entity,
   deps: CodeDeps & { db: MarinaDB },
   session: CodingSessionRow,

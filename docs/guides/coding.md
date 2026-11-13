@@ -422,9 +422,14 @@ code ship [merge] [-- <title>]
 1. The latest trial must have measured exactly this change: the worktree now has the same Git
    tree as the trial's candidate. A trial that found a regression, or did not complete, ships
    nothing; neither does a change that moved after its trial.
-2. The worktree is committed on its own `marina/session-*` branch under the operator's Git
+2. The repository's own gates must have verified exactly this change: the session's latest
+   verification is a passed `code verify candidate gates:repository` whose snapshot has the
+   change's tree. Anything else (no verification, another kind, failed, pre-existing failures,
+   or a change that moved since) is refused with the label and the command to run. A pull
+   request opened by Marina never carries a change its repository's checks fail.
+3. The worktree is committed on its own `marina/session-*` branch under the operator's Git
    identity, with no hooks and no repository-supplied drivers.
-3. The branch is pushed and a pull request is opened against the repository's default branch.
+4. The branch is pushed and a pull request is opened against the repository's default branch.
    Its description states the trial: verdict, both builds' scores, the paired interval and the
    margin. `merge` also queues it for merge.
 
@@ -788,13 +793,29 @@ root with a test runner Marina detects (a `test` script, pytest, cargo, go, Mave
 `candidate`; any other folder gets `delivery`.
 
 - `candidate` (the repository's gates): the task is dispatched with `code do verification:candidate
-  gates:repository`. Verification runs on a snapshot of the whole repository and runs the
-  detected project's own checks: its type-check and lint where the project has them, tests
-  relevant to the change, then the full suite under `MARINA_CODE_VERIFY_FULL_BUDGET` (scope
-  `changed+full`). Dependencies are prepared in the snapshot (`dependencies:auto`) unless the
-  coder names a manager. A saved recipe does not replace these gates, every gate must run and
-  pass (a full suite that does not finish within its budget leaves the run `not_run`), and the
-  snapshot must still match the folder. A coder maps each stated requirement to a check run in
+  gates:repository`. Verification runs on a snapshot of the whole repository and runs every
+  runner the repository configures, whatever language the change touched (a Python package
+  with a JavaScript front end gets both suites): each one's type-check (a configured mypy or
+  pyright always runs over the whole project) and lint where it has them, tests relevant to the
+  change, then the full suite under `MARINA_CODE_VERIFY_FULL_BUDGET` (scope `changed+full`).
+  Dependencies are prepared in the snapshot (`dependencies:auto`) unless the coder names a
+  manager. A saved recipe does not replace these gates, no other runner is substituted (pytest
+  missing leaves the run `not_run`, never a unittest pass), a repository with no test command
+  has no gates (lint alone never verifies), every gate must run and pass (a full suite that
+  does not finish within its budget leaves the run `not_run`), and the snapshot must still
+  match the folder.
+
+  A failed gate runs once more on the task's base commit (HEAD when the task started), checked
+  out privately with the repository's objects. If every test that failed with the change also
+  fails there, the step is `PRE-EXISTING`: the coder is told at once that the failure exists
+  without its change and to submit, noting it; the task completes but stays unverified
+  (`failed`, reason "the repository's gates already fail without this change: <step>", exit
+  `3`). If the step passes on the base, or a test fails that does not fail there, it is the
+  change's failure (`CAUSED BY THIS CHANGE`). Every failed step carries a digest built from its
+  whole output (the stored excerpt is only the first 64 KB): the failing tests with file:line
+  where the runner prints them (bun `(fail)`, pytest `FAILED`/`ERROR`, go `--- FAIL`), the first
+  assertion error, the last 40 lines (at most 4 KB), and for each failing test whether it also
+  fails on the base. A coder maps each stated requirement to a check run in
   the snapshot before the gates: `code verify candidate -- {"checks":["bun test
   test/paging.test.ts"],"requirements":[{"text":"the last page is kept","checks":[0]}]}`. The run
   is `verified` only when the gates and every listed requirement's check pass. With no list it is
@@ -812,7 +833,10 @@ well before its deadline.
 **Native runtimes.** `marina -p --agent claude|codex|pi` runs the native agent's turn in the
 folder; when the turn finishes, Marina verifies its result the same way: if the folder changed,
 it runs `code verify candidate gates:repository` on a snapshot of the folder and reports
-`verified` only if every gate passed and the folder still matches the snapshot. Otherwise the run
+`verified` only if every gate passed and the folder still matches the snapshot, re-checked
+when the result arrives. The turn and its verification share one deadline
+(`MARINA_CODE_TASK_TIMEOUT_MS`, 20 minutes by default when the folder has gates); past it the run
+is `timeout` (exit `2`). Otherwise the run
 is `unverified` with the failing gate named (or the reason no gate could run, for example a
 folder that is not a Git repository), or `no_changes` when the turn changed nothing. A native turn
 maps no requirements, so the result always says the stated requirements were not mapped.
@@ -835,9 +859,16 @@ and untracked files, plus HEAD and the index, so a staged-only change or a commi
 files marked assume-unchanged or skip-worktree are observed directly, so an edit Git does not
 report is still seen. Git-ignored entries (dependencies, build output, local data) are observed
 apart: when only they changed, the answer is still `not_applicable` and the reason names them,
-because no verification covers ignored files. Changes already present when the attempt started
+because no verification covers ignored files, except under `delivery`, where an ignored file
+can be a deliverable: there a changed (or unobserved) ignored file, or a delivery check the coder
+already ran, keeps the delivery verification. Changes already present when the attempt started
 are not the task's: they stay out of the comparison, and the reason names them as not verified.
-In a plain folder without Git every entry is source.
+In a plain folder without Git every entry is source. Git itself is asked only for metadata (the
+index and its recorded file stats, the diff of the index against HEAD, directory listings), with
+the repository's content filters switched off, so observing never runs a filter or hashes
+contents; changes already present are found by comparing each file's stat with the index's. A
+repository with submodules, or a workspace holding a nested repository, is not observed (an edit
+inside one would escape), which keeps the normal verification.
 
 Observation is bounded: 200000 entries in all, of which at most 10000 Git-ignored ones. Past the
 ignored budget (installed dependencies alone usually exceed it) the source is still compared and

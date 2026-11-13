@@ -21,6 +21,7 @@ import { captureGitCandidate } from "./candidate";
 import { prepareCandidateBunDependencies } from "./candidate-dependencies";
 import { prepareCandidateNpmDependencies } from "./candidate-npm-dependencies";
 import type { ExecApprover } from "./exec-approver";
+import { type FailureDigest, FailureDigester } from "./failure-digest";
 import {
   type FileReadOptions,
   type FileReadResult,
@@ -114,6 +115,8 @@ export interface WorkspaceRunResult {
   truncated: boolean;
   timedOut: boolean;
   durationMs: number;
+  /** A failed or timed-out run's digest, built from the whole output before truncation. */
+  digest?: FailureDigest;
   /**
    * Destinations a container run's egress proxy refused (one per host:port).
    * `approvable`: refused only because the allowlist does not name it — a
@@ -1532,6 +1535,7 @@ export async function runWorkspaceCommand(
 
   let timedOut = false;
   let exitCode = -1;
+  const digester = new FailureDigester();
   let stdout = "";
   let stderr = "";
   let truncated = false;
@@ -1557,12 +1561,15 @@ export async function runWorkspaceCommand(
     // Drain concurrently so a verbose installer/check cannot fill a pipe while we
     // wait for exit. Retain bounded bytes even when the child keeps writing.
     const readers = [proc.stdout.getReader(), proc.stderr.getReader()];
-    const read = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
+    const read = async (reader: ReadableStreamDefaultReader<Uint8Array>, stream: number) => {
       const chunks: Uint8Array[] = [];
       let size = 0;
+      const decoder = new TextDecoder();
       for (;;) {
         const { done, value: chunk } = await reader.read();
         if (done) break;
+        // Every byte reaches the digest; only the stored excerpt is bounded.
+        digester.feed(decoder.decode(chunk, { stream: true }), String(stream));
         const remaining = Math.max(0, maxBytes - size);
         if (chunk.byteLength > remaining) truncated = true;
         if (remaining) chunks.push(chunk.slice(0, remaining));
@@ -1570,7 +1577,7 @@ export async function runWorkspaceCommand(
       }
       return Buffer.concat(chunks).toString("utf8");
     };
-    const output = Promise.all(readers.map(read));
+    const output = Promise.all(readers.map((reader, stream) => read(reader, stream)));
     const completed = Promise.all([proc.exited, output]);
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     const result = await Promise.race([
@@ -1617,6 +1624,7 @@ export async function runWorkspaceCommand(
     output: content.length > maxBytes ? content.slice(0, maxBytes) : content,
     truncated: truncated || content.length > maxBytes,
     timedOut,
+    ...(exitCode !== 0 || timedOut ? { digest: digester.digest() } : {}),
   };
 }
 

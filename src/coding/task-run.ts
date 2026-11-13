@@ -77,6 +77,11 @@ export interface CodingRunMetadata {
   candidateId?: string;
   verificationObservedAt?: number;
   verificationReason?: string;
+  /**
+   * Repository gates: the only failing gates also fail on the task's base commit. Still
+   * `failed` (never verified), but the attempt may submit, labelled.
+   */
+  preexistingFailure?: boolean;
   /** Delivery mode: which stated requirements a passing check observed on the current files. */
   requirements?: RequirementCoverage;
   /** Submissions refused for unverified requirements (bounded by REQUIREMENT_REFUSALS). */
@@ -391,7 +396,12 @@ export async function submitCodingRun(
     // reported as verified unless its checks passed.
     const forced = stop ?? budgetForcedAt(meta, Date.now());
     if (forced) meta.budgetForced = forced;
-    if (!forced && meta.verificationRequirement && !codingVerificationSatisfied(meta)) {
+    if (
+      !forced &&
+      meta.verificationRequirement &&
+      !codingVerificationSatisfied(meta) &&
+      !meta.preexistingFailure
+    ) {
       db.updateCodingArtifact(run.id, { metadata: meta });
       db.createCodingEvent({
         sessionId,
@@ -450,6 +460,28 @@ function latestVerification(db: MarinaDB, runId: string) {
     );
 }
 
+function parseJsonObject(text: string): Record<string, unknown> {
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** A repository test step (not a coder's requirement check) ran and passed. */
+export function repositoryTestsPassed(steps: readonly unknown[]): boolean {
+  return steps.some((item) => {
+    const step = item as { role?: unknown; outcome?: unknown; requirement?: unknown } | null;
+    return (
+      !!step &&
+      step.requirement !== true &&
+      (step.role === "tests" || step.role === "full-tests") &&
+      step.outcome === "passed"
+    );
+  });
+}
+
 /** A no-change answer satisfies submission/review without claiming checks passed. */
 export function codingVerificationSatisfied(meta: Pick<CodingRunMetadata, "verification">) {
   return meta.verification === "passed" || meta.verification === "not_applicable";
@@ -500,6 +532,7 @@ export async function assessCodingVerification(
     | "verificationObservedAt"
     | "verificationReason"
     | "requirements"
+    | "preexistingFailure"
   > = {
     verification: "missing",
     verificationId: verification?.id,
@@ -507,6 +540,7 @@ export async function assessCodingVerification(
     verificationObservedAt: Date.now(),
     verificationReason: undefined,
     requirements: undefined,
+    preexistingFailure: undefined,
   };
   const session = db.getCodingSession(run.session_id);
   // A task that changed nothing has nothing to verify. The comparison is with the workspace
@@ -521,7 +555,18 @@ export async function assessCodingVerification(
       meta.initialWorkspace,
       await observeWorkspaceState(session.worktree_path ?? session.workspace_root),
     );
-    if (comparison.kind === "unchanged")
+    // The waiver never skips a requirement's own checks: under delivery, ignored files can
+    // be the deliverables (an ignored report), and a delivery receipt the coder already
+    // declared decides on its own files.
+    const deliverables =
+      meta.verificationRequirement === "delivery" &&
+      comparison.kind === "unchanged" &&
+      (!!comparison.ignoredChanged?.length ||
+        !!comparison.ignoredUnobserved ||
+        db
+          .listCodingRunArtifacts(run.id, ["verification"])
+          .some((artifact) => "delivery" in parseJsonObject(artifact.metadata_json)));
+    if (comparison.kind === "unchanged" && !deliverables)
       return {
         ...result,
         verification: "not_applicable" as const,
@@ -561,7 +606,10 @@ export async function assessCodingVerification(
               ? "Checks were not run."
               : "Verification infrastructure failed.",
     };
-  if (verification.status !== "complete")
+  // Gates that fail only where the base fails too: checked for freshness like a pass below,
+  // then labelled (never verified, but the coder can submit without fixing unrelated code).
+  const preexistingOnly = evidence.gates === "repository" && evidence.preexistingOnly === true;
+  if (verification.status !== "complete" && !preexistingOnly)
     return {
       ...result,
       verification: "failed" as const,
@@ -581,7 +629,9 @@ export async function assessCodingVerification(
   });
   if (
     evidence.recipeType === "whitespace-only" ||
-    ((meta.verificationRequirement || evidence.candidateId || evidence.delivery) && !meaningful)
+    ((meta.verificationRequirement || evidence.candidateId || evidence.delivery) &&
+      !meaningful &&
+      !preexistingOnly)
   )
     return {
       ...result,
@@ -657,6 +707,13 @@ export async function assessCodingVerification(
       verification: "unbound" as const,
       verificationReason:
         "This task is verified only by the repository's own gates. Run code verify candidate (marina_code verify verificationMode=candidate): it runs the project's type-check, lint and tests on a snapshot, relevant tests then the full suite. Inspect the result, then submit.",
+    };
+  if (evidence.gates === "repository" && !preexistingOnly && !repositoryTestsPassed(steps))
+    return {
+      ...result,
+      verification: "not_run" as const,
+      verificationReason:
+        "No repository test step ran and passed. The repository's gates need a detected test command; a requirement check or lint alone never verifies.",
     };
   if (!evidence.candidateId && evidence.workspaceEventId !== meta.workspaceEventId)
     return {
@@ -741,6 +798,11 @@ export async function assessCodingVerification(
         ),
         ...(evidence.gates === "repository" ? { optional: true } : {}),
       };
+    if (result.verification === "passed" && preexistingOnly) {
+      result.verification = "failed";
+      result.verificationReason = `${String(evidence.outcomeReason)}. The failure is not this change's; it stays unverified.`;
+      result.preexistingFailure = true;
+    }
     if (result.verification === "stale")
       result.verificationReason = `Included source changed since snapshot verification. Run ${retry} and inspect the completed receipt before resubmitting.`;
   } catch (error) {

@@ -38,8 +38,10 @@ import {
 import { createServer } from "node:net";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { candidateFingerprint } from "../src/coding/candidate";
 import { hostGitArgv, hostGitEnv } from "../src/coding/host-git";
-import { detectProjectRunner, PROJECT_MARKERS } from "../src/coding/project-detection";
+import { PROJECT_MARKERS, repositoryRunnerProfiles } from "../src/coding/project-detection";
+import { repositoryTestsPassed } from "../src/coding/task-run";
 import { diffStat } from "../src/coding/unified-diff";
 import {
   compareWorkspaceState,
@@ -145,13 +147,13 @@ export function repositoryGates(
     }
   };
   for (const marker of PROJECT_MARKERS) if (existsSync(join(root, marker))) markers.add(marker);
-  const profile = detectProjectRunner({
+  const profiles = repositoryRunnerProfiles({
     markers,
     packageJson: markers.has("package.json") ? read("package.json") : null,
     pythonConfig: `${read("pyproject.toml") ?? ""}\n${read("setup.cfg") ?? ""}`,
   });
-  return profile.testCommand
-    ? { ok: true, runner: profile.verify.join(", ") }
+  return profiles.some((profile) => profile.testCommand)
+    ? { ok: true, runner: profiles.flatMap((profile) => profile.verify).join(", ") }
     : { ok: false, reason: "Marina detects no test runner in the folder" };
 }
 
@@ -543,7 +545,19 @@ export interface GateReport {
   freshness?: string;
   workspace?: string;
   resultId?: string;
-  steps?: Array<{ command: string; role?: unknown; outcome?: unknown; reason?: unknown }>;
+  /** Every failing gate also fails on the base commit, without the change. */
+  preexistingOnly?: boolean;
+  /** The snapshot the gates ran on, for re-checking the folder against it. */
+  candidateFingerprint?: string;
+  baseCommit?: string | null;
+  steps?: Array<{
+    command: string;
+    role?: unknown;
+    outcome?: unknown;
+    reason?: unknown;
+    preexisting?: boolean;
+    digest?: { failures?: Array<{ name: string; location?: string }>; firstError?: string };
+  }>;
 }
 
 /** A native turn declares no requirement checks: verified, at most, on the gates alone. */
@@ -590,14 +604,27 @@ export function nativeVerificationEnd(input: {
     return end("unbound", "The verification that ran was not the repository's gates.");
   if (input.folder && report.workspace && report.workspace !== input.folder)
     return end("unbound", `The gates ran on ${report.workspace}, not on this folder.`);
+  if (report.preexistingOnly)
+    return end(
+      "failed",
+      `${report.reason ?? "the repository's gates already fail without this change"}. Not this change's failure, but not verified.`,
+    );
   const failing = report.steps?.find((step) => step.outcome !== "passed");
+  const tests = failing?.digest?.failures
+    ?.slice(0, 5)
+    .map((f) => `${f.name}${f.location ? ` (${f.location})` : ""}`);
   const named = failing
-    ? `${failing.command} ${failing.outcome}${failing.reason ? ` (${failing.reason})` : ""}`
+    ? `${failing.command} ${failing.outcome}${failing.reason ? ` (${failing.reason})` : ""}${tests?.length ? `; failing: ${tests.join("; ")}` : ""}`
     : report.reason;
   if (report.outcome !== "passed")
     return end(
       report.outcome === "failed" ? "failed" : report.outcome === "not_run" ? "not_run" : "error",
       `Repository gate ${report.outcome === "failed" ? "failed" : "did not pass"}: ${named ?? report.outcome}.${report.resultId ? ` Inspect: code show ${report.resultId}` : ""}`,
+    );
+  if (!repositoryTestsPassed(report.steps ?? []))
+    return end(
+      "not_run",
+      "No repository test step ran and passed, so the repository's gates did not verify the change.",
     );
   if (report.freshness !== "current")
     return end(
@@ -617,46 +644,66 @@ export async function verifyNativeTurn(input: {
   dir: string;
   baseline: WorkspaceState;
   gates: ReturnType<typeof repositoryGates>;
-  arm: () => Promise<Perception>;
-  run: (command: string) => Promise<unknown>;
+  /** One deadline for the turn and its verification (epoch ms). */
+  deadlineAt: number;
+  /** Receive every perception from now on; returns the unsubscribe. */
+  subscribe: (handler: (p: Perception) => void) => () => void;
+  /** Run a command; resolves with the perceptions it produced. */
+  run: (command: string) => Promise<readonly Perception[]>;
   say?: (line: string) => void;
-}): Promise<CodeLifecycleEnd> {
+}): Promise<CodeLifecycleEnd | "timeout"> {
   const comparison = compareWorkspaceState(input.baseline, await observeWorkspaceState(input.dir));
-  let report: GateReport | Error | undefined;
-  if (comparison.kind !== "unchanged" && input.gates.ok) {
-    input.say?.(`Verifying with the repository's gates (${input.gates.runner})…`);
-    const finished = input.arm();
-    finished.catch(() => {
-      /* read below */
-    });
-    try {
-      await input.run("code verify candidate gates:repository");
-      const code = (await finished).data?.code as { metadata?: { gates?: GateReport } };
-      report = code.metadata?.gates;
-    } catch (error) {
-      report = error instanceof Error ? error : new Error(String(error));
-    }
-  }
-  return nativeVerificationEnd({
-    comparison,
-    gates: input.gates,
-    report,
-    folder: realpathSync(input.dir),
+  const folder = realpathSync(input.dir);
+  if (comparison.kind === "unchanged" || !input.gates.ok)
+    return nativeVerificationEnd({ comparison, gates: input.gates, folder });
+  input.say?.(`Verifying with the repository's gates (${input.gates.runner})…`);
+  // Collect completions before admitting, then take only the one for this run's receipt.
+  const finished: Perception[] = [];
+  let wake = () => {};
+  const unsubscribe = input.subscribe((p) => {
+    if ((p.data?.code as { event?: string } | undefined)?.event !== "verification_finished") return;
+    finished.push(p);
+    wake();
   });
-}
-
-/** Matches the `verification_finished` of the repository-gate run this client started. */
-export function gateVerificationMatcher(sessionId?: string): (p: Perception) => boolean {
-  return (p) => {
-    const code = p.data?.code as
-      | { event?: string; sessionId?: string; metadata?: { gates?: unknown } }
-      | undefined;
-    return (
-      code?.event === "verification_finished" &&
-      (!sessionId || code.sessionId === sessionId) &&
-      !!code.metadata?.gates
-    );
-  };
+  let report: GateReport | Error | undefined;
+  try {
+    const admitted = await input.run("code verify candidate gates:repository");
+    const receipt = admitted
+      .map((p) => p.data?.code as { event?: string; artifactId?: string } | undefined)
+      .find((code) => code?.event === "verification_started")?.artifactId;
+    if (!receipt) throw new Error("the repository gates were not admitted");
+    const mine = () =>
+      finished.find(
+        (p) => (p.data?.code as { artifactId?: string } | undefined)?.artifactId === receipt,
+      );
+    while (!mine()) {
+      const left = input.deadlineAt - Date.now();
+      if (left <= 0) return "timeout";
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, left);
+        wake = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+    }
+    const code = mine()!.data?.code as { metadata?: { gates?: GateReport } } | undefined;
+    report = code?.metadata?.gates;
+    // The folder may have changed while the result travelled: compare it with the snapshot
+    // the gates ran on, here and now.
+    if (report?.outcome === "passed" && report.freshness === "current") {
+      const current = await candidateFingerprint(folder, report.baseCommit ?? null).catch(
+        () => undefined,
+      );
+      if (!report.candidateFingerprint || current !== report.candidateFingerprint)
+        report = { ...report, freshness: "stale" };
+    }
+  } catch (error) {
+    report = error instanceof Error ? error : new Error(String(error));
+  } finally {
+    unsubscribe();
+  }
+  return nativeVerificationEnd({ comparison, gates: input.gates, report, folder });
 }
 
 export function freePort(): Promise<number> {
@@ -1396,10 +1443,12 @@ export async function runCodeSession(
   };
 
   if (opts.print !== undefined && harness.agent !== "marina") {
-    const timeout = printTimeoutMs(undefined);
     // What the folder held before the turn: a turn that changes nothing has nothing to verify.
     const baseline = await observeWorkspaceState(dir);
     const gates = repositoryGates(dir);
+    // One deadline covers the turn and Marina's verification of it.
+    const timeout = printTimeoutMs(gates.ok ? "candidate" : undefined);
+    const deadlineAt = Date.now() + timeout;
     try {
       await sessionConsole.task(opts.print, true, timeout);
     } catch (error) {
@@ -1411,16 +1460,24 @@ export async function runCodeSession(
     }
     // Marina verifies the native turn's result the way it verifies its own coder's: the
     // repository's gates on a snapshot of the folder.
-    const sessionId = sessionConsole.currentSessionId;
     const end = await verifyNativeTurn({
       dir,
       baseline,
       gates,
-      arm: () =>
-        agent.waitForMessage(gateVerificationMatcher(sessionId), printTimeoutMs("candidate")),
+      deadlineAt,
+      subscribe: (handler) => {
+        agent.onPerception(handler);
+        return () => agent.offPerception(handler);
+      },
       run: (command) => agent.command(command),
       say: (line) => console.error(line),
     });
+    if (end === "timeout") {
+      // The gates are still running: closing the session stops its server and them.
+      console.error(`Task timed out after ${timeout}ms while the repository gates were running.`);
+      await finishPrint(printOutcome("timeout"));
+      return;
+    }
     await finishPrint(printOutcome(end, opts.allowUnverified), end);
     return;
   }

@@ -879,6 +879,8 @@ export interface VerificationStep {
   role: StepRole;
   /** Per-step timeout (the full-suite budget). */
   timeoutMs?: number;
+  /** A coder's requirement check: never stands in for a repository gate. */
+  requirement?: boolean;
   /**
    * A fallback runner: a zero exit passes only when the output reports tests
    * ran (`Ran N tests`, `N passed`). Silence is never a pass.
@@ -922,10 +924,18 @@ export function detectedSteps(input: {
   relevant: RelevantTests;
   /** Paths that exist in the workspace (deleted files never become arguments). */
   exists: (path: string) => boolean;
+  /** Repository gates: a configured type-check always runs, over the whole project. */
+  gates?: boolean;
 }): StepPlan {
   const { profile, options, relevant } = input;
   const steps: VerificationStep[] = [];
-  if (options.typecheck === "auto" && profile.typecheck) {
+  if (input.gates && profile.typecheck) {
+    // A change to configuration alone can break the type-check: never skip it.
+    steps.push({
+      command: profile.typecheck === "python -m mypy" ? "python -m mypy ." : profile.typecheck,
+      role: "typecheck",
+    });
+  } else if (options.typecheck === "auto" && profile.typecheck) {
     if (profile.language === "python") {
       const files = input.touched
         .filter((path) => /\.pyi?$/.test(path) && input.exists(path))
@@ -1102,6 +1112,20 @@ export function aggregateVerification(input: {
         : (input.scopeNote ?? "no tests ran"),
     };
   }
+  if (
+    input.repositoryGates &&
+    !steps.some(
+      (s) =>
+        !s.step.requirement &&
+        (s.step.role === "tests" || s.step.role === "full-tests") &&
+        s.outcome.outcome === "passed",
+    )
+  )
+    return {
+      outcome: "not_run",
+      reason:
+        "no repository test step ran and passed; the repository's gates need a detected test command",
+    };
   const unfinished = input.repositoryGates
     ? steps.find((s) => s.outcome.outcome !== "passed")
     : undefined;
