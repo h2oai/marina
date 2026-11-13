@@ -132,7 +132,7 @@ The formation catalogue (`src/orchestration/formations/catalogue.ts`) is the ONE
 Published panels are validated A2UI Canvas documents, not another runtime or resource store. Only a
 person acts through a panel (`person_required` on every interaction path, rechecked in the queue;
 `src/net/canvas/panel-actor.ts`), and a panel an agent writes or last revised carries no operations
-(`src/engine/panel-authority.ts`). Writers refuse unknown component types; readers draw them as inert
+(`src/engine/panel-authority.ts`); `sovereign` lifts both. Writers refuse unknown component types; readers draw them as inert
 placeholders and keep them verbatim.
 `codingDesk()` composes existing session/task/participant/feed references; operational buttons use
 the live command or routing contracts after explicit reader review. Opening, refreshing or closing

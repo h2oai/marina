@@ -10,8 +10,17 @@
  * review is a courtesy; these rules are enforced on the server.
  */
 import type { MarinaDB } from "../persistence/database";
+import { isSovereign } from "./trust-profile";
 
 export type PanelActorKind = "person" | "agent";
+
+/**
+ * `MARINA_AUTONOMY=sovereign`, the one all-gates-off switch, lifts every panel
+ * rule here: agents press panel buttons and publish panels whose buttons act.
+ */
+export function panelRulesLifted(): boolean {
+  return isSovereign();
+}
 
 export const PANEL_PERSON_REQUIRED =
   "Only a person may act through a panel. Agents read panels and act with world commands.";
@@ -44,7 +53,9 @@ export function agentPanelOperationsRefusal(
   document: unknown,
   writer: PanelActorKind,
 ): string | null {
-  return writer === "agent" && panelHasOperations(document) ? AGENT_PANEL_OPERATIONS_REFUSED : null;
+  return writer === "agent" && !panelRulesLifted() && panelHasOperations(document)
+    ? AGENT_PANEL_OPERATIONS_REFUSED
+    : null;
 }
 
 /** An account the world runs as an agent: an agent config or an agent principal. */

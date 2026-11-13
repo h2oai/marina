@@ -10,6 +10,7 @@ import {
   isAgentAccountName,
   PANEL_PERSON_REQUIRED,
   panelLastWriter,
+  panelRulesLifted,
 } from "../../engine/panel-authority";
 import type { MarinaDB } from "../../persistence/database";
 import { RoutingError } from "../../routing/errors";
@@ -55,7 +56,7 @@ export async function handlePanelInteraction(ctx: InteractionContext): Promise<R
   const { req, db, storage, broadcaster, engine, entityId, canvasId, nodeId, json } = ctx;
   if (!ctx.canAccess()) return json({ error: "Panel not found" }, 404);
   const personRequired = () => {
-    if (engine && httpPanelActorKind(engine, entityId) !== "person")
+    if (engine && !panelRulesLifted() && httpPanelActorKind(engine, entityId) !== "person")
       throw new RoutingError(403, "person_required", PANEL_PERSON_REQUIRED);
   };
   try {
@@ -101,7 +102,7 @@ export async function handlePanelInteraction(ctx: InteractionContext): Promise<R
       component.component === "Button" ? parsePanelOperation(component.operation) : null;
     if (operation) {
       // Defense in depth for panels written before agents' operations were refused at publish.
-      if (isAgentAccountName(db, panelLastWriter(node, data)))
+      if (!panelRulesLifted() && isAgentAccountName(db, panelLastWriter(node, data)))
         throw new RoutingError(403, "agent_panel", AGENT_PANEL_OPERATIONS_INERT);
       const newer = panelFieldUnavailable(parsed.document, operation);
       if (newer)

@@ -246,6 +246,15 @@ describe("panel authority", () => {
     expect(calls).toBe(1);
   });
 
+  it("lifts every panel rule under MARINA_AUTONOMY=sovereign", async () => {
+    using _sovereign = scopeProcessState({ env: { MARINA_AUTONOMY: "sovereign" } });
+    const created = await publish(withOperation(), agent.token);
+    expect(created.status).toBe(201);
+    const node = await created.json();
+    expect((await run(node, agent.token)).status).toBe(200);
+    expect(calls).toBe(1);
+  });
+
   it("counts the desktop token as a person and a token-less caller as an agent", () => {
     expect(httpPanelActorKind(fixture.engine, DESKTOP_OPERATOR_ENTITY_ID)).toBe("person");
     expect(httpPanelActorKind(fixture.engine, OPEN_API_ENTITY_ID)).toBe("agent");

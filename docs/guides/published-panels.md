@@ -124,6 +124,8 @@ Only a person acts through a panel. The server refuses an agent's interaction wi
 
 An agent may build and publish panels, but a panel an agent writes carries no operations. Publishing or revising one that declares an `operation` is refused with `agent_panel`, whether it arrives over HTTP, as a rich intent result or through `canvas publish`. A panel whose last writer was an agent account runs none of its buttons; a person who revises it makes its operations their own.
 
+`MARINA_AUTONOMY=sovereign`, the all-gates-off switch, lifts both rules: agents may press panel buttons and publish panels whose buttons act. Readers stay tolerant and writers stay strict in every posture.
+
 ```json
 {
   "id": "send",
