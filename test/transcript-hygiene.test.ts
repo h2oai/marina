@@ -253,7 +253,7 @@ describe("between-prompt hygiene in the adapter", () => {
     expect(i.tokenCapFor(done)?.capTokens).toBe(DEFAULT_CONVERSATION_CAP_TOKENS);
   });
 
-  it("caps a bound coder after work starts, including tool turns in its first prompt", () => {
+  it("uses a bound coder's model window by default, with explicit caps after work starts", () => {
     {
       using _state = scopeProcessState({ env: { MARINA_AGENT_CONTEXT_CAP_TOKENS: undefined } });
       const i = make() as unknown as CapInternals;
@@ -271,13 +271,17 @@ describe("between-prompt hygiene in the adapter", () => {
             },
           ]),
         ])?.capTokens,
-      ).toBe(DEFAULT_CONVERSATION_CAP_TOKENS);
-      expect(i.tokenCapFor(done)?.capTokens).toBe(DEFAULT_CONVERSATION_CAP_TOKENS);
+      ).toBeUndefined();
+      expect(i.tokenCapFor(done)).toBeUndefined();
     }
     {
       using _state = scopeProcessState({ env: { MARINA_AGENT_CONTEXT_CAP_TOKENS: "64000" } });
       const i = make() as unknown as CapInternals;
       i.activeCodingTask = "fix the parser";
+      expect(i.tokenCapFor([user("fix the parser")])).toBeUndefined();
+      expect(
+        i.tokenCapFor([user("fix the parser"), assistant([text("Reading the source")])])?.capTokens,
+      ).toBe(64_000);
       expect(i.tokenCapFor(done)?.capTokens).toBe(64_000);
     }
   });

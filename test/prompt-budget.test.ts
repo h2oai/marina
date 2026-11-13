@@ -527,12 +527,14 @@ describe("continuation prompt budget (adapter)", () => {
     expect(prompt).toContain("End the reply with tag [re:ab12cd]");
   });
 
-  it("clamps the Active Coding Task section", async () => {
+  it("keeps the exact Active Coding Task even when it exceeds the continuation budget", async () => {
     const { adapter, i } = makeAdapter("budget-coding-task", 1);
-    adapter.setActiveCodingTask(`fix ${"the tokenizer ".repeat(200)}`);
+    const task = `  fix ${"the tokenizer ".repeat(200)}\nKeep this final constraint.  `;
+    adapter.setActiveCodingTask(task);
     const prompt = await i.buildContinuationPrompt();
     const section = prompt.slice(prompt.indexOf("[Active Coding Task]"));
-    expect(section.indexOf("The task comes first: work through marina_code")).toBeLessThan(1000);
+    expect(section).toContain(`[Active Coding Task]\n${task}\n`);
+    expect(section).toContain("The task comes first: work through marina_code");
   });
 });
 

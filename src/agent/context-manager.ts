@@ -21,6 +21,7 @@ import { maxToolResultTokensForWindow } from "../engine/constants";
 import { Logger } from "../engine/logger";
 
 import { withMemoryAbort } from "../sdk/memory-abort";
+import { codingTaskMessage, isCodingTaskMessage, summarizeCodingMessages } from "./coding-context";
 import { clearContextUsageAnchors, collapseContextExcerpts } from "./context-excerpts";
 
 /** Module logger. */
@@ -191,6 +192,8 @@ export interface ContextManagerOptions {
    *  and tool schemas excluded) reaches `capTokens`, the conversation is
    *  compacted to `targetTokens` even far below the window-ratio threshold. */
   getTokenCap?: (messages: readonly AgentMessage[]) => ConversationTokenCap | undefined;
+  /** Exact bound task, protected from every reduction (including emergencies). */
+  getActiveCodingTask?: () => string | null;
   maxToolResultTokens?: number;
   minRecentMessages?: number;
   onBeforeCompact?: (
@@ -294,6 +297,7 @@ export function createContextManager(options: ContextManagerOptions) {
     pruneThreshold = 0.8,
     pruneTarget = 0.6,
     getTokenCap,
+    getActiveCodingTask,
     maxToolResultTokens: configuredToolResultTokens,
     minRecentMessages = 10,
     onBeforeCompact,
@@ -304,6 +308,7 @@ export function createContextManager(options: ContextManagerOptions) {
     messages: AgentMessage[],
     signal?: AbortSignal,
     force = false,
+    task: AgentMessage | undefined = undefined,
   ): Promise<AgentMessage[]> => {
     signal?.throwIfAborted();
     const original = messages;
@@ -325,7 +330,13 @@ export function createContextManager(options: ContextManagerOptions) {
           await withMemoryAbort(
             () =>
               Promise.resolve(
-                onBeforeCompact(original, summarizeMessages(original as Message[]), signal),
+                onBeforeCompact(
+                  original,
+                  task
+                    ? summarizeCodingMessages(original)
+                    : summarizeMessages(original as Message[]),
+                  signal,
+                ),
               ),
             signal,
           );
@@ -363,12 +374,19 @@ export function createContextManager(options: ContextManagerOptions) {
         messages,
         targetRatio: pruneTarget,
       });
-      const systemTokens = gauge.fixedTokens;
-      const usageRatio = gauge.usageRatio;
+      // The protected task consumes conversation space even though it is kept
+      // outside the lossy transform. Reserve it before selecting history.
+      const taskTokens = task ? estimateMessageTokens(task) : 0;
+      const systemTokens = gauge.fixedTokens + taskTokens;
+      const usageRatio = (gauge.totalTokens + taskTokens) / Math.max(1, contextWindow);
+      // A coder uses the model's window minus output + safety reserve. Ordinary
+      // residents keep the earlier ratio trigger and the economical 48k cap.
+      const threshold = task ? 1 : pruneThreshold;
 
-      const tokenCap = usageRatio < pruneThreshold ? getTokenCap?.(messages) : undefined;
-      const capped = tokenCap !== undefined && gauge.messageTokens >= tokenCap.capTokens;
-      if (usageRatio < pruneThreshold && !capped && !force) {
+      const tokenCap = usageRatio < threshold ? getTokenCap?.(messages) : undefined;
+      const capped =
+        tokenCap !== undefined && gauge.messageTokens + taskTokens >= tokenCap.capTokens;
+      if (usageRatio < threshold && !capped && !force) {
         return await finish(truncateOversizedToolResults(messages, maxToolResultTokens));
       }
 
@@ -382,6 +400,11 @@ export function createContextManager(options: ContextManagerOptions) {
         targetRatio = tokenCap.targetTokens / Math.max(1, contextWindow);
         keepRecent = minRecentMessages;
         maxSummaryRatio = (tokenCap.targetTokens * 0.1) / Math.max(1, contextWindow);
+      } else if (task) {
+        // A coding handoff is required even during overflow recovery.
+        targetRatio = pruneTarget;
+        keepRecent = minRecentMessages;
+        maxSummaryRatio = 0.1;
       } else if (usageRatio >= 0.95) {
         targetRatio = 0.4;
         keepRecent = 4;
@@ -397,7 +420,7 @@ export function createContextManager(options: ContextManagerOptions) {
       }
 
       const budgetForMessages = capped
-        ? tokenCap.targetTokens
+        ? tokenCap.targetTokens - taskTokens
         : contextWindow * targetRatio - systemTokens;
 
       if (budgetForMessages <= 0) {
@@ -455,7 +478,9 @@ export function createContextManager(options: ContextManagerOptions) {
         result.push(...kept.kept);
 
         if (freshMessages.length > 0) {
-          const ruleBasedSummary = summarizeMessages(freshMessages as Message[]);
+          const ruleBasedSummary = task
+            ? summarizeCodingMessages(freshMessages)
+            : summarizeMessages(freshMessages as Message[]);
           let summary: string;
           if (summarizeWithLLM) {
             try {
@@ -547,14 +572,27 @@ export function createContextManager(options: ContextManagerOptions) {
     signal?: AbortSignal,
     request?: { force?: boolean },
   ): Promise<AgentMessage[]> => {
-    if (!messages.some((m) => m.role === "system"))
-      return transformConversation(messages, signal, request?.force);
+    const taskText = getActiveCodingTask?.();
+    const previousTask = messages.find(isCodingTaskMessage);
+    const task = taskText
+      ? previousTask?.content === `[Active Coding Task]\n${taskText}`
+        ? previousTask
+        : codingTaskMessage(taskText)
+      : undefined;
     const system = messages.filter((m) => m.role === "system");
-    const conversation = messages.filter((m) => m.role !== "system");
-    const result = await transformConversation(conversation, signal, request?.force);
+    const conversation = messages.filter((m) => m.role !== "system" && !isCodingTaskMessage(m));
+    const result = await transformConversation(conversation, signal, request?.force, task);
     const unchanged =
       result.length === conversation.length && result.every((m, i) => m === conversation[i]);
-    return unchanged ? messages : [...system, ...result];
+    // Reinsert only after a reduction or when updating an existing reminder.
+    // No-op transforms preserve identities and the entire cached prefix. The
+    // task is never summarized, truncated, or dropped by an emergency path.
+    if (unchanged && (!previousTask || previousTask === task)) return messages;
+    return [
+      ...system,
+      ...(task ? [task] : []),
+      ...(previousTask && previousTask !== task ? clearContextUsageAnchors(result) : result),
+    ];
   };
 }
 

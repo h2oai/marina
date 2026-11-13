@@ -382,9 +382,6 @@ export const PERCEPTION_MODEL_REQUEST_MAX_CHARS = (() => {
   return n === undefined ? 2000 : Math.max(PERCEPTION_LINE_MAX_CHARS, Math.floor(n));
 })();
 
-/** Max characters of the restated [Active Coding Task] section. */
-export const ACTIVE_CODING_TASK_MAX_CHARS = 800;
-
 /** Turns (model calls) one `agent.prompt()` may take before the loop yields
  *  to the next cycle; complements the tool-call run cap. Override:
  *  MARINA_MAX_TURNS_PER_PROMPT. */
