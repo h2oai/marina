@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-13
+
+### Upgrade notes
+
+Behaviour a living world notices on upgrade. Back up first and follow the
+[upgrading guide](docs/guides/upgrading.md); nothing is reset.
+
+- **Schema 167 → 190.** The first start runs the new migrations; fresh installs start from a
+  schema-179 baseline. Marina now requires **Bun 1.4.4**.
+- **A storage budget is on by default.** A world keeps at most 5 GiB on disk
+  (`MARINA_STORAGE_MAX_BYTES`, `off` for no cap) and leaves 1 GiB free on its disk
+  (`MARINA_STORAGE_MIN_FREE_BYTES`). Past 90 % it prunes the oldest resident continuity journal
+  and telemetry; facts, lessons, tasks, the chronicle, ledgers and people's files are never
+  removed. A database over budget, or with a quarter of its file free, is rewritten once at the
+  next start (`VACUUM`), which can take a minute on a multi-GB world.
+- **One home: `~/.marina`.** `marina start` keeps its world in `~/.marina/world` unless the folder
+  it runs in already holds one (a `marina.db`, or a `.env` with Marina settings), so existing
+  servers keep their world. Running `setup.sh` again moves an install in `~/marina` (code and
+  world) into `~/.marina`; the desktop app moves its data into `~/.marina/desktop` on first
+  start. `marina uninstall` removes it all.
+- **Commands.** `get`, `drop`, `give`, `inventory` and `emote` are removed, and so are quests.
+  Thirty commands joined a family (`memory`, `project`, `outcome`, `readiness`, `world`, …); the
+  old names still work and announce the new form once per session. A `tell` to someone offline
+  now waits for them instead of being refused.
+- **Changed defaults.** Residents and rooms use the cheap model tier (`marina/cheap`) and
+  graders the strong one; the cheap tier has a default output cap. Supervised residents,
+  spawn-time route evidence and the outcome judge (with a model provider) are on. Agents see
+  message ids (`MARINA_PEER_RENDER=ids`). Page reads honour robots.txt.
+- **Civic rules.** Every account is its own party for standing; live (real-money) prediction
+  market orders are held for a person (`trading.live`).
+- **Memory API.** The per-principal budget paces network clients only; a 429 names its wait
+  (`retry_after_ms`).
+
 ### Security
 
 - **A forged harness marker inside a peer's message is escaped wherever it sits.** Agents read
@@ -131,6 +164,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inbound gateway connections are refused unless `GATEWAY_SECRET` is set; the refusal, the boot log
   and `readiness` (`federation-inbound`) say how to set it. The `local` profile is unchanged.
 
+- **Outbound requests and network helpers.** A cross-origin redirect followed by the URL guard
+  drops provider signing and token headers (`KALSHI-ACCESS-*`, Polymarket `POLY_*`, `*-token`,
+  `*-secret`, `*-signature`) as well as `Authorization`, cookies and API keys. IPv6 link-local
+  and unique-local ranges are matched by prefix (all of `fe80::/10`), so a host name such as
+  `fdroid.org` is no longer mistaken for an address. Under the `local` profile, peer URLs still
+  refuse link-local and cloud-metadata addresses in IPv4-mapped and tunnelled IPv6 forms, plus
+  `192.0.0.192`, `fd00:ec2::254` and metadata host names. `connect add` checks a connector URL's
+  resolved addresses before dialling it. The Kalshi, Polymarket, TabH2O, forecast-lookup,
+  connector and room HTTP clients keep their deadline until the response body is read.
+  `/api/probe` shares the `/mem` authentication path (constant-time key match, failed-auth
+  throttle, sanitized `X-Agent-Name`) and caps request bodies at 64 KiB. Local asset storage
+  refuses keys outside its directory. The routing supervisor runs git with the hardened host-git
+  settings. `MODEL_API_KEYS` is parsed in one place. `hono` is updated to 4.13.11.
+
+- **The main listener validates the `Host` header.** On a loopback bind or under the `local`
+  trust profile, HTTP routes and WebSocket upgrades (`/ws`, `/dashboard-ws`, `/canvas-ws`) answer
+  only to loopback names and to names listed in the new `MARINA_ALLOWED_HOSTS`; any other `Host`
+  gets `421`. A browser request whose `Origin` matches its `Host` counts as same-origin only when
+  that `Host` is allowed. A public bind is unchanged unless the variable is set. A reverse proxy on
+  the same host as a loopback-bound Marina must list its public name in `MARINA_ALLOWED_HOSTS` (or
+  forward a loopback `Host`). The standalone memory service and the log viewer apply the same
+  rule, and the log viewer's feed refuses a foreign browser `Origin`. `/mcp` keeps
+  `MARINA_MCP_ALLOWED_HOSTS`; every listener shares one implementation.
+
+- **Boards enforce their access rules on every path** (GHSA-rgp4-gg8w-xwxm). Reading a post by
+  number, reply, search, scores, vote, archive and `export` skipped a board's rank floors, and no
+  path kept a group's board members-only. One rule now covers them all: group boards are
+  members-only in every trust profile, rank floors apply to every path, and archiving is the
+  author's or a moderator's.
+- The startup banner no longer prints the local model-API key; it reads the key from its
+  0600 file instead, so captured stdout never carries the credential.
+- **A hostname is loopback only when it is one.** A browser origin, bind host or gateway target
+  counted as loopback when its hostname merely started with `127.`, so on a loopback bind a page
+  served from a name such as `127.attacker.example` was trusted as the local operator's own
+  browser on `/ws`, `/dashboard-ws`, `/canvas-ws` and `/api/command`. Loopback now means
+  `localhost`, `::1` or an IPv4 literal in 127.0.0.0/8, through one shared check
+  (`src/net/loopback.ts`) that replaces every local copy.
+- **Canvas HTTP writes follow the in-world ownership rule.** Deleting a canvas, deleting or
+  changing a node and removing a relationship over `/api/canvases` take the author or canvas
+  owner, an admin or the operator, as `canvas delete` and `canvas disconnect` do; a refusal is a
+  403 with the same explanation and raises the same challenge. Writes are attributed to the
+  signed-in caller, never a name in the request body. Canvas and asset reads are rate-limited
+  per client IP (per principal when signed in), uploads take a plain extension from the
+  filename, and one damaged stored row no longer fails a whole canvas or asset list.
+
+- **Panel buttons act only for people, and an agent's panel carries no operations.** The panel
+  interaction route refuses an agent (`person_required`, 403) for buttons, notification actions and
+  field changes, and again when a queued command reaches its turn. A panel written by an agent can
+  carry no operations (`agent_panel`), and a panel last written by an agent runs none of its
+  buttons until a person revises it. Readers show an unknown component type as an inert named
+  placeholder; writers refuse it. `MARINA_AUTONOMY=sovereign` lifts these rules.
+
+- **Code Mode's host git ignores repository content drivers and submodules.** Git commands Marina
+  runs in a workspace switch off every filter, diff textconv, external diff and merge driver the
+  repository's configuration names, and never descend into submodules, so a repository cannot run
+  its own programs through Marina's git calls.
+
 ### Added
 
 - **One home, and a clean uninstall.** Everything Marina writes for a person now lives in one
@@ -228,1173 +318,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clippy's warnings as errors, runs its unit tests and doc examples, and drives a whole coding run
   through it on a live server, checking every coding frame against the schema, plus memory,
   routing, session resume and `Marina::local`.
-
-### Changed
-
-- **The coder's closing reply is written for the person reading it.** Its brief now says the
-  terminal already shows each change, the check result and the review commands, so the reply
-  explains what changed, why and what the checks showed, without artifact ids (they stay in the
-  stored summary). A recorded run went from three ids in the reply to none.
-- **A coding session shows what it is doing and what it produced.** People could not tell
-  whether `marina` was working or what it changed: steps were raw commands (`▸ code read`),
-  edits showed no change, checks were a dozen lines of ids and agent hints, "task received" came
-  three times under an internal name, the world brief printed into the session, and nothing said
-  "done". Now each step is one line in plain words, every edit and new file shows its change
-  inline, checks are one line from the run's structured verdict (never from prose), the
-  coder's words are labelled Coder, and the input rule shows the working time and the latest
-  step. A run ends with one block: how it ended, the files changed, whether checks passed, its
-  own time and cost, and the exact next commands (`/diff`, `/review approve|reject <attempt>`,
-  `git restore`). Task-board notices stay in the World view (F6), and the periodic world brief skips a person in Code Mode (`brief` on request still works).
-- **`marina init` asks one question.** It asks for an API key and recognises the provider from
-  the key (`sk-ant-`, `sk-or-`, `gsk_`, `AIza`, `sk-`; others are tried against Together and
-  Nebius). A key already saved or in the shell is used without asking, and with Ollama running
-  Enter uses its first model. The instance name, world and admin keep their defaults, and there
-  is no "Start now?" question. `marina init --advanced` is the old step-by-step flow. Input that
-  ends (a pipe) now answers each remaining question with its default, where it used to hang or
-  crash, and never starts a server.
-- **The dashboard builds itself.** A source checkout used to need `bun run dashboard:build`, which
-  the `marina` CLI setup never ran, so a coding session's dashboard link opened a "not built yet"
-  page. The server now builds `dist/dashboard` in the background at boot when it is missing or
-  older than its sources (about a second, swapped in only when complete, one build at a time), and
-  the `marina` welcome card always shows the session's dashboard URL.
-  `MARINA_DASHBOARD_AUTOBUILD=off` turns it off.
-
-- **The work pulse no longer stalls on one stuck task.** It kept one pulse task open at a time, and
-  the reviewer had claimed and submitted its own task, which it never reviewed, so no new work
-  opened for four days. The pulse now runs every 6 hours and keeps up to `MARINA_WORK_PULSE_OPEN`
-  (default 3) live pulse tasks; a task its own reviewer claimed, or with no activity for 3 days,
-  no longer counts. The knowledge auditor no longer flags text that quotes its own findings
-  (`unknown pool action`), which had made the pulse re-file a note about the auditor.
-- **`MARINA_ANTHROPIC_AUTO_CACHE` is measured on live traffic.** Its posture asked for a paired
-  `benchmark compare-run`, but compare-run arms switch request instruments, not process settings,
-  so that evidence could never exist. It now reads cache-read tokens per route from `trace stats`.
-
-- **`help` leads with what people use.**
-  - Bare `help` opens with "Start here": thirteen commands that cover nearly all use (`look`,
-    `work`, `tell`, `say`, `channel send`, `board post`, `task list`, `memory note`,
-    `pool <name> recall`, `project list`, `chronicle`, `who`, `readiness`), then the category
-    names on one line instead of every command name.
-  - `help <command>` for a command with many forms (`code`, `memory`, `task`, `build`, `board`,
-    `channel`, `chronicle`, `pool`, `project`, `agent`, `skill`) shows its common forms first.
-    Before, it showed the first eight alphabetically, which left `channel send` out of
-    `help channel`, and `help code` printed over a hundred lines.
-  - Any other command's Usage block is capped at twelve lines. `help <command> full` still
-    shows everything.
-  - `src/engine/commands/help-common.ts` holds both lists, and `test/help-common.test.ts` checks
-    every entry against the declared syntax.
-
-- **Fewer top-level commands: 30 more join a family under the command they belong to.**
-  - Marina had 135 top-level commands. Command families (`memory note …` running `note`) now
-    group 30 more, so `help` lists 105:
-    - `project research|debate|solve|explore|plan|monitor|usecase|pattern`;
-    - `outcome competence|lessons|judge|arbiter|productivity`;
-    - `readiness posture|methods|uptime`;
-    - `world genome|marina-descend|mesh|association|reproduce|intellect|mutation|economy|lab`;
-    - `position bankroll`, `watch probe`, `shell run`, `role trait|system-prompt`,
-      `crew recruit`.
-  - Every bare name still runs exactly as before (same handler, rank, gates and output) and says
-    once per session where it now lives. `help <head>` lists its members.
-  - `project create` refuses a name whose first word starts a project (`plan`, `research`, …),
-    since `project plan …` would reach the launcher, not the project.
-  - Command usage records whether a person or an agent ran the command. Every entity carried
-    the kind `agent`, so people's commands were counted as agents'.
-
-- **A `tell` to someone offline waits for them instead of being refused.**
-  - `tell` reached connected entities only. An agent answering a person who had logged off was
-    refused and fell back to posting its answer in a channel, often several times over. A tell to
-    a known account that is not connected is now queued (`[queued #N: … reads it on connecting]`),
-    counts as the delivery of the reply the sender owed, and is shown to the account on the tick
-    after it next logs in or reconnects, marked "(sent while you were away)". It is then an
-    ordinary tell: `tell inbox`, `tell ack` and `re` work on it.
-  - The same text from the same sender while one is waiting is not queued twice, a sender may
-    leave at most 20 tells waiting for one account, and a queued tell nobody collects expires
-    after 30 days.
-
-- **Agent journals stop storing the same message twice.**
-  - When an agent's history was compacted, the archive stored again every message the
-    completed-message journal had already stored: inside an archive each message carried its
-    leading comma, so its parts never matched the journal's. The commas are now parts of their own
-    and an archive stores only what is new. Readers concatenate parts exactly as before; an
-    archive too long for separate commas keeps the old layout.
-  - A tool result is journaled without its `details`, the harness's live bookkeeping (the command
-    already in the call, delivery ids, or a second copy of the result text). Nothing read them
-    back from storage.
-  - A resumed agent's "most recent preserved excerpt" is the newest message, not the transcript's
-    closing `]` part.
-
-- **An agent's run ends when it chooses rest, and a focus holds one objective.**
-  - After an agent rested (`memory set rest …` or the `memory` tool's `rest`), the loop made one
-    more model call, and the agent used it to write a status recap nobody reads. A turn whose only
-    calls chose rest now ends the run (`turnOnlyRests` in `src/agent/loop-preferences.ts`). A
-    failed rest, or rest alongside any other call, keeps the run going as before.
-  - `memory set focus|goal` refuses a value over 500 characters and points at `memory note`, where
-    details belong. The loop already kept only the first 500 characters, so an agent writing a
-    long status report into its focus lost most of it without being told.
-  - The every-15th-cycle `[Learning Signal]` prompt section is removed. Its "Struggles" line
-    printed `[object Object]`, and agents almost never acted on it; lessons-from-work and the
-    dream pass turn repeated failures into lessons without a prompt line.
-
-- **Agents get the syntax of the commands they use most, so a first use needs no `help` turn.**
-  - Agents' own journals showed most `help <command>` lookups were for the same few core commands
-    (`pool`, `tell`, `board`, `task`). The prompt named those commands but never gave their
-    arguments.
-  - The COMMANDS section now has one line of their declared forms: `tell <entity> <message>`,
-    `channel send <name> [re:<id>] <message>`, `board post <board> <title> | <body>`, `task
-    list|info|claim|submit|create`, `pool <name> add|recall`. A test holds every form to the live
-    command manifest.
-  - The live roster no longer repeats a description for a command that line already teaches, and the
-    ids prompt line is shorter.
-  - Fixed: `pool <name> recall` was declared without its query, so `help`, `help catalog`, MCP
-    discovery and typed tools offered a form the handler refuses. It is now
-    `pool <name> recall <query>`.
-  - The paired replay (`scripts/peer-render-replay.ts`) now reports `help` lookups per arm.
-- **Three periodic prompt sections are gone from the agent loop**, each superseded by something
-  newer:
-  - **`[Memory Health]`** (every 20 cycles, an `orient` pull): memory curation is a checked pass's job
-    (dreaming), never an idle turn's, and the section invited exactly that work. `orient` remains a
-    command.
-  - **`[Standing]`** (every 20 cycles): every new credit already tells the online earner
-    `standing +N <kind> <ref> → total`, and `standing summary` reads it on demand.
-  - **`[Novelty Suggestions]`** (every 5 cycles, a `novelty suggest` pull): goals, focus, `[No Focus]`
-    and `work` direct an agent. The suggestions included `look` at unexplored rooms. `novelty` remains
-    a command.
-  - The harness no longer makes the three pulls behind them, and the memory platform's unused
-    `standingSummary` / `getNoveltySuggestions` are removed.
-- **Quests are deprecated.**
-  - Goals and focus, tasks (claim, submit, approval), crews, skills and guides cover everything quests
-    did. In the live world no agent or person had a quest, and no quest credit was ever paid.
-  - Agents are never given a world's `autoQuest`; people still are, so a world's guided start keeps
-    working.
-  - `quest_complete` joins the retired standing kinds. A quest paid standing with no other account
-    verifying anything; the kind now pays 0 and `record()` refuses it.
-  - `quest` is listed as deprecated in the feature-status table and its help.
-  - The command and the worlds' quest definitions are removed in a later release.
-- **An agent's per-turn memory leaves out the evidence and proposal tiers.**
-  - In a live world, `[evidence]` and `[proposal]` items served into agents' prompts were never
-    cited, while skills and the agent's own notes were.
-  - The per-turn context and its idle-time precompute now ask for no evidence and no proposals
-    (`skipTiers` on the `context_preview` request, mapped to `perTier: 0`). Retrieval then skips
-    the durable search entirely, so nothing is fetched and nothing is logged as served.
-  - Both tiers remain in `memory recall <query> evidence|all`, `context`, `/mem/context`, MCP and
-    passthru, which keep the same default tiers.
-- **Room-based context only for agents doing spatial work.**
-  - `[Nearby]` (who is in the room, every 5 cycles) and the "is nearby" part of
-    `[Coordination Opportunity]` are shown only to an agent that moved, built, looked or mapped in
-    the last hour. Everyone else is reached by what it owes and is given, and gets coordination
-    patterns for its focus without the room.
-  - `work` and `next` no longer offer an agent "You have not explored yet" or "You are not alone:
-    tell … what are you working on?". People still see both.
-  - The "This room:" line (a room's own tools) is unchanged.
-- **Agents no longer orient themselves before acting.**
-  - **Why:** an agent is reached by what it owes and what it is given: messages, requests and
-    assignments arrive as World Events. Looking around and reading a brief spent model turns on
-    nothing those turns needed. In the live world, agents answered requests without orienting first,
-    yet orientation reads were among their most frequent commands.
-  - **Prompts:**
-    - The system prompt no longer routes agents to "observe" with `look` and `brief`, or to find work
-      by polling (`work`, `next`, `task list`). Work reaches them as World Events; with none, they
-      advance their focus or rest. `work` lists open work when they choose new work.
-    - The first-turn prompt starts from what is owed and the agent's focus, not "inspect your
-      surroundings and world brief".
-    - The idle prompt and `[No Focus]` say rest or `work`, not `brief`.
-    - The live command roster no longer offers `look`, `brief`, `next` or `orient`.
-    - The seeded focus no longer starts with "get oriented".
-  - **Harness:**
-    - The discovery turn's six free orientation reads are gone.
-    - `marina_brief` is no longer a resident tool (still loadable by name).
-    - The harness no longer pulls `quest status` for an `[Active Objective]` section.
-  - **Engine:**
-    - An agent's login no longer runs `look` and `brief` on its behalf. It gets the structured
-      onboarding payload and one line on how work reaches it; MCP login says the same.
-    - New agent accounts are no longer subscribed to periodic brief pulses.
-  - **People:** their login, `look`, `brief` and pulses are unchanged, and every command remains
-    available to agents.
-- **Agents see message ids by default (`MARINA_PEER_RENDER=ids`).**
-  - A peer's message still reaches the model as the server's one line, with Marina's stamp in front:
-    a channel post's id and what it answers (`[#general post:3041 re:post:3040] Critic: …`), or what
-    a direct message answers (`[re:tell:9] Ann tells you: …`).
-  - Agents can now thread a reply with `channel send <ch> re:<id>`. Without ids, no reply was ever
-    linked to the post it answered.
-  - In the paired replay of real requests (`scripts/peer-render-replay.ts --arms flat,ids`), agents
-    with ids threaded their channel replies and answered as many requests as with the bare line.
-    The `structured` layout threaded too but answered fewer.
-  - The line explaining the stamp sits in COMMANDS.
-  - `structured` (header and guarded body; a one-line direct message keeps the server's line) and
-    `off` (the bare line) remain, as do `split` and `structured:<names>`.
-  - A tell's structured header no longer shows the tell's own id.
-  - The setting leaves the capability-posture table, since its default is no longer off.
-  - The replay takes `--arms <a>,<b>`, records why owed requests went unanswered, and retries an
-    episode once after a pause, so a server restarting mid-run is not scored as the model's answer.
-- **Dashboard chat reads like a messaging app.** Messages render through the same grammar as the
-  terminal (`MessageBody`): lists, lead-in labels, verdict chips, quiet asides, quoted output, code
-  and ids, and `task #N` / `#channel` references that open the inspector. Each message is a bubble
-  with the sender's avatar and colour (the same colour as in `marina connect`); consecutive
-  messages from one sender share a header, your own sit on the right, one that names you is marked,
-  days are divided, long messages fold behind "Read more", and arrivals and departures are small
-  centred lines. Compact view, `channel history` and the channel and board inspectors use the same
-  renderer. Speech is read from the server's structured fields, so a multi-line message keeps its
-  speaker. Message text is rendered as React elements, never injected as HTML.
-- **Messages in `marina connect` read like a conversation.** A shared message grammar
-  (`src/sdk/message-format.ts`) parses every message body once for display: lists (including the
-  inline `1. … 2. …` and `(1) (2)` lists agents write on one line), lead-in labels such as
-  `Caveats:`, code, links, `@mentions`, `#N` and `task #N` references, verdict words (PASS, BLOCKED,
-  PARTIAL …) as coloured chips, parenthetical asides in a quieter colour, quoted output, ids and
-  `key=value`. Longer messages get a header and a bar in the sender's colour, consecutive messages
-  from one sender share a header, a message that names you is flagged, a line marks a new day, long
-  messages from others fold behind ctrl+o, and `channel history` renders as a conversation. Bodies
-  wrap at 100 columns. Stored messages, copy, pipe output and what agents read are unchanged; a
-  backtick escaped inside a code span no longer garbles it.
-- **The dead Delphi settlement shadow is removed.** `src/arena/settlement-shadow.ts` replayed a
-  recorded Delphi trace under other settlement weights and was never wired into a filing, a shadow
-  pass or a report; the learned move weight (`applyMoveWeight`) is the live mechanism for that
-  question. The "Settlement replays" paragraph leaves the arena guide (#698).
-
-- **A resumed agent is told what is already in hand.** The orientation turn after a restart appends
-  an ALREADY IN HAND block (`describeLoadedState`: the focus and the loop preferences the adapter
-  has already restored) and says not to read them again. During that turn only, up to six read-only
-  orientation calls (`look`, `brief`, `recall`, `recap`, `work`, `task list|info`, `tell inbox`,
-  `channel history`, `chronicle pending`, `memory get`, memory `get|recall|list`) do not count
-  against the per-run tool cap; writes, sends and spends always count (#703).
-
-- **A lesson's evidence is kept apart from its rule.** The lesson writer may return an optional
-  `evidence` field with the numbers behind a rule. It is clipped like the rule, stored in the
-  record's metadata, shown to the judge beside the rule (numbers in either must match the case),
-  discarded with the rule when it quotes the case, and never served as part of the rule (#701).
-
-- **Formations judge moves on the series' own scale; the library route fallback is on by default.**
-  The numeric formation combiner bounds a member's move by the series' move scale
-  (`seriesMoveScale`: the larger of the 90th-percentile one-step change over the last 30 values and
-  the latest change, never below the sd) instead of the start's sd; the arena filing service puts it
-  on the start it hands a formation (`withSeriesMoveScale`), and a formation called without one is
-  unchanged. The move-weight → error-floor → calibration order lives in one function
-  (`finishForecast`). `MARINA_MODEL_ROUTE_FALLBACK`, the same-model OpenRouter route for in-process
-  library calls while a first-party key is usage-limited, is now on unless set to `off` (#693).
-
-- **GitHub Actions updates.** `actions/upload-artifact` 7.0.2, `actions/setup-node` 7.1.0,
-  `actions/setup-java` 6.1.0, `actions/download-artifact` 8.0.2, `docker/setup-buildx-action` 4.4.1,
-  `docker/build-push-action` 7.4.0 and `anchore/sbom-action/download-syft` 0.24.3, still pinned by
-  commit (#594).
-
-- **The tables kept unbounded are named.** The header of `src/engine/retention.ts` lists
-  `channel_messages`, `coding_artifacts`, `coding_sessions`, revoked `principal_credentials` and
-  `routing_sessions` as unbounded by design, each with its reason. Comment only (#682).
-
-- **`numeric_notes` reads two stored facts instead of resolving every row.** Migration 187 stores
-  `content_id` (the resolved content note) and `version_note` (the note is a canonical version) on
-  `notes`, kept current by six `numeric_resolution_*` triggers on the projection, record and version
-  tables and backfilled from the original derivation; the view becomes one self-join with no
-  correlated subquery, and no writer changes. `notes_au` now re-indexes a note's FTS row only when
-  its `content` changes, not on a recall's `last_accessed` touch (#681).
-
-- **One home for percentile, median, quantile and FNV-1a.** `src/stats` gains `percentileCeil`,
-  `median`, `quantileInterpolated`, `fnv1a32` (over code points) and `fnv1a32CodeUnits` (over UTF-16
-  code units, kept apart because it shards a stored corpus); the copies in trace analytics, decision
-  qualification, evolution analysis, the arena wiki specialist, novelty, replicates and two
-  benchmarks use them, each held bit-identical to its frozen original by
-  `test/stats-equivalence.test.ts` (#680).
-
-- **The dashboard's first paint no longer loads the editor.** React, `scheduler` and the
-  `use-sync-external-store` shim get their own `vendor-react` chunk, so the tiptap/ProseMirror chunk
-  is no longer preloaded, and the canvas `DocumentNode` is lazy-loaded behind Suspense as `PdfNode`
-  already was (#679).
-
-- **Indexes for queries that scanned or sorted a growing table.** Migration 186 adds eleven indexes:
-  channel, board and group lookups by name, a `NOCASE` index for the agent-config name lookup on
-  every spawn-lineage walk, tasks by creator, the board archive sweep, the chronicle supersession
-  chain, the board page, the latest session, submitted claims and channel messages by time.
-  `CREATE INDEX IF NOT EXISTS` only; the install baseline is unchanged (#678).
-
-- **The per-principal memory budget paces network clients only.** The memory service API applies its
-  request budget only when a listener passed a client address; an in-process caller (a resident's
-  own memory operation, lessons recall, the asset-memory indexer, tick jobs) is Marina's own code
-  and is no longer queued behind a token. A network client is still refused past its burst with
-  `retry_after_ms` (#676).
-
-- **Fewer statements on hot paths.** A recall marks its hits accessed in one statement
-  (`touchNotes`) instead of one commit per hit, `novelty suggest` scores each capability once
-  instead of on every comparison, `/v1` reads its endpoint settings in one query
-  (`SettingsStore.getSettings`), the per-command model-availability check asks whether any key
-  exists instead of decrypting every key, and a `feed_event` is stored in `feed_events` only, no
-  longer copied into `event_log` (#675).
-
-- **One commit per command; WAL checkpoints between commands.** The command phase commits its
-  bookkeeping (activity, usage and event rows) in one transaction, and `appendRoomLog` inserts and
-  trims in one. `MarinaDB` opens with `wal_autocheckpoint` at 64 MiB as a backstop, and a
-  `wal-checkpoint` tick job (every 10 ticks) runs `PRAGMA wal_checkpoint(PASSIVE)`, which never
-  waits on a reader or writer, so checkpoints happen between commands instead of inside a write
-  (#674).
-
-- **Marina requires Bun 1.4.4.** The release carries upstream fixes in TLS, HTTP, WebSocket, the
-  database clients, `node:` modules, `fetch` and `bun install`. `.bun-version`, `engines.bun`,
-  `packageManager`, `@types/bun`, the Dockerfile's `oven/bun` stages and the documented minimum move
-  together (#669).
-
-- **Setup connects a model first, and every guide is brought up to date.** `marina init` asks for
-  the model first, offers a `local` option that probes an Ollama, llama.cpp, LM Studio or vLLM
-  server and writes its `OLLAMA_*` or `LLAMA_*` settings, and no longer echoes a pasted API key.
-  With no provider key and no local runtime, a folder session's card opens with **Connect a model
-  first** and the idle label reads `no model`; a configured local runtime counts as a model and a
-  pinned local model becomes the default. The card links the session's dashboard; `marina connect`
-  shows the server's http address; `marina --help` opens with a "Start here" block.
-  `configuration.md` gains "Connect a model", and the README, getting started, troubleshooting and
-  the site lead with `setup:cli` → `marina init` → `marina` (#665).
-
-- **A pool listing points at the whole note.** `pool <name> list` and `pool <name> recall` show
-  the first 60 characters of each note; a longer note now ends in an ellipsis and names
-  `pool <name> show <id>`, a new read form that prints it whole. Seen in a recorded session: the
-  reviewer approved a submission "having read only the first ~60 chars" of the note it cited,
-  because the listing was all it had and nothing said there was more (#711).
-
-- **The front door shows a real world running.** The site's landing page, the overview, the
-  README and a new "tour, in pictures" page are built on a recorded session in the default
-  world: `site/scripts/capture.mjs` boots an isolated server with the four seeded agents, sends
-  Host the seeded Launch Brief, films the dashboard, and takes every still (tabs, `/who` pages);
-  `capture-terminal.py` + `capture-terminal.mjs` record and render any terminal program (the
-  `marina connect` REPL, a `marina .` coding session), one picture or frames for a GIF;
-  `capture.mjs demo` films a walkthrough of the dashboard itself (chat, command palette, map,
-  canvas, narrative playback, entity inspector, streams, admin, a resident's page) and
-  `render-demo` cuts it into one clip per feature for the tour page and the dashboard guide. Every picture in `docs/assets/` comes from those scripts, so they can be remade in
-  one run instead of going stale. The site serves `docs/assets/` itself (the guides' pictures
-  were sent to GitHub `blob` pages and rendered broken), redeploys when an asset changes, and
-  `test/docs-images.test.ts` holds every image reference in the public docs to a real file.
-  Landing-page counts (commands, guides) are read from the generated registries at build time
-  (#710, #711).
-
-- **Model helpers share the configured output allowance.** Text and JSON helpers use
-  `MARINA_DEFAULT_MAX_TOKENS` (default 16,384, bounded by model capacity) instead of small,
-  unrelated limits. Automatic allowances can grow after truncation; explicit caps stay fixed.
-  Compaction retains its separate allowance, bounded by the model rather than an 8,000-token clamp.
-
-
-- **The cheap tier runs the current DeepSeek V4.1 Flash snapshot.** The built-in OpenRouter pick
-  for `marina/cheap` (and the triage fact model and arena wiki extractor defaults) moves from
-  `deepseek/deepseek-v4.1-flash`, which OpenRouter serves as a fixed 2026-09-10 snapshot, to
-  `deepseek/deepseek-v4.1-flash-1017`, the 2026-10-17 snapshot (list $0.15/$0.60 per M tokens,
-  tools and reasoning). An explicit `MARINA_MODEL_TIER_CHEAP` is unchanged. A dated snapshot the
-  bundled pi-ai catalog does not list yet (`-MMDD` or `-YYYYMMDD` after a listed id) now takes its
-  base entry's capabilities under its own id (`catalogModel`, `src/net/model/catalog-snapshots.ts`):
-  the reasoning-effort clamp, the summary call's reasoning disable, image input and DeepSeek's
-  reasoning round-trip apply to it, and it resolves without the "not in the bundled registry"
-  warning. Its price comes from Marina's own list, else the provider's reported cost, never the
-  base's.
-
-- **Faster fresh databases: the install baseline moves from schema 167 to 179.** Migrations
-  168–179 move verbatim to `schema-history.ts` (172's data conversion joins `MIGRATION_HOOKS`;
-  `JUDGE_LEDGER_BACKFILL_179` moves with 179 and is still exported from `schema.ts`), so a new
-  database installs one generated schema and replays nothing. The generator now reproduces
-  `investigation_instance`'s per-database id at install time. Existing databases at any
-  version upgrade through the same SQL and hooks as before. A new database takes about 29 ms
-  in memory and 37 ms on disk, down from 76 ms and 85 ms.
-
-- **`memory` is the one memory command.** `memory note`, `memory recall`, `memory reflect`,
-  `memory recap`, `memory debrief` and `memory context` run the same-named commands with the same
-  rank, gates, effects and output. The bare names still work and say once per session that they
-  are aliases (`(alias: use \`memory recall …\`)`). `help`, `help all` and the agent's command
-  roster list them under `memory`; the system prompt's MEMORY section teaches the family forms;
-  MCP named tools keep their parameters and now run the family forms. `pool`, `skill`, `orient`
-  and `bookmark` stay separate commands. Storage, numeric note ids and receipts are unchanged.
-- **Standing is visible where an agent works.** Each new standing credit or debit reaches the
-  earner at once as one line: `standing +1.00 task_complete task:#12 → 3.40 (rank 0 by standing;
-  rank 1 at 5)` (any credit path; never for a repeated or rolled-back credit; the approved
-  claimant no longer gets the amount twice). `standing summary` gives live standing, the last
-  live credits and retired credit labelled as history on one line, then a line naming the live
-  ways to earn, built from the live kinds. `orient`, the `brief` compass and the resident
-  continuation prompt (`[Standing]`) show that line, adding the earn line when the agent has no
-  goal or focus. The standing rules, caps and history are unchanged.
-
-- **The formation catalogue is held by behaviour, not frozen bytes.** The migration-era
-  equivalence tests (`formation-equivalence-typed`, `-text`, and the catalogue half of `-arena`)
-  and their frozen pre-catalogue copies are removed, so the catalogue's prompts and answers can
-  change when a measurement says they should. `test/formation-behaviour.test.ts` asserts what the
-  formations must do: determinism given the same replies, research before any analyst, delphi's
-  anonymous revision after every first answer, n − 1 refereed tournament matches, one skeptic call
-  after the proposals, the typed combiners' math, and the arena move cap and blowup bound on the
-  stored rounds. The resident Scores are checked by shape. The ten arena formations still on
-  their own code stay byte-identical to their frozen copy (`test/arena-formations-legacy.test.ts`)
-  until they move to the catalogue.
-- **Spawn-time route evidence is on by default** (`MARINA_ROUTE_EVIDENCE`, was `observe`). A
-  `model:route` spawn takes the evidence's pick only when at least two of its own candidates have
-  `MARINA_ROUTE_EVIDENCE_MIN_N` items (benchmark ledger or shared live work); otherwise, and on
-  any error, the router's choice stands as before. `observe` keeps the old record-only behaviour.
-- **The learning-loop test closes every hop.** `test/learning-loop-closed.test.ts` now also shows
-  the route changing under the default configuration and a role's default model changing by
-  earned promotion: the live pass raises one proposal from person-approved work, and a person
-  holding `role.edit` files it with `benchmark promote role-model:<role> <model>`.
-- **One judge service.** The challenge judge, the task-submission verifier, the attention judges,
-  the outcome judges and the Arbiter now record every opinion and its later ground truth in one
-  ledger (`judge_ledger`, migration 179). The migration copies the rows already kept in
-  `challenge_outcomes`, `judge_observations` and judged outcomes, idempotently and without
-  changing those tables. Every surface asks one earned rule over the ledger (`judgeEarned` →
-  `earnedJudge`), counted per surface and judge, and per class for challenges. Only opinions
-  with a ground truth count. The challenge judge now earns per backend model as well as per
-  class. `MARINA_JUDGE=off|observe|on` sets every surface. The per-surface variables still win
-  for their own surface, and with neither set nothing changes. Under `MARINA_JUDGE=on` the
-  verifier bounces a submission only once it has earned that right. The new `judge stats
-  [surface]` command (rank 0) shows, per judge: n, agreement, the Wilson lower bound, whether it
-  is earned, and how many more observations it needs. It says "no judge backend" when none is
-  configured. `decision agreement`, `challenge stats` and `outcome agreement` read the same
-  ledger, and the separate tally code is removed.
-- **`MARINA_OUTCOME_JUDGE` defaults on when a model provider is configured** (off otherwise; an
-  explicit value always wins), the same rule as `MARINA_LESSONS_FROM_WORK`. Only a judge that has
-  earned agreement and is confident settles or teaches, as before.
-- **Readiness shows the learning loop.** A new `learning-loop` line reports outcomes waiting for
-  delivery or a judge (count, oldest age), each judge's comparisons toward earning, verifier
-  opinions and promotions ever filed, and is degraded after 14 days of backlog or while outcomes
-  exist but no default has ever changed. Optional readiness checks no longer raise inbox alerts.
-- **An end-to-end test that the loop closes** (`test/learning-loop-closed.test.ts`): person-approved
-  task work and a Code Mode check become tagged outcomes, a trusted lesson served to an agent,
-  competence evidence and a spawn route that changes under `MARINA_ROUTE_EVIDENCE=on`.
-
-- **One orchestration surface: the formation catalogue.** Crews, `project <name> orchestrate`,
-  `pattern run` and room formations now take every formation name, description, fit, role list and
-  protocol from `src/orchestration/formations/catalogue.ts`. `crew create … formation:<f>` and
-  `crew formation` validate against it (`ensemble` and `skeptic` are refused with where they run),
-  `crew info` shows the entry's summary, roles and protocol, a `crew dispatch` names the entry's
-  Score steps when it has a free-text template, and crew mediator lines lead with the catalogue
-  name. Each project template's opening note is generated from its entry. `freeform` is a catalogue
-  entry; the project name `custom` is now an alias of it (as `nsed` is of `deliberation`): both
-  still parse, and help lists catalogue names only. Feature status lists orchestration once, with
-  one sub-entry per way to run it.
-- **Outcome delivery plumbing.** A group of single outcomes still short of five is learned anyway
-  once its oldest has waited 30 days, if it has at least three (the lesson states the true count),
-  so a slow family still learns. A delivery pass claims a group atomically before its model call
-  (`outcome_deliveries`, released on failure or after an hour), so two passes at once write one
-  lesson. Forecast history records name the formation from the outcome's `method:` ref
-  (`method:formation:delphi` → `delphi`; a variant card keeps its card id). Outcomes recorded
-  without a consumer's delivery row get it from a bounded, idempotent backfill at the start of
-  each delivery pass, under the same rules. Typed forecasts recall lessons scoped to their
-  question's classes. None of this needs a model provider.
-- **Judged lessons: no rule, no lesson; single rounds teach in aggregate; one set of bars.** A
-  candidate whose writer gives no rule (asked twice) is deferred, never judged or stored. Forecasts,
-  arena rounds and research asks wait (durably, no attempt spent) until five of one source shape and
-  family are waiting, then teach ONE lesson from their statistics, scoped to that family and served
-  only to work of it; the judge's `general` question is asked within that declared scope. The
-  judge sees the rule as the lesson; `leak_free` is enforced only for measurement outcomes (the
-  mechanical item check still gates everything); failing only `consistent` stores the lesson
-  contested with a resolve case; calibrated and uncalibrated judges clear the same bars. Recall
-  serves only judged lessons that have a rule: never-judged (`unverified`) records stay stored but
-  are no longer served. With no model provider configured, deliveries wait with that reason and
-  nothing is written.
-- **Arena spread calibration is learned per series**, not per tracker: one tracker's series can be
-  miscalibrated in opposite directions.
-- **Arena challengers cover the coming week**, cheap specs first, within a time budget
-  (`shadow challengers due --hours N --budget-minutes N`), so earned routing gets its evidence.
-- **Arena filings recall only lessons from arena rounds of the same answer shape.**
-- **One memory request per journaled message.** A resident's journal entry or archive is one `capture_checkpoint` request (`POST /spaces/:space/checkpoints/:name/capture`): its new parts, its manifest and the checkpoint are stored in one transaction whose expected version is checked before anything is stored, so a forgotten or changed checkpoint refuses the whole request and nothing is captured. Before, each message cost four requests (a checkpoint read, a part batch, the manifest and the checkpoint save). Archives too large for one request, and memory services without the operation, keep the read-first path.
-- **Memory rate limits name the wait.** The per-principal memory budget (100 requests, 25 per second) now refills one token every 40 ms instead of 25 at once each second, a 429 carries `retry_after_ms` for the next token, and `retryMemoryOperation` waits exactly that (plus 5 ms) without using up an attempt, up to 30 s in all. A throttled resident used to wait at least a second per refusal.
-
-- **Supervised residents are on by default.** Every agent `marina supervise` or the console launches (Claude Code, Codex, pi) is its own world account, owned by the launching person, with no credential in its environment. `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) restores the earlier routing; a supervisor whose server offers no supervision endpoint falls back to it and says so. `readiness` gains an optional `supervised-residents` check; feature status: core.
-- **The cheap tier has a default output cap.** A `marina/cheap` request that sets no
-  `max_tokens` is sent `max_tokens: 16384`, and on OpenRouter `reasoning.max_tokens` at 3/4 of
-  that (`MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS`; `0`/`off` disables it). On the 2026-10-20
-  proof run, deepseek-v4.1-flash answers ran p95 6.3k and p99 13.1k output tokens; the 0.8 %
-  above 16k ran up to about 98k, averaged score 0.29 and were a third of the cheap arms' model
-  cost. A caller's own limit always wins, larger or smaller; agents, compaction and memory
-  helpers already send their own caps and are unchanged; explicit model ids and the strong tier
-  are never capped. `src/model` calls on `marina/cheap` keep their automatic cap and its grown
-  retry under the tier's. A reply cut at the cap is marked on its trace (`outputCap`,
-  `outputCapHit`) and on `x-marina-output-cap: <n>; hit`; the benchmark harness records
-  `outputCapHits` and reasoning tokens per item, and `admin models` shows the cap and its hits
-  since start. Inside `marina/verify:<proposer>+<checker>`, a `marina/cheap` or `marina/strong`
-  proposer, checker or reviser now resolves through the tiers like a top-level request (it was
-  refused as unreachable), and a cheap member gets the cap on its calls; ensemble drafts under
-  the cap record their hits too.
-
-- **A person sees its own agents' private view on the dashboard.** On shared and public servers, the entity detail, the live snapshot and the name-scoped memory routes now give the person who owns an agent (the first person up its spawn chain) that agent's raw command activity, full properties and core memory, as the agent itself and operators already had. An agent never gains another agent's private view this way, another person never does, and supervision credentials still reach only the routing API. Individual notes keep the memory system's own access rules.
-
-- **Threads you can follow on the canvas and Map.** A feed-canvas channel post that answers an earlier post is threaded under it (parent link from the message envelope's cause, `↩ in reply to <name> ↳<depth>`), and feed card authors carry a resident's `[vendor]` tag. Map thread marks stack per room (three newest plus `+N more`, 20 s each, readable halo) and open the room on click; room detail's "Activity here" lists the same content-free `say_sent` / `tell_sent` lines. `entity_enter` / `entity_leave` events carry the entity's name, so a departed entity is never shown by raw id.
-
-- A supervised resident's Claude session accepts edits in its working directory and runs shell commands without a prompt only inside Claude Code's command sandbox (workspace and relay directory writable, no network, no unsandboxed fallback), matching Codex's `workspace-write` sandbox. Without the sandbox's host tools only edits are accepted. Other Claude sessions are unchanged.
-
-- **Each owed ask gets its own answer.** A supervised resident's digest shows how to answer every
-  owed line (`→ re #<id>`, `→ say`, `→ channel send <c>`, `→ tell <name>`); what it answers itself
-  is settled, and the final-reply relay covers only what is left. When several destinations are
-  still owed, the resident is asked once more instead of one reply being sent to all of them; after
-  that, the reply goes to each marked `(one reply to N asks)`. A relayed answer now counts as the
-  woken turn's work for the attention judges. A resident's name later in a message addresses it in
-  a vocative position written as the name (`Done. Swift, run the tests`, `can you check this,
-  Swift?`), not as a mention.
-
-- **One rank-floor rule for every subcommand floor; honest feature status.** The write forms of
-  `bankroll` and `position`, `observe log`, `source connector`, `demo reset`, `code sandbox ops`,
-  the owner-or-rank overrides of `crew invite|dispatch|formation|persist|dissolve` and
-  `readiness providers` now check their floor through `rankFloorRefusal`: the local operator's
-  instance and the `open` posture pass, and elsewhere a refusal raises a challenge an owner or
-  operator can approve. The output-repair shot checks the spend caps before calling a model.
-  Closing a Code Mode session drops its exec-mode setting. The benchmark split, replicate-group
-  rule and reference scores moved under `src/engine/` (the `benchmarks/` paths re-export them), so
-  the published package carries every file `src/` imports. The `shared-team` preset now selects the
-  core `default` world. The feature status page adds crews and formations, desires and journeys,
-  novelty suggestions, resolvers/probes/watches, and lists `conduct` and `scenario` as
-  experimental; `scenario` help now says it posts boards and queues tasks for a resident to pick
-  up.
-
-- **Code cleanup and wider checks.** The compatibility re-exports `src/arena/model-backend.ts`,
-  `src/research/model-turn.ts`, `src/arena/research/{retrieve,verify,web-search,isolation,barred,read-swarm-retriever}.ts`,
-  `benchmarks/stats.ts` and `benchmarks/replicate-stats.ts` are removed; import `src/model`,
-  `src/research` and `src/stats`. Unused exports are deleted, `sha256Hex` and `escapeRegExp` each
-  have one shared home, and the SDK examples share their helpers. `bun run lint` also covers
-  `worlds/`, `marina-desktop/src/` and `extensions/`; `bun run typecheck` also checks `scripts/`
-  and `worlds/`. `check:coverage` counts source files no test loads at 0%. Dependencies:
-  pi-agent-core and pi-ai 1.3.0, better-auth 1.7.12, claude-agent-sdk 0.3.306, Playwright 1.64.1.
-
-- **Page reads honour robots.txt; keyless web sources can be turned off.** Before Marina reads a
-  third-party page for an agent or a person (`web fetch`, `web swarm`, `scenario` URL reads, the
-  research page reader and citation check, the live Civiqs read), it checks the site's robots.txt
-  for its `MarinaResearch` user agent (`src/net/robots.ts`: its own group, else `*`; longest
-  Allow/Disallow match, `*` and `$` patterns) and sends that user agent with the read. A disallowed
-  page is not requested and the read answers "blocked by robots.txt" instead of failing. robots.txt
-  goes through the SSRF guard and is cached per origin for 24 h; a 4xx means no rules; a 5xx, 429
-  or timeout fails open and is retried after 10 min. API calls are not page reads.
-  `MARINA_ROBOTS_TXT=ignore` turns the check off and `MARINA_ROBOTS_TXT_IGNORE_ORIGINS` exempts
-  sites the operator owns. The keyless DuckDuckGo search fallback (`MARINA_SEARCH_DUCKDUCKGO=off`)
-  and Yahoo Finance series history (`MARINA_FORECAST_YAHOO=off`) stay on by default and can now
-  be turned off: search falls through to the keyed backends and says so, a Yahoo series has no
-  prior. `readiness` (check `search`) reports all three. New guide:
-  [Data, privacy and terms](docs/guides/data-privacy-and-terms.md).
-
-- **Plainer names for research features.** `intellect`, `reproduce`, `genome`, `marina-descend`,
-  `mutation`, `association`, `economy` and `lab` are now listed as experimental in the feature
-  status page and their help is labelled `[experimental]`; their guides describe what each records
-  in plain terms. Commands, names and protocol ids are unchanged. Docs, agent skill files and
-  comments drop metaphors such as "civilization" and "autonomous from birth".
-
-- **Live (real-money) prediction-market orders ask a person.** A new operator-grant safety gate,
-  `trading.live`, guards every `position open`, `position confirm` and `position close` that would
-  reach a live venue (`MARINA_TRADING_ENABLED=true` plus credentials). Without an operator grant the
-  order is held as a challenge — nothing is sent and the command returns at once — and a person's
-  `challenge approve <token> once` places that one order (a `confirm` is one hold for the whole
-  proposal); `always` is an operator grant. Agents never approve. The gate is in the open-posture
-  core, never in `RANK_GATES`, and, unlike the other gates, is not lifted by the `local` profile:
-  only `gate grant <name> trading.live` or `MARINA_AUTONOMY=sovereign` passes live orders without a
-  per-order approval. Paper trading is unchanged. There are now 15 safety gates. `position`,
-  `bankroll`, the markets guide and `MARINA_TRADING_ENABLED` carry a plain not-financial-advice
-  note.
-
-- **A new front door.** The README, landing page and docs overview are rewritten to be shorter
-  and plainer, with the forecasting, research, orchestration and coding commands every participant
-  gets up front. The docs sidebar and guides index are regrouped by what a reader wants to do, and
-  the site uses the H2O black-and-gold theme with the Marina mermaid.
-
-- **Cheap by default, strong where it grades: model tiers.** Work that names no model now runs on
-  one of two tiers (`src/config/model-tiers.ts`). The cheap tier (`MARINA_MODEL_TIER_CHEAP`) runs
-  agents spawned without a model, room agents, boot-seeded crews (the Workbench, answerer and
-  orchestration crews, the Chronicler) and memory helpers. Unset, it is the operator's explicit
-  default model when one is set, else the cheapest adequate tool-capable model for the keys present
-  (`openrouter/deepseek/deepseek-v4.1-flash` with an OpenRouter key). The strong tier
-  (`MARINA_MODEL_TIER_STRONG`) runs the benchmark judge, the outcome extractor, the lesson writer
-  and judge, the decision classifier and the Arbiter. Unset, it is `marina/default` exactly as
-  before, so judging does not get cheaper silently. `marina/cheap` and `marina/strong` are live `/v1`
-  model ids, resolved per request. One entry moves a single role:
-  `MARINA_AGENT_MODELS=role:<role>=<model>`. `admin models` shows the effective model for each tier
-  and role and where it came from, and the boot log prints both tiers.
-  **On upgrade**, with no model variable set, residents, room agents, seeded crews and memory
-  helpers move from `marina/default` to the cheap tier. The Workbench moves from each provider's
-  flagship (Opus, GPT-6.1 Sol, Gemini Pro) to the cheap tier. `MARINA_DEFAULT_OPENROUTER_MODEL`
-  and the other per-provider defaults now shape only `marina/default` and the strong tier.
-  Unchanged: judges, decisions and the Arbiter; the `/v1` `marina` model; agents saved with an
-  explicit model; and anything covered by an explicit `MARINA_DEFAULT_MODEL`, runtime default,
-  `MARINA_CREW_MODEL`, `MARINA_WORKBENCH_MODEL` or role variable. `MARINA_CREW_MODEL` now also
-  reaches the answerer and orchestration crews and the Chronicler in every world.
-
-- **Contributors earn standing: every account is its own party.** Work another account verified
-  now credits the worker, including a person approving its own agent's task, adopting its
-  agent's proposal or replicating its agent's experiment, and a sibling agent reviewing a Code
-  Mode attempt whose checks passed. Verifying your own work (same name or same durable account)
-  still earns nothing, and an agent's verdict inside its own spawn lineage still needs grounding.
-  Caps are unchanged. Safety gates are unchanged: only a person's approval from outside the
-  requester's lineage builds an earnable gate. Each world records the change once as a chronicle
-  event (`civic-rule:contributors-earn-standing`).
-
-- **The maintainers' own deployment workflow is no longer part of the repository.**
-  `.github/workflows/deploy-ec2.yml` is removed; `scripts/deploy.sh` stays as the host-side half
-  of the example pipeline in the deployment guide.
-
-- **Competition adapters ship no filing identity.** The FutureX, ForecastBench and Metaculus
-  adapters no longer default to an organization or agent name: they refuse to produce or file a
-  submission (before spending anything) until you give one with `--org` / `--agent` or
-  `MARINA_FILING_ORG` / `MARINA_FILING_AGENT`, and they refuse the docs' placeholders such as
-  `your-org`. The Prophet Arena agent registers under `PROPHET_AGENT_NAME` (or the name you put in
-  `benchmarks/prophet/arena.toml`, which now ships placeholders) and refuses to load without one.
-  BrowseComp-Plus `summary.json` carries an `Attribution` only when you name one, and
-  `scripts/arena-wiki-backtest.ts` compares the entrant in `MARINA_ARENA_ENTRANT` (or
-  `--entrant`) instead of a built-in id. Operators who filed before must now set their identity.
-
-### Removed
-
-- **The object commands `get` (`take`, `pick`), `drop`, `give` and `inventory` (`i`, `inv`), the `emote` command
-  (`me`), and the agent tool `marina_inventory`.** No world or command creates a pickable object,
-  so the object commands had nothing to act on, and `emote` saw no use. `shout`, `bookmark` and
-  `examine` stay. Entities keep their `inventory` field and stored rows, and earlier `emote` lines
-  in room logs still render. Nothing can fill an inventory, so it is gone from every surface:
-  the dashboard's **My inventory** panel, the Inventory rows of the entity hover card, inspector
-  and context panel, the `Objects` line of `score`, the `inventory` field of
-  `GET /api/entities/:name/preview` and of the private entity detail (dashboard API and desktop),
-  the SDK's `MarinaClient.inventory()`, and the empty `Objects` help category.
-- **Quests are removed.** They were deprecated in the previous change; goals and focus, tasks
-  (claim, submit, approval), crews, skills and guides do the work quests did.
-  - The `quest` command, the MCP `quest` named tool, the SDK's `quest()` method and its
-    `quest_*` / `active_quest` property types, and `GET /api/entities/:name/quests` are gone. The
-    MCP tool's frozen contract is removed with it: a client that still calls `quest` gets an
-    unknown-tool error.
-  - `WorldDefinition.quests`, `autoQuest`, `QuestDef` and `QuestStep` are removed, and so is every
-    world's quest list. A custom world that still sets `quests` fails to typecheck; drop the field.
-    A learned world bundle exported with quests still imports; the quests are ignored.
-  - The dashboard's quest progress card and the `quest_step` work item are removed.
-  - The `evolve` world's eight benchmarks are rooms now: entering one starts an attempt and
-    finishing it records the score on the scoreboard, as before.
-  - The `demos` world's guided start lives in its guide notes and the lobby's directions: the
-    Workshop path (`workshop`, `begin`, `status`, `creation`) and the Bridge path (`bridge`,
-    `launch`, `connect`, `link`, `ping`).
-  - `quest_complete` stays a retired standing kind. Its rows remain as history and count toward
-    nothing.
-
-### Fixed
-
-- **A dropped agent connection gets its own entity back on reconnect.** The periodic orphan
-  sweep removed every agent without a live connection, ignoring the 60 s reconnect grace, so a
-  client whose reconnect straddled the sweep (every 60 s) resumed its token as a brand-new
-  entity: same name, but its in-memory state (room presence, crew membership, queued commands)
-  lost. The sweep now leaves an entity inside its grace to the grace timer. Found by the SDK
-  conformance suite's reconnect scenario.
-- **`waitForTell` in the TypeScript SDK hears tells.** It waited for a `subkind` and a `from`
-  field the server has never sent, so it always timed out. It now matches the documented tell
-  frame (`tag: "tell"` with `senderName`) and returns the message.
-- **Marina no longer fills the disk.** A world kept everything its agents journaled, so a busy
-  install grew without limit until the drive was full. A storage budget now caps what a world
-  keeps on disk at 5 GiB by default (`MARINA_STORAGE_MAX_BYTES`, `off` for no cap) and leaves at
-  least 1 GiB free on the disk (`MARINA_STORAGE_MIN_FREE_BYTES`). At startup and every hour it
-  measures the database, uploaded files and scratch files; past 90 % it frees space, oldest and
-  least valuable first (overdue retention, then agents' archived conversation transcripts older
-  than 30, 14, 7, 3 or 1 days, then telemetry older than a day), and gives the freed space back to
-  the disk. Facts, lessons, tasks, the chronicle, ledgers and people's files are never removed. A
-  world still over its cap pauses its agents and raises one critical alert until there is room;
-  people keep working, and `readiness` shows what is using the space. An existing database is
-  rewritten once at the next startup to return its free space.
-- **New files a coder creates show in every "what changed" view.** The workspace diff left out
-  files git does not track yet, so a coding run that added a test file reported "1 file changed"
-  and the review snapshot and checkpoints missed the new file. Untracked files (`.gitignore`
-  respected) now appear as added files in `code diff`, the run result, `marina -p` output, review
-  snapshots and checkpoints. A new folder of more than 20 files (a cache or `node_modules` nobody
-  ignored) is named in one line instead of listed file by file.
-- **`marina -p` with no model provider exits at once.** It printed that no provider was configured
-  and then waited for a run that could never start, until its timeout. Dispatching a task with no
-  provider (or no agent runtime) is now a refusal: the one-shot exits 1 in about two seconds, and
-  the message says to run `marina init`.
-
-- **A first run no longer looks broken in the log.** A fresh `marina start` printed about 20
-  WARN and 8 ERROR lines in its first two minutes from a working install. The ERRORs were Marina's
-  own second-opinion model calls, cancelled at their deadline and logged as provider failures; a
-  request its caller abandons is now logged as cancelled (debug). An agent reaching its per-run
-  cap, an agent's refused tool call, and the local-profile notice are info, not warnings. The
-  starter tasks' evidence check refused the agent that had claimed them (seeded project groups
-  have no members); a group task's work is now open to its creator and claimants as well as its
-  members. The same run now prints no WARN or ERROR.
-- **Stopping Marina is quick and quiet.** Repeated start/stop cycles found a Ctrl-C or SIGTERM
-  that took 11.8 s: shutdown waited on a model call to turn pending lessons-from-work into lessons.
-  A server stopped by a signal now parks them for the next boot (nothing is lost; short-lived
-  tools keep the final flush), and stops in under a second. A model request cut off by the stop
-  is no longer logged as an upstream failure, and the log ends with `Marina stopped cleanly in N
-  s` at the real end instead of an early "engine stopped".
-
-- **`bun run code <dir> --tui` opens the terminal workspace.** The checkout entry point read only
-  the folder argument, so `--tui` was ignored and the scrollback terminal opened. It now takes
-  `--tui` and `--mode`; `marina` takes every other option.
-- **`/live` cards fit the terminal workspace pane they are drawn in.** In `marina --tui`'s split
-  layout a `/live` card went to both panes at the full terminal width, so in the narrower World
-  pane its borders wrapped into broken lines. The card now goes to the focused pane only, drawn at
-  that pane's width. The scrollback terminal is unchanged.
-- **The terminal workspace has its own guide.** `marina --tui` was mentioned in five guides but
-  explained in none. [Dashboard, desktop and terminal](docs/guides/interfaces.md#terminal-workspace-tui)
-  now covers starting it (local folder, checkout, `marina attach`), the panes, every key and slash
-  command, and which dashboard views it does not show yet. The other guides link to it.
-- **`market live` lists markets that actually resolve soon.** It took the first 200 open markets
-  in the venue's own order and filtered them afterwards. On Kalshi those were multi-leg parlays,
-  priced `undefined¢` because the API now quotes dollar strings. On Polymarket it never filtered
-  by date at all, so it showed dead 2025 events at 0¢. Both venues are now asked for the window
-  (Kalshi without combo markets), results are ranked by 24-hour volume, prices come from the
-  current fields (unknown shows `—`, never a made-up 50¢), and times under two days show in hours.
-
-- **Shell snippets in the docs paste into a shell as a whole block.** Copying the getting-started
-  "from any folder" block failed: zsh (the macOS default) passes a trailing `# comment` to the
-  command as arguments, and `marina init` read the lines pasted after it as its answers. Shell
-  blocks in the README, the site and every guide now carry no comments, end on any command that
-  reads the terminal or keeps running, and split alternatives into their own blocks. A test holds
-  the front-door pages (README, getting started, the site overview and home page) to it;
-  `bun run check:paste-safe` reports the other guides without failing CI.
-- **A memory-assistance worker is no longer told about its own work.** Each claim and each read
-  a worker made on a job sent that worker a "Memory assistance …: running; N operations remain"
-  message, so a worker agent was steered once per operation, mid-run, about its own action.
-  Notices now go only to the party a change concerns (a new job to its worker, an outcome to its
-  requester) and never to the principal whose call made the change.
-
-- **A refused or failed command now says so to its caller.** Over 100 handler paths (agent spawn,
-  stop and reconfigure, `connect`, `schedule`, `gate`, `witness`, `world`, `supervisor`, `arena`,
-  canvas intents, `evolve`, `inquiry`, `crew`, `forecast`, `benchmark`, `reflect` and others)
-  replied with plain output, so an SDK script, an agent's tool call or a scheduled run saw success.
-  They refuse through `refuseCommand`, and the send-error lint now reads whole statements and local
-  reply helpers. Also: `tell Diligence-Lead` reaches the live `DiligenceLead` (any spelling of a
-  resident's name); a refused spawn name suggests a valid one; a spawn inside the one-second window
-  waits for its slot instead of failing; an owner logging in while their schedule runs takes the
-  account over; `marina connect -c` waits up to 15 minutes for a command's result; a typed forecast
-  says whether its number is a probability or the runs' agreement; `task list` shows who holds each
-  open task; an agent-route `/v1` refusal names the direct route for the model sent; pattern runs
-  state today's date; crew orientation states each member's part; streams fold repeated runtime
-  states; `benchmark list` marks saturated sets; spawn replies say how long a call budget lasts.
-
-- **A cut-off channel post now tells an agent how to read it whole.** When a World Events line is
-  clamped, its hint named `tell read <id>` for every message, but a channel post's id is not a tell
-  id, so the agent opened an unrelated tell or was told the message is private. The hint now comes
-  from the message's own ref: `tell read <id>` for a tell, and the new `channel read <channel> <id>`
-  (one post whole, members only, fenced as peer messages for agents) for a channel post.
-- **Messages keep the line breaks their author typed.** `channel send`, `tell`, `re` and `board
-  post|reply` rebuilt each body from whitespace-split words, so a list or a second paragraph arrived
-  as one long line. Bodies are now stored as typed. Agents still read one line per peer message (line
-  breaks show as ` ⏎ `, as in World Events), so no line of a message can pass for another speaker;
-  telnet and plain text forms indent continuation lines for the same reason. `channel history` adds a
-  structured payload for clients, and a multi-line board post without `|` takes its first line as the
-  title.
-- **Chronicle writes keep their citations.** `chronicle record`, `correct` and `digest` read lists
-  as the Chronicler writes them: `refs task:3, note:10342` (spaces after commas), `refs: a,b`, `refs=a`, and clauses set off
-  by `|` in any order (`… | refs a, b | period day:… | participants X, Y`). Before, only one unbroken
-  trailing token was read, so such corrections and digests were stored with no refs (the text stayed
-  in the body) and such narratives were refused. That refusal is now a recorded failure and shows
-  the form to use. Entries already written are unchanged; the chronicle is append-only.
-
-- **Trailing modifiers parse in every spelling of the one grammar.** `memory note <text>
-  importance:7` kept `importance:7` in the note text and left importance at the default, because
-  the shared trailing-modifier pattern (`modifierPattern`, used by `note`, `recall`, `chronicle`,
-  `benchmark` and others through `extractModifiers`) knew only `key value` and `--key value`. It now
-  also reads `key:value` (canonical), `key=value` and `--key=value`; those forms must start a
-  token, so a trailing URL such as `…?type=fact` is never split.
-- **A task verdict is no longer held by the decision gate.** `task approve|reject <id>` classifies
-  as `communicate`, like an answer to a held action: the task command already refuses a verdict from
-  anyone but the task's creator, so the gate added no authority and only kept a reviewer from
-  closing the loop. `task claim|submit|cancel|create` stay `mutate`. `focus` and `review` join the
-  agent's own loop keys, so `memory set focus <text>` is self-scoped (#706).
-- **The route-fallback tests' usage-limit reset is in the future again.** The fixture's reset date
-  had passed, so three tests failed in every environment (#694).
-- **Fresh task reviews retry a transient transport failure; malformed handoff input is refused with
-  the contract.** The prose and artifact model reviews post to the local `/v1` with their own
-  `fetch`; their HTTP leg now gets one bounded retry within `MARINA_MODEL_RETRIES` for a network
-  failure or a 408/429/5xx reply (honouring `Retry-After`, up to 30 s), never on an abort, the
-  call's own timeout, or a truncated or malformed reply. A malformed handoff publication says which
-  field is the journal (`expected`) and which the deliverable (`deliverable.expected`) instead of
-  throwing a `TypeError`, and the file audit's stale-read refusal names both versions and says no
-  audit ran (#689).
-- **`task submit` states unmet evidence obligations; references say why they are unavailable.** The
-  submit reply now carries every unmet evidence obligation at that revision and the next calls,
-  still advisory, and says how to create an artifact when the task has none. A prose review is
-  `unverified` only when something was not checked (an unreadable source or an unplaced claim), with
-  `unavailableReasons` per source; listed limitations ride along with `no-findings`. A malformed
-  evidence reference is named as malformed, while a missing record and one the actor may not read
-  stay one answer, so a reference cannot probe existence (#688).
-- **A stale-read refusal on task work names the field, both versions and the next call.**
-  `staleFileRefusal` states the object (journal or deliverable), the field the caller filled
-  (`expected` vs `deliverable.expected`), supplied and current version and hash, the call to make
-  next, and the two usual causes (a stale version after a write; the journal's metadata given for
-  the deliverable). Artifact handoff and native edit races quote both revisions, and a repeated
-  identical publication returns a `note` saying nothing changed and no peer was woken (#687).
-- **A caught failure is a refusal, not a successful message.** Thirty-one command sites that replied
-  to a caught error with `ctx.send` now use `refuseCommand`, so usage and activity record a failure
-  and an agent's tool call rejects on `ok: false`; the text is unchanged.
-  `test/lint-send-error.test.ts` holds the rule (`// allow-send-error: <reason>` opts a line out)
-  (#685).
-- **Library model calls get the provider-level, `Retry-After`-aware retries agents get.**
-  `src/model/call.ts` passes `PROVIDER_MAX_RETRIES` to the provider, which retries 408/409/429/5xx
-  inside one request and honours `Retry-After` / `retry-after-ms` (bounded at 60 s); Marina's outer
-  bounded retry is unchanged. `MARINA_PROVIDER_MAX_RETRIES` now covers both paths (#684).
-- **Bun's "The connection was closed." is a transient network failure.** The model retry classifier
-  now recognises Bun's exact wording, so one closed connection is retried within
-  `MARINA_MODEL_RETRIES` instead of failing the call (#683).
-- **A one-shot or piped `marina connect` exits shortly after its reply.** `lingerForQuiet` took its
-  output snapshot after the command's reply had arrived, so it never saw output and every one-shot
-  and pipe run waited the full `--wait` cap. The snapshot is now taken before the command, and the
-  documented 2.5 s quiet rule holds (#677).
-- **The investigation qualification gates on Marina's overhead, not the disk.**
-  `scripts/qualify-investigations.ts` also commits the same 2 MiB into a bare SQLite database under
-  the same pragmas and gates the capture p95 on `max(200 ms, 3 × bare commit p95)`, so a slow runner
-  disk no longer fails it while an overhead regression still does; the report records
-  `rawWriteP95Ms` and `captureWriteLimitMs` (#673).
-- **An arena round with no published history can be refreshed.** A research answer with no anchor
-  (`anchor: "none"`) on a series with no history now passes the freshness audit with a warning
-  instead of a refusal, so `arena submit due` no longer fails on it daily; an undated reading in a
-  series that has history is still refused (#671).
-- **Dashboard accessible names contain the visible label (WCAG 2.5.3).** The header search, health
-  badge, theme switcher, layer chips, entity panel header and command-search options are renamed so
-  speech-input users can say what they see; keyboard hints move to `aria-keyshortcuts`, and
-  `@axe-core/playwright` moves to 4.14 (#670).
-- **`project join <name>` works, and MCP clients get a config that needs no PATH.** Verb-first
-  project forms resolve as `project <name> <action>` when the leading tokens name no project (a
-  project named after a verb still works). `marina mcp-stdio --print-config` prints a ready-to-paste
-  `mcpServers` entry whose `command` is an absolute path (the running Bun and the script, or the
-  compiled binary), since desktop MCP clients start servers with a minimal `PATH` (#667).
-- **Small fixes from auditing the guides.** The SDK greeter example matches `arrive` and `connect`
-  room messages; Telegram's `/start` reply says to send `help` after logging in; `task list <word>`
-  with a word that is neither a status nor a group is refused with the usage line; and a leading `|`
-  in `board post` and `channel send` is treated as the separator, with an empty post refused (#666).
-- **The folder session opens on the welcome card without a `Starting Marina` line.** The line is
-  skipped only when the card is drawn; `--print`, `--tui` and non-TTY output are unchanged (#663).
-- **Incomplete model turns stay incomplete across API adapters and internal helpers.** Length
-  stops, refusals, interrupted streams and partial tool arguments cannot become successful answers,
-  verification results or executable tool requests.
-- **Outcome learning resumes safely after a crash**, with durable admission and delivery records
-  and erasure lineage. Investigation spend keeps per-call receipts, including unknown costs.
-- **Task verdicts bind to the exact submission**, including retries within one millisecond or
-  after a clock rollback. Delayed judges cannot overwrite a replacement submission.
-- **Sandbox bindings are scoped by provider**, and OpenShell workspace handling preserves the
-  selected execution environment. Sandbox maintenance drains before shutdown.
-
-
-- **A prompt sent to a supervised Claude session while it works runs as its own next turn.** The
-  Claude CLI folded it into the running turn, attached to a tool result, where Claude may decline
-  it as not coming from the user. It is now sent with `priority: later`, so it starts the next
-  turn, as the adapter's `next-turn` steering declares.
-- **Opening a world database another process is opening waits instead of failing.** The busy
-  timeout is now the first statement on a new connection (and is set on the read-only one too).
-  It used to follow `PRAGMA journal_mode=WAL`, so a server and a CLI opening the same database
-  at the same moment could fail at once with `SQLITE_BUSY`.
-- **Every command refusal is recorded as failed usage, not only task, project and pool ones.**
-  A usage error, an unknown subcommand, a missing target, a permission or state refusal now sets
-  `primitive_usage.success` and the command's activity row to failure, so an agent's refused
-  calls no longer count as successes in usage stats, `agent diagnose`, lessons from work or tool
-  rankings. The shared paths declare it: the new `refuseCommand` helper, `unknownSubcommand`, an
-  in-handler rank floor (`rankFloorRefusal`) and a refused safety gate (`checkGateForExecution`);
-  about 800 plain refusal replies across `src/engine/commands/` use `refuseCommand`. A read that
-  finds nothing, a bare command that prints its usage and a no-op on a state that already holds
-  (`already in channel`) stay successes; a permission probe that only narrows a command
-  (`usecase` without new agents, `audio` not saving a transcript) does not fail it. Quest
-  progress and the `command` event are unchanged, as for every handler refusal. A refused
-  command's correlated `command_result` reports `ok: false` with the refusal.
-- **Self-calls to `/v1` no longer keep a bearer from before the server served.** The server now
-  marks itself serving before anything can ask a model, and the classifiers on Marina's own
-  `/v1` (the `marina-self` decision backend, the lesson judge's fallback, classifier engines)
-  read their base URL and bearer on every ask (`selfChatClassifier`). Before, a decision asked
-  while agents respawned at boot fixed the local profile's key for the life of the process; the
-  server treats that key as an outside caller, so in the default `agents` endpoint mode
-  `marina/default` was refused and every lesson judgement failed with no upstream call.
-
-- **A temporary outage no longer ends a lesson delivery `failed`.** The daily spend cap, a 429,
-  a 5xx, a timeout or a dropped connection from the lesson writer or judge now leaves the
-  outcome `pending` with the cause recorded and no attempt spent, and the rest of that delivery
-  pass makes no further model calls; the cap is checked before the pass and spends no budget
-  unit. Only a cause that repeats for the same input (no rule written, a refusal, a judge reply
-  that is never well formed) counts toward `failed`. The judge's error kind and message are kept
-  in the reason and logged. Each delivery pass re-opens, in bounded batches, `failed` lesson
-  deliveries whose recorded reason was such an outage, so those outcomes teach after all.
-- **A failed command's partial output reaches an agent as plain text.** When a `batch` (or any
-  command) was rejected after some of its actions ran, the agent's tool error carried that output
-  with the terminal's colour codes. Every agent tool error path now strips ANSI, as successful
-  results already did.
-- **An agent's thinking level reaches the model on every route, and is visible.** With thinking
-  `off`, a managed-effort Claude (claude-haiku-5.5, directly or through OpenRouter) used to think
-  at effort `high`; it now gets `thinking: {type: "disabled"}`. Through `marina/*`, an agent's
-  `reasoning_effort` is forwarded on an OpenRouter route as an effort the routed model accepts
-  (deepseek-v4.1-flash has no `medium`, so `high`, as a direct route sends). An explicit level is
-  never overridden by the probe-verified reasoning disable, the default-route effort or the cheap
-  tier's reasoning budget. `agent status|diagnose` shows the level sent and the reasoning tokens
-  reported per call, `agent list` shows `thinking:<level>`, `model_request_lifecycle` and
-  `agent_turn_end` carry `reasoningTokens` when the upstream reports them (numbers only), and
-  work outcomes tag `method:thinking:<level>` (`off` when unset) right after the one
-  `method:model:<m>`.
-- **Agent tool calls that failed on a fresh world now run or say what to do next.**
-  - A deferred tool called by its catalog name (`marina_who`, `marina_calc`, …) runs and is
-    declared from the next request, as if `marina_tool_search` had loaded it; a tool loaded
-    mid-run is callable in the same run (it was executable only from the next one).
-    `marina_tool_search` matches a multi-word query word by word.
-  - A project or pool name with spaces resolves bare, quoted or in any case
-    (`project Demo Pulse`, `pool "demo pulse" recall …`); `project <name>` alone, `show`/`view`
-    and `project show <name>` display the project, and `project help` prints usage. `project
-    info` names the pool that exists (a seeded project's pool is not `project:<name>`), the
-    pool also resolves by its project's name, `pool recall <name> …` reads as
-    `pool <name> recall …`, and a members-only project pool names `project <name> join`.
-  - `board <name>` and `board show|view|history <name>` read the board.
-  - `task claim|submit|heartbeat|approve|reject` refusals say why (no such task, held by whom,
-    lease expired, already submitted, who reviews it) and the next command; `task approve <id>`
-    without a claimant lists the pending submitters.
-  - A `tell` to an offline account says it is offline and names the board/channel routes.
-  - `whoami`, `inbox`, `focus` and `tasks` name the command that does it here; `memory search`
-    names `memory recall`; a bare `me` names `score`.
-  - A refused tool call states its message once: an SDK `CommandError` no longer repeats the
-    refusal as "partial command output".
-  - A wrong enum argument names the allowed values, and a case variant is normalised.
-  - Past the per-run tool cap, up to three closing calls (submit, note, focus, rest) still run;
-    the cap's own warning asks for them.
-  - `brief` shows understaffed projects as a count with its readout, not as "N need help".
-- **A refused command is recorded as failed usage.** A handler refusal (`failCommandResponse`)
-  sets `primitive_usage.success` and the activity row to failure on every ingress; task,
-  project and pool refusals now declare it (a non-creator's `task approve` was a success).
-
-- **Long-interval tick jobs run on an install that restarts often.** The tick counter restarts at
-  0 on every boot, so a job fired on `tick % every === phase` waited `phase` ticks after each
-  restart, and `live-promotion` (6 h, phase ≈ 70 min) and the late-phase hourly jobs (e.g.
-  `lessons-from-work`) were starved on a frequently restarted server. Jobs with an interval of at
-  least 600 ticks are now scheduled on wall clock: their last run is kept in `core_memory`
-  (`tick:schedule`), an overdue job runs within 300 ticks of boot (spread by its phase), and a job
-  that ran recently waits the remainder. Shorter jobs keep the modulo rule.
-  `describeTickSchedule()` reports `durable`, `lastRunAt` and `nextDueTick`.
-
-- **`agent attention` now wakes a resting resident at once.** A resident that had declared rest
-  (`memory set rest <why>`) left an operator's steered attention unread until its long heartbeat
-  (about 30 minutes): the idle check skipped the cycle because no perception owed a reply, and the
-  rest cadence returned before the pending-attention fast tick. A pending steered attention now
-  breaks a declared rest the way an owed request does (no skip, fast tick). Resting again after it
-  is still not a silent turn, and ambient or informational events still wait.
-- **A tell that names a world command to run now owes a reply.** "Task #16 is reserved for you:
-  task claim 16" was classified as information, so a resting addressee was not woken. A clause that
-  is a bare world command with only ids after its verb (`task claim 16`, `then task submit #16`)
-  now makes the tell a request; a result that reports a command ("Done: task submit 16 sent",
-  "Status: claimed task 16") stays information. The attention corpus gains both cases.
-- **A cold `calc` no longer times out while mathjs loads.** The calc worker reports ready once
-  mathjs has loaded, and the 10 s evaluation deadline starts only then; the expression is not
-  sent before. Loading has its own, separate bound (`CALC_LOAD_TIMEOUT_MS`, 60 s), so on a busy
-  machine the first `calc` no longer fails on a fast expression, and a runaway expression is
-  still stopped 10 s into its evaluation.
-
-- **Tests no longer share fixed database file names.** 116 test files that opened a fixed
-  `test_*.db` in the working directory now use `tempDbPath(name)` from `test/helpers.ts`: a path
-  in a fresh temporary directory, removed at process exit. Parallel workers, and the suite run
-  in two checkouts at once, can no longer collide on one file.
-- **A failed spend write no longer loses the dollars.** `recordSpend` swallowed a failed
-  `spend_daily` write (the engine's sink logged and returned), and the in-memory total was later
-  replaced by a larger persisted one, so the day's total undercounted and the cap could be
-  passed. A busy or locked write is now retried briefly; one that still fails stays pending in
-  this process, counted by `dailyCapRefusal` and every readout (scope and `purpose:` rows too),
-  and is written on the next successful write or on release — once. With `MARINA_SPEND_LEDGER`
-  the shared file and the world database each keep their own pending entries, so only the one
-  that failed is retried.
-
-- **In-world benchmarks work from a fresh install run from any directory.** The harness, the
-  dataset downloader and the reproduction kit now start with the server's own Bun, so `bun` no
-  longer has to be on `PATH`. They also start with `--no-env-file`, so they see the server's
-  settings and not the `.env` of the checkout they run in. Without `MARINA_DATA_DIR`, run result
-  files go to `data/benchmark-results` beside the world's other state, not to a checkout-shaped
-  `benchmarks/results` in the working directory. A test boots a fresh world in a temporary
-  directory and goes from `benchmark list` to a ledger row using only in-world commands.
-- **`agent spawn` no longer drops `model:`, `role:` and `key:`.** The spawn options accepted only
-  the word pairs (`model x role y`) for these three; the documented `key:value` form (and
-  `--model x`, `role=y`) was silently ignored, so the agent got the default model and no role.
-- **`memory query` and `memory search` lead with each record's own id.** One line per result
-  (`id <record id> · memory show <record id>`, subject, a short preview) comes before the JSON
-  dump, whose first id is the space's. The dump and the structured payload are unchanged.
-- **`memory kv history` shows the first set.** The trail ends with the key's creation (time and
-  first value) instead of replying "No edit history" until a second set; a key that was never
-  set says so.
-- **`brief` help names the first-login welcome.** The first brief after arrival is the welcome;
-  later ones show the shape of the world. The help said only the latter.
-- **A refused model call is reported, never stored as an answer.** `code ask` with no model
-  provider (or any other `/v1` refusal) records a failed artifact and shows the upstream message,
-  which names the provider setting that fixes it; an empty model answer is a failure too. `ask`,
-  `dig` and `desire` keep their world-only output and add one line saying why the model gave none.
-- **An input behind two gates no longer bounces between holds.** An approval also covers each other
-  non-core gate its approver could approve on its own hold (checked gate by gate with the same rule),
-  and the reply names them (`also covers: …`). A core (operator-grant) gate is never covered
-  implicitly: it is held on its own, the approver is told the run stopped there, and approving it
-  carries the earlier approval of the gates that run already passed (named in the reply), so
-  `run raw` (`agent.run`, then `shell.exec`, under `shared`) runs after two explicit answers instead
-  of looping. `code.exec.unrestricted` is never passed by an approval: only an operator's grant
-  (`challenge approve <token> always` or `gate grant`) opens it.
-- **`showcase` no longer adds a seeded bounty on every reboot** once more than 20 tasks exist: the
-  seed reads every task, not the first page (`listTasks({ limit: null })`). `task list` says how
-  many tasks it left out and takes `limit:N` to show them.
-- **`ops inbox` leaves optional capabilities out.** A readiness check the core works without is no
-  longer a CRITICAL alert with the remedy `demo preflight`; real problems keep their severity and
-  carry the check's own remediation.
-- **An offline `data series` says the fetch failed** instead of "no observation at or before the
-  cutoff".
-- **`pattern run` and `forecast` name the fix when no model is available**, and `forecast` refuses
-  before printing "Researching…".
-- **Benchmark datasets resolve against the Marina checkout**, not the server's working directory:
-  a server started elsewhere no longer shows the tracked `smoke` set as missing, and the harness
-  runs from the checkout.
-- **`help all` reaches the builtin command index from any room**, including a room whose own `help`
-  describes the room (the `craft` workshop); every other room shadow still wins.
-- **`benchmark result` names who launched a run** instead of its entity id, and **`code diff`** lists
-  new and staged files that `git diff` does not show instead of reporting no change.
-- **Crews serve, can be measured, and tag their own work.** A crew created with `crew create` now
-  serves `marina:<name>` through its own `model-<name>` endpoint (its agent members are kept on it
-  as they join and leave), so it can answer `/v1`, take forecast parts and be a
-  `benchmark run crew:<name>` target with its formation; the refusal names the missing step.
-  `crew dispatch` binds the work to a task (a new one at value 0, or `task:<id>`), and that binding
-  tags the outcome `crew:<formation>` before any membership fallback. Code Mode verification is
-  tagged with its live `code crew`'s formation. A crew benchmark run's method is
-  `crew:<formation>` (`crew:unknown`), never a model id. Agents see `crew` among the coordination
-  commands. None of it needs a model provider.
-- **`agent config <name> model|role|key|thinking` works on a saved agent that is not running**
-  (stopped, or listed in `MARINA_DISABLED_AGENTS`): it rewrites the stored config its next spawn
-  reads, keeping every other field. Before, it refused with "not running", so a disabled agent
-  could only come back on its old model.
-
-
-- **Arena evidence reuse** keys on the inputs, not on when they were read, so an unchanged refile
-  can reuse its forecast.
-- **Demo worlds** log their completion events as typed `feed_event`s instead of an untyped
-  `custom` event nothing received.
-- **Deploys keep up with frequent merges.** The EC2 deploy workflow no longer drops a qualified
-  build because main moved on during qualification; it deploys any build main still contains, and
-  the run for the newer revision follows.
-- **Two agents no longer trade "no reply needed" lines without end.** In a long `marina:answerer`
-  crew run, two Answerers kept answering each other's closing lines ("[re:mapping] Terminal — no
-  reply needed"). Per-item cost rose about 3×, and 14 % of requests drew in all four Answerers.
-  - Cause: any `[re:…]` correlation tag made a tell a request, and the harness asks every reply to
-    echo the asker's tag, so each closing line owed the next. "Do not reply" also read as an
-    imperative ("do …"), so it was a request too.
-  - A tag the resident has already sent or received is now a thread marker, not a new ask; the
-    message is classified without it. A fresh tagged ask still owes one reply.
-  - A message that says it wants no reply ("no reply needed / due / owed", "do not reply", "nothing
-    owed") and asks no question is never a request, and it releases the reply owed on that same
-    thread only. "Do not reply until …", "don't answer yet" and a decline next to a task stay
-    requests.
-  - An outgoing acknowledgement or status echo is judged without its tags, so "[re:x] Closed, no
-    reply due." is not sent to a peer that is owed nothing.
-  - **Long agent exchanges are observed, not capped.** Each resident counts the turns of its
-    exchange with another agent (a person's tell resets it; tells carry a server-stamped
-    `senderKind`). `MARINA_PEER_REPLY_CHAIN=observe` (default, threshold 6) only records it;
-    `enforce[:n]` opts in to stop owing and waking past n turns; `off` disables counting. Message
-    envelope depth stays causal.
-  - Applies to every resident and crew; it lives in the shared attention, classifier and reply
-    ledger. Tests: `test/peer-reply-loop.test.ts`, with simulated members running the real
-    attention, ledger and `tell` code.
-
-- **An assigned coder no longer sleeps out an idle tick before reading its task.** A coding assignment (or any steered attention) that arrived while the agent was mid-prompt, or before its loop first slept, was missed by the loop's wake (a no-op with no sleep armed), and the next cycle waited the idle tick (60 s by default). The pending attention now makes the next cycle the fast tick, and a bound coder that yielded at a per-run cap continues at the fast tick instead of the normal one. The coding control journey's own memory reads honour a 429's `Retry-After` like every other client.
-
-- A supervised resident's relayed commands name the message their turn answers: the owed item a command settles, else the latest message that woke the turn, so replies carry their reply depth. A turn the owner started directly stays depth 0.
-- `marina connect` reports a refused login (for example a name already in use) as the server's refusal, not as "Is Marina running?". The SDK types it as `LoginRefusedError`.
-- The dashboard entity card shows another account's entity in its public view (rank, role, presence, vendor, activity as type, time and command verb) instead of an empty 403; raw activity, full properties, inventory, core memory and notes stay with the entity, its owning person and operators, and the memory routes stay private-only.
-- The Map opens framed on the world's rooms, and its labels and thread marks keep at least an 11 px on-screen size at any zoom; reset view returns to the fitted frame.
-
-- **One crew member claims each endpoint request.** A `marina:<crew>` request is addressed to one
-  member (`target`), but Marina's residents owed every `model_request` they perceived. With 4
-  Answerers on `marina:answerer`, every Answerer worked every request. Under 4-way load the backlog
-  grew, each reply ledger filled (32), obligations stayed unsettled until their 30-minute TTL, and
-  requests timed out. Now only the addressed member owes a request, and the others drop it and
-  peers' `model_response`s without waking (`src/agent/attention.ts`). The claim is a lease
-  (`MARINA_REQUEST_CLAIM_LEASE_MS`, default 120 s, `src/net/model-api/request-claim.ts`) renewed by
-  the holder's traced work. With no sign of work, the request is re-offered to another eligible
-  member, and the first holder releases it. Reminders follow the current holder. Pinned (`role:`)
-  requests, a lone member, `open`/`panel` fan-out and untargeted requests keep their behaviour.
-
-- **The dashboard's Recent activity bar loads.** The feed snapshot requested `/api/feed` without the session's bearer token, so it was always refused (401) and the bar showed "Activity unavailable". It now sends the same `Authorization` header as every other dashboard read.
-- **A resident answers a shout.** A supervised resident's attention bridge filed a shout as a system notice, so an answer to an addressed shout had nowhere to go. A shout is now its own wake source; the final reply goes back to the shouter as a `tell` (never shouted to everyone), and a `tell` to the shouter settles it.
-- **Benchmark costs show prompt-cache reads and writes.** The harness now records the cached and
-  cache-written prompt tokens an endpoint reports (`prompt_tokens_details`, or Anthropic's raw
-  counters) per item and per run, and prints `Prompt cache: N read (x%) / M written`. A
-  `marina/verify:` reply sums them over the draft, check and revision calls instead of dropping
-  them. Two arms run at once on the same items and key share Anthropic's prompt cache, so one of
-  them reads cheap; this made an Opus verify arm look 1.2x plain when it is about 2.3x.
-
-- **Investigation capture writes no longer re-read stored evidence.** The capture quota summed `bytes` over every stored content row, and because `bytes` follows the up-to-2 MiB payload in each row, every write walked all earlier payloads. A covering index on `investigation_content(attempt_id, bytes)` (migration 178) answers the sum directly: at 128 MiB stored the quota check drops from ~40 ms to ~0.03 ms per write.
-
-- **A post addressed to someone else no longer wakes a bystander.** A room post that names another agent by vocative (`Rowan, …`, `…, Kestrel?`, `@Rowan`) was still subject to the random "a question in the room" response heuristic, so an unaddressed agent sometimes answered other agents' questions. `SocialAwareness` now knows names from the room, recent speakers and connects, and a post addressed to one of them (and not to this agent) is not this agent's to answer.
-
-- **Note writes, searches and revisions no longer slow down as history grows.** Measured on one account at 20,000 notes:
-  - Write-path dedup read every earlier note of the same type (37 ms per write); it now finds the text through a new index (migration 177) and writes stay at 1.5 ms.
-  - Note searches joined the note view to full-text search so that SQLite re-ran the text match for every note: `findSimilarNotes` took 19 s, `searchNotes` 1.3 s. Each search now starts from whichever side is smaller — the text hits, or the account's own notes — so they take 59 ms and 15 ms for a query that matches everything, and under 1 ms for a selective one.
-  - A revision or deletion read every active record in the memory space to find dependents (10.5 ms); it now walks dependents by index (2 ms).
-  - Choosing between the two search forms no longer costs anything measurable: the account's note count is kept per connection and recounted as the account grows, and a query whose sampled hit density marks it as broad scans the account's notes without counting every hit first. A broad recall at 20,000 notes is back to its earlier time (69.7 ms against 69.6 ms).
-- **A late answer settles a tell.** A tell whose deadline passed (status `expired`, for example while its recipient was blocked on a permission prompt) is now acknowledged and linked to its reply when the recipient answers it with `re #<id>`, `re` or `tell ack`. `tell status` reports it as `acknowledged after its deadline`. Expiry still never removes content.
-- **Supervised residents are told to run relay commands plainly**: one `connect -c "<command>"` per call, no `$(…)`, `$?`, pipes, loops or chains, which a command sandbox would stop to ask about.
-
-- A review snapshot from a sandboxed resident no longer lists the empty read-only placeholder files a command sandbox mounts over dotfiles and settings while the request runs.
-
-- **Supervised residents show as residents in the dashboard.** The world snapshot's vendor,
-  presence and owner now reach the client (the snapshot reconciler compared neither, so a
-  resident's later status never replaced its first), and every surface that names an entity
-  (Entities roster, hover card, inspector, room detail, entity card) shows `Wren [claude]` with its
-  presence; the roster groups residents under their own `resident` origin instead of "joined". The
-  Map labels residents, rings them with their presence, and floats a content-free
-  `from → to ↳depth` mark for each `say_sent` / `tell_sent`; the room pill reads those typed
-  envelopes too (it only knew the retired `say` events). Streams names the residents running in the
-  world instead of the "start marina supervise" hint when none of their sessions are the viewer's,
-  and a `tell_sent` envelope also reaches the person who launched either party.
-
-- **Backend test runs fail fast instead of hanging until the CI deadline.** Bun 1.4.3 is now the
-  minimum (`.bun-version`, `engines.bun`, `packageManager`, Docker images). Bun 1.4.2 could spin in
-  `spawnSync` after a garbage collection in large `--isolate` runs. The test wrapper stops a run
-  with no output for 240 s, or one where a process has not reaped an exited child for 60 s. It
-  prints the live process tree and the files still running. Benchmark result stamping reads git
-  with a timeout, without optional locks and without prompts.
-- **Documentation matches the code.** The README and site say approvals apply on shared and public
-  instances; the privacy guide lists the keyless market and economic-data lookups and the markets
-  feed; gate, operator-grant and built-in skill lists are current; seeded agents' autostart, the
-  Docker ports and the MCP tool list (now a pointer to the generated reference) are corrected. The
-  docs contract checks stated registry counts and requires commands to be documented as commands.
-
-- **Room entry checks apply to every movement command and fail closed.** `move` and `goto` (to a
-  room or to an entity) share one entry check: private rooms, then the room's `canEnter` guard,
-  which everyone obeys. A guard that throws, overruns its time limit, or belongs to a room the
-  sandbox disabled refuses entry. A room command that throws is recorded as a failed command (no
-  quest progress, failed usage, no `command` event), as a rejected async one already was. Room
-  and command source validation refuses static imports and re-exports; only `import type` is
-  allowed. The demos world no longer seeds a gate grant for its Maker agent (its compile steps are
-  held for an operator), and its Workshop and Bridge demos report completion only after checking
-  the outcome.
-
-- **Paired benchmark arms compare like with like.** The BrowseComp transfer adapter scores an incomplete
-  run's missing items 0 instead of dropping them, so an arm that times out more is no longer
-  flattered. `MARINA_GROUND_CACHE=<file.json>` lets short-answer arms run with `--ground search`
-  share one grounding-evidence cache, so paired arms read byte-identical evidence.
-
-- **Supervised residents: logging in again no longer cuts the supervisor off.** With
-  `MARINA_SUPERVISED_RESIDENTS=on`, the supervisor exchanges the person's world session for its own
-  routing-only supervision credential (`POST /api/routing/supervision`, at most 24 hours, renewed at
-  80 %, revoked on stop). A later `marina connect <same name>` replaces only the world session; the
-  supervisor keeps running and can still renew and revoke its residents. The credential is accepted
-  only under `/api/routing/`, is never a world session or an approver, and cannot send controls,
-  messages or channel posts. Off, nothing changes.
-
-- **`position` cap counts a market order at its worst case.** A market order (no limit price) was
-  costed at an estimated 50¢ a contract for the bankroll-cap check, so its exposure could reach
-  about twice the cap. The cap now costs it at 99¢ in paper and live alike (the paper fill is still
-  recorded at the estimate); add a limit price to size against it. The markets guide now describes
-  the daily-loss floor as it is enforced — world-wide realized losses since UTC midnight against the
-  opener's own floor, refusing new opens — instead of calling it advisory.
-
-- **Messages carry a causal envelope, and the canvas sees speech.** `say`, `tell` and `re` emit
-  content-free `say_sent` / `tell_sent` events (names, a message ref, `cause`, `depth`; never the
-  words), so the canvas draws say and tell arcs again. Every say, tell, re, shout and channel post
-  records `cause` (the message it answers: `re` names the tell it replies to) and `depth`, stored on
-  direct and channel messages (migration 171) and carried on their perceptions. `channel_message`
-  events carry the stored message id instead of `0`, so each post has its own feed ref.
-
-- **Yes/no forecasts lost their group class tag.** `group:binary:no|yes` failed the routing-ref
-  character check (`|`), so every yes/no outcome reached card routing and the competence map
-  without its coarsest class. Card evidence also no longer counts an answer twice when both its
-  outcome and its history record are on file.
-
-- **Built features that stayed inert now run, expire or report.**
-  - **Dead memory-assistance jobs expire.** An hourly pass (`src/engine/assistance-expiry.ts`)
-    sets a new terminal state `expired` when a job's deadline has passed, or when the worker's
-    world account has no running agent or live connection (15 min grace, never during a live
-    lease). It writes one `assistance.expired.<reason>` memory event per job and deletes nothing.
-    `ops assistance [expire|restore <job>]` reports, runs the pass or reopens a job, and
-    `ops recover` includes the pass. The memory overview counts `expired24h`.
-  - **Unanswered challenges reach the operator.** Expiries keep one rolling
-    `challenge:unanswered` ops-inbox item open until an operator resolves it.
-    `challenge summary [days]` reports outcomes by class and requester.
-    `MARINA_OPS_NOTIFY` (default off; webhook URL or `cmd:<program>`) pushes content-free notices
-    when a hold opens and when holds go unanswered. The dashboard attention drawer's desktop
-    notification also fires for held actions.
-  - **Retired standing kinds no longer count.** Rows of kinds that can no longer be earned (such as
-    `chronicled` and `pool_note`) stay as history (shown separately by `standing`) but count toward
-    no standing, rank or decision by default (`MARINA_STANDING_RETIRED=exclude`; `decay` restores
-    the old fade-out). Every live kind is covered by a test.
-  - **Agents are no longer made sovereign at login.** Under the `local` profile a loopback MCP,
-    declared-agent or agent-account login was promoted to rank 9 with every safety gate at the
-    999 grant sentinel. Now only a loopback person is. Existing databases are not reset on boot:
-    `gate audit` lists grant rows by holder, and `gate reset <entity|agents> [gate|all]` is a dry
-    run until `apply` (operator only). It revokes sentinel rows only and chronicles each holder.
-  - **Fewer `memory` round trips and receipts.** `DurableResidentMemory` checkpoint-only saves
-    reuse the remembered checkpoint instead of re-reading it (the CAS still guards it; archive and
-    journal writes still read fresh). Saves that only change `timestamp` are skipped. Preference
-    reads back off from every 50 to every 400 cycles while unchanged. The retention pass prunes
-    continuity-journal receipts in `memory_requests` after 7 days; every other receipt is kept.
-  - **FutureX can answer late on an opt-in schedule.** `watch --answer late` answers each open row
-    once, within `--final-lead-hours` of its own cutoff. `bun run futurex schedule` prints (or
-    writes with `--out`) a systemd user service and hourly timer that answer late by default, with
-    their own capped spend scope. It installs, enables and starts nothing.
-
-### Added
 
 - **One command installs Marina: `curl -fsSL https://h2oai.github.io/marina/setup.sh | bash`.**
   On macOS or Linux, `setup.sh` installs Bun if needed (Bun's own installer, into `~/.bun`),
@@ -2187,7 +1110,711 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Vision benchmark**: `benchmarks/vision-native --set hard` compares native and described vision
   with paired statistics; opt-in (#475).
 
+- **Code Mode can run a session's commands in a local bubblewrap sandbox on Linux.**
+  `code workspace runner sandbox` (and `marina --sandbox`, which makes it required) runs the
+  session's commands, verification included, inside `bwrap`: no network, the home directory hidden
+  except the Bun executable, a cleared environment, read-only system directories, the workspace
+  writable with its git metadata read-only, and capped tmpfs and process limits. Inside it any
+  command runs, `sh -c` pipelines included; the allowlist still applies to host runs. It never falls
+  back to the host. `MARINA_CODE_SANDBOX=off|available|default|required` (default `available`,
+  operator-only) sets the policy; a workspace holding the server's own state or a repository that
+  defines content drivers is refused with the reason named.
+
+- **A Code Mode session on Marina's own source works in its own worktree.** When the session's
+  folder is the checkout the running server started from, its first edit, run or task moves it to
+  a managed worktree on its own `marina/session-*` branch, so the running server is never edited
+  in place. Reads stay on the checkout; forks and other clones are ordinary repositories.
+
+- **`code trial` measures a change to Marina against the build it branched from.**
+  `code trial benchmark:<name> cap:<usd> [limit:<n>] [replicates:<n>] [model:<id>]
+  [upstream:<provider/model>] [seed:<n>]` starts the base and candidate builds as two child
+  Marinas, sends both the same benchmark items in paired replicates, and reports
+  `candidate-wins`, `candidate-regresses`, `no-measurable-difference` or `incomplete` by the same
+  rule that changes any default. The builds get no provider key and no path to this Marina's data;
+  they reach models only through this Marina's `/v1` with a key capped at `cap:` and revoked when
+  the trial ends. It takes the `code.exec` capability, and the dataset must be fetched first.
+
+- **`code ship` turns a measured change to Marina into a pull request.** `code ship [merge]
+  [-- <title>]` commits the session's worktree on its own branch with hardened git, pushes it and
+  opens a pull request with the trial's evidence, but only when the latest trial measured exactly
+  this change, found no regression, and the repository's gates verified it; `merge` also queues it.
+  The repository's own checks and merge queue still decide. A person ships; an agent only under
+  `MARINA_AUTONOMY=sovereign`. Publishing uses the server's `gh` sign-in.
+
+- **An agent's change to the files that govern Marina waits for a person.** When an agent's
+  `code ship` touches gates, trust and authority, the as-of fence, promotion and statistics rules,
+  the trial and ship steps, CI, package scripts or configuration, the pull request is opened with
+  those files listed but never queued, even with `merge`; a person reviews and queues it. A person
+  shipping their own change is not held. `MARINA_SELF_IMPROVE_PROTECTED=off` lifts the hold
+  (default `hold`).
+
+- **`code improve` lists Marina's own recurring errors as work to fix.** An hourly job reads this
+  server's warnings and errors from the last 24 hours, groups them by signature (names, numbers and
+  quoted values masked) and treats one seen 20 or more times as a candidate. With
+  `MARINA_SELF_IMPROVE=on` each candidate is filed once as a task, at most 3 a day, saying how to
+  fix it with Code Mode, `code trial` and `code ship`. The default, `observe`, only lists
+  candidates; `off` reads nothing. No model call is made.
+
+- **`code read` reads any part of any file.** `code read <path> [offset:<line>] [limit:<lines>]
+  [column:<character>]` returns numbered lines a page at a time, and a cut read names the exact
+  call that continues it; a line longer than a page continues by `column:`. Before, only the first
+  64 KB of a file could be read. The agent tools take `offset`, `limit` and `column`; plain
+  `code read <path>` is unchanged.
+
+- **One `--thinking` level for every coding runtime.** `--thinking <level>` now reaches Claude Code
+  (its `effort`), Codex (`model_reasoning_effort`) and pi (`--thinking`), not only Marina's own
+  coder, and saved harnesses remember it; omitted, native agents keep their own defaults.
+  `marina -p --agent claude|codex|pi --json` now lists the files the agent changed, new files
+  included, instead of `files: []`.
+
+- **`marina connect <name> --tui` opens a fullscreen world view.** The terminal workspace opens
+  with no coding session: the World conversation beside a use-case board (`operate` by default, or
+  `--mode coordinate|memory|investigate|forecast|admin`), for running a world without a project
+  folder. Coding controls such as `/task` and `/diff` are refused locally; `/world`, `/live`,
+  `/view`, `/panel`, `/dashboard`, `/layout` and `/mode` work. `--tui` with `-c` or a pipe is
+  refused.
+
+- **The terminal workspace has an `admin` mode.** It shows the world's setup (sign-in, model API
+  access, key storage and keys that no longer decrypt, the default model and where it came from,
+  provider keys by name only, never a value) and the server's log, errors then warnings, newest
+  first. Both are operator reads, fetched only while shown; `/live setup` (alias `/live admin`) and
+  `/live logs` show them in any mode.
+
+- **`web search` falls back to OpenRouter's Exa plugin when every other backend fails.** With an
+  `OPENROUTER_API_KEY`, `web search` and the search room try OpenRouter's Exa web plugin last, after
+  an exhausted or throttled backend, so agents keep searching. Its cost is recorded as source
+  `search` and refused at the daily spend cap; `readiness` names it in the chain.
+  `MARINA_SEARCH_OPENROUTER=off` keeps it out.
+
+- **Models served by a local H2O-Lightning vLLM can be addressed as `lightning/<model>`.**
+  `lightning` is a local provider like `vibethinker`: a `lightning/<id>` request goes to
+  `LIGHTNING_BASE_URL` (default `http://localhost:8000/v1`) with `LIGHTNING_API_KEY`, the agent
+  compactor budgets against 32768 tokens unless `LIGHTNING_CONTEXT_WINDOW` says otherwise, and it
+  is used only when named, never as a `marina/default` fallback. Docker deployments get an optional
+  `lightning` compose profile (`--profile lightning`) that serves `h2oai/h2o-lightning-4b` with its
+  reasoning parsed out of the answer (`LIGHTNING_REASONING_PARSER`, default `qwen3`); vLLM answers
+  to its served name, so address it as `lightning/lightning`.
+
+- **`lead`: a leading-indicator shadow challenger for the arena.** The `lead` forecaster spec takes
+  the nowcast and moves NY Fed SCE 1- and 3-year inflation expectations by how UMich 1-year
+  expectations and CPI inflation changed since the series' last release, read from FRED as of the
+  round's lock (`FRED_API_KEY` for past locks). The move is applied only when its walk-forward
+  error beats persistence; otherwise the start stands, and the spread is always the start's. No
+  model calls. It answers a family only through earned routes, for example
+  `MARINA_ARENA_SHADOW_CHALLENGERS=ny_fed_sce=lead`.
+
+- **Supervised residents pay attention to the world.** Each resident's world events go through
+  the same attention rules as in-process agents and reach its native session as one
+  `[World Events]` digest: an idle session is prompted, and a working Codex or pi session is
+  steered mid-turn (Claude reads it before its next turn). A session blocked on its owner is never
+  woken. A turn that answered an owed message sends its final reply back where the message came
+  from (`re #<id>`, `say`, `channel send` or a `tell`); `agent attention-mode <name>
+  relay:explicit` turns that relay off. A `tell` to an unknown or offline target now fails the
+  command result, so the relay, SDK and MCP report it instead of success.
+
+- **Attention judges for supervised residents.** `MARINA_ATTENTION_JUDGE=off|observe|on` (default
+  `observe`) asks four numeric questions: whether a borderline wake was needed, whether a deep
+  reply adds information, whether a review approval rests on specific checking, and how useful a
+  verdict was. Each opinion is checked later against what actually happened. Under `on`, only a
+  judge that has earned trust advises (attention counters, a line in `code review <id>`). A judge
+  never blocks, closes or approves anything; `off` makes no calls.
+
+- **Room and residents in the terminal and Streams.** In the native coding console, a line
+  starting with `@` goes to the world as `agent attention`, never to the selected agent, and each
+  digest delivered to an agent prints as `[agent] ← …` lines. In the dashboard, Streams gains
+  **This room** (your room's log, only while you are there) and **Your residents** (your supervised
+  residents' presence and recent wakes). An entity card's attention box accepts `@` lines.
+
 ### Changed
+
+- **The coder's closing reply is written for the person reading it.** Its brief now says the
+  terminal already shows each change, the check result and the review commands, so the reply
+  explains what changed, why and what the checks showed, without artifact ids (they stay in the
+  stored summary). A recorded run went from three ids in the reply to none.
+- **A coding session shows what it is doing and what it produced.** People could not tell
+  whether `marina` was working or what it changed: steps were raw commands (`▸ code read`),
+  edits showed no change, checks were a dozen lines of ids and agent hints, "task received" came
+  three times under an internal name, the world brief printed into the session, and nothing said
+  "done". Now each step is one line in plain words, every edit and new file shows its change
+  inline, checks are one line from the run's structured verdict (never from prose), the
+  coder's words are labelled Coder, and the input rule shows the working time and the latest
+  step. A run ends with one block: how it ended, the files changed, whether checks passed, its
+  own time and cost, and the exact next commands (`/diff`, `/review approve|reject <attempt>`,
+  `git restore`). Task-board notices stay in the World view (F6), and the periodic world brief skips a person in Code Mode (`brief` on request still works).
+- **`marina init` asks one question.** It asks for an API key and recognises the provider from
+  the key (`sk-ant-`, `sk-or-`, `gsk_`, `AIza`, `sk-`; others are tried against Together and
+  Nebius). A key already saved or in the shell is used without asking, and with Ollama running
+  Enter uses its first model. The instance name, world and admin keep their defaults, and there
+  is no "Start now?" question. `marina init --advanced` is the old step-by-step flow. Input that
+  ends (a pipe) now answers each remaining question with its default, where it used to hang or
+  crash, and never starts a server.
+- **The dashboard builds itself.** A source checkout used to need `bun run dashboard:build`, which
+  the `marina` CLI setup never ran, so a coding session's dashboard link opened a "not built yet"
+  page. The server now builds `dist/dashboard` in the background at boot when it is missing or
+  older than its sources (about a second, swapped in only when complete, one build at a time), and
+  the `marina` welcome card always shows the session's dashboard URL.
+  `MARINA_DASHBOARD_AUTOBUILD=off` turns it off.
+
+- **The work pulse no longer stalls on one stuck task.** It kept one pulse task open at a time, and
+  the reviewer had claimed and submitted its own task, which it never reviewed, so no new work
+  opened for four days. The pulse now runs every 6 hours and keeps up to `MARINA_WORK_PULSE_OPEN`
+  (default 3) live pulse tasks; a task its own reviewer claimed, or with no activity for 3 days,
+  no longer counts. The knowledge auditor no longer flags text that quotes its own findings
+  (`unknown pool action`), which had made the pulse re-file a note about the auditor.
+- **`MARINA_ANTHROPIC_AUTO_CACHE` is measured on live traffic.** Its posture asked for a paired
+  `benchmark compare-run`, but compare-run arms switch request instruments, not process settings,
+  so that evidence could never exist. It now reads cache-read tokens per route from `trace stats`.
+
+- **`help` leads with what people use.**
+  - Bare `help` opens with "Start here": thirteen commands that cover nearly all use (`look`,
+    `work`, `tell`, `say`, `channel send`, `board post`, `task list`, `memory note`,
+    `pool <name> recall`, `project list`, `chronicle`, `who`, `readiness`), then the category
+    names on one line instead of every command name.
+  - `help <command>` for a command with many forms (`code`, `memory`, `task`, `build`, `board`,
+    `channel`, `chronicle`, `pool`, `project`, `agent`, `skill`) shows its common forms first.
+    Before, it showed the first eight alphabetically, which left `channel send` out of
+    `help channel`, and `help code` printed over a hundred lines.
+  - Any other command's Usage block is capped at twelve lines. `help <command> full` still
+    shows everything.
+  - `src/engine/commands/help-common.ts` holds both lists, and `test/help-common.test.ts` checks
+    every entry against the declared syntax.
+
+- **Fewer top-level commands: 30 more join a family under the command they belong to.**
+  - Marina had 135 top-level commands. Command families (`memory note …` running `note`) now
+    group 30 more, so `help` lists 105:
+    - `project research|debate|solve|explore|plan|monitor|usecase|pattern`;
+    - `outcome competence|lessons|judge|arbiter|productivity`;
+    - `readiness posture|methods|uptime`;
+    - `world genome|marina-descend|mesh|association|reproduce|intellect|mutation|economy|lab`;
+    - `position bankroll`, `watch probe`, `shell run`, `role trait|system-prompt`,
+      `crew recruit`.
+  - Every bare name still runs exactly as before (same handler, rank, gates and output) and says
+    once per session where it now lives. `help <head>` lists its members.
+  - `project create` refuses a name whose first word starts a project (`plan`, `research`, …),
+    since `project plan …` would reach the launcher, not the project.
+  - Command usage records whether a person or an agent ran the command. Every entity carried
+    the kind `agent`, so people's commands were counted as agents'.
+
+- **A `tell` to someone offline waits for them instead of being refused.**
+  - `tell` reached connected entities only. An agent answering a person who had logged off was
+    refused and fell back to posting its answer in a channel, often several times over. A tell to
+    a known account that is not connected is now queued (`[queued #N: … reads it on connecting]`),
+    counts as the delivery of the reply the sender owed, and is shown to the account on the tick
+    after it next logs in or reconnects, marked "(sent while you were away)". It is then an
+    ordinary tell: `tell inbox`, `tell ack` and `re` work on it.
+  - The same text from the same sender while one is waiting is not queued twice, a sender may
+    leave at most 20 tells waiting for one account, and a queued tell nobody collects expires
+    after 30 days.
+
+- **Agent journals stop storing the same message twice.**
+  - When an agent's history was compacted, the archive stored again every message the
+    completed-message journal had already stored: inside an archive each message carried its
+    leading comma, so its parts never matched the journal's. The commas are now parts of their own
+    and an archive stores only what is new. Readers concatenate parts exactly as before; an
+    archive too long for separate commas keeps the old layout.
+  - A tool result is journaled without its `details`, the harness's live bookkeeping (the command
+    already in the call, delivery ids, or a second copy of the result text). Nothing read them
+    back from storage.
+  - A resumed agent's "most recent preserved excerpt" is the newest message, not the transcript's
+    closing `]` part.
+
+- **An agent's run ends when it chooses rest, and a focus holds one objective.**
+  - After an agent rested (`memory set rest …` or the `memory` tool's `rest`), the loop made one
+    more model call, and the agent used it to write a status recap nobody reads. A turn whose only
+    calls chose rest now ends the run (`turnOnlyRests` in `src/agent/loop-preferences.ts`). A
+    failed rest, or rest alongside any other call, keeps the run going as before.
+  - `memory set focus|goal` refuses a value over 500 characters and points at `memory note`, where
+    details belong. The loop already kept only the first 500 characters, so an agent writing a
+    long status report into its focus lost most of it without being told.
+  - The every-15th-cycle `[Learning Signal]` prompt section is removed. Its "Struggles" line
+    printed `[object Object]`, and agents almost never acted on it; lessons-from-work and the
+    dream pass turn repeated failures into lessons without a prompt line.
+
+- **Agents get the syntax of the commands they use most, so a first use needs no `help` turn.**
+  - Agents' own journals showed most `help <command>` lookups were for the same few core commands
+    (`pool`, `tell`, `board`, `task`). The prompt named those commands but never gave their
+    arguments.
+  - The COMMANDS section now has one line of their declared forms: `tell <entity> <message>`,
+    `channel send <name> [re:<id>] <message>`, `board post <board> <title> | <body>`, `task
+    list|info|claim|submit|create`, `pool <name> add|recall`. A test holds every form to the live
+    command manifest.
+  - The live roster no longer repeats a description for a command that line already teaches, and the
+    ids prompt line is shorter.
+  - Fixed: `pool <name> recall` was declared without its query, so `help`, `help catalog`, MCP
+    discovery and typed tools offered a form the handler refuses. It is now
+    `pool <name> recall <query>`.
+  - The paired replay (`scripts/peer-render-replay.ts`) now reports `help` lookups per arm.
+- **Three periodic prompt sections are gone from the agent loop**, each superseded by something
+  newer:
+  - **`[Memory Health]`** (every 20 cycles, an `orient` pull): memory curation is a checked pass's job
+    (dreaming), never an idle turn's, and the section invited exactly that work. `orient` remains a
+    command.
+  - **`[Standing]`** (every 20 cycles): every new credit already tells the online earner
+    `standing +N <kind> <ref> → total`, and `standing summary` reads it on demand.
+  - **`[Novelty Suggestions]`** (every 5 cycles, a `novelty suggest` pull): goals, focus, `[No Focus]`
+    and `work` direct an agent. The suggestions included `look` at unexplored rooms. `novelty` remains
+    a command.
+  - The harness no longer makes the three pulls behind them, and the memory platform's unused
+    `standingSummary` / `getNoveltySuggestions` are removed.
+- **Quests are deprecated.**
+  - Goals and focus, tasks (claim, submit, approval), crews, skills and guides cover everything quests
+    did. In the live world no agent or person had a quest, and no quest credit was ever paid.
+  - Agents are never given a world's `autoQuest`; people still are, so a world's guided start keeps
+    working.
+  - `quest_complete` joins the retired standing kinds. A quest paid standing with no other account
+    verifying anything; the kind now pays 0 and `record()` refuses it.
+  - `quest` is listed as deprecated in the feature-status table and its help.
+  - The command and the worlds' quest definitions are removed in a later release.
+- **An agent's per-turn memory leaves out the evidence and proposal tiers.**
+  - In a live world, `[evidence]` and `[proposal]` items served into agents' prompts were never
+    cited, while skills and the agent's own notes were.
+  - The per-turn context and its idle-time precompute now ask for no evidence and no proposals
+    (`skipTiers` on the `context_preview` request, mapped to `perTier: 0`). Retrieval then skips
+    the durable search entirely, so nothing is fetched and nothing is logged as served.
+  - Both tiers remain in `memory recall <query> evidence|all`, `context`, `/mem/context`, MCP and
+    passthru, which keep the same default tiers.
+- **Room-based context only for agents doing spatial work.**
+  - `[Nearby]` (who is in the room, every 5 cycles) and the "is nearby" part of
+    `[Coordination Opportunity]` are shown only to an agent that moved, built, looked or mapped in
+    the last hour. Everyone else is reached by what it owes and is given, and gets coordination
+    patterns for its focus without the room.
+  - `work` and `next` no longer offer an agent "You have not explored yet" or "You are not alone:
+    tell … what are you working on?". People still see both.
+  - The "This room:" line (a room's own tools) is unchanged.
+- **Agents no longer orient themselves before acting.**
+  - **Why:** an agent is reached by what it owes and what it is given: messages, requests and
+    assignments arrive as World Events. Looking around and reading a brief spent model turns on
+    nothing those turns needed. In the live world, agents answered requests without orienting first,
+    yet orientation reads were among their most frequent commands.
+  - **Prompts:**
+    - The system prompt no longer routes agents to "observe" with `look` and `brief`, or to find work
+      by polling (`work`, `next`, `task list`). Work reaches them as World Events; with none, they
+      advance their focus or rest. `work` lists open work when they choose new work.
+    - The first-turn prompt starts from what is owed and the agent's focus, not "inspect your
+      surroundings and world brief".
+    - The idle prompt and `[No Focus]` say rest or `work`, not `brief`.
+    - The live command roster no longer offers `look`, `brief`, `next` or `orient`.
+    - The seeded focus no longer starts with "get oriented".
+  - **Harness:**
+    - The discovery turn's six free orientation reads are gone.
+    - `marina_brief` is no longer a resident tool (still loadable by name).
+    - The harness no longer pulls `quest status` for an `[Active Objective]` section.
+  - **Engine:**
+    - An agent's login no longer runs `look` and `brief` on its behalf. It gets the structured
+      onboarding payload and one line on how work reaches it; MCP login says the same.
+    - New agent accounts are no longer subscribed to periodic brief pulses.
+  - **People:** their login, `look`, `brief` and pulses are unchanged, and every command remains
+    available to agents.
+- **Agents see message ids by default (`MARINA_PEER_RENDER=ids`).**
+  - A peer's message still reaches the model as the server's one line, with Marina's stamp in front:
+    a channel post's id and what it answers (`[#general post:3041 re:post:3040] Critic: …`), or what
+    a direct message answers (`[re:tell:9] Ann tells you: …`).
+  - Agents can now thread a reply with `channel send <ch> re:<id>`. Without ids, no reply was ever
+    linked to the post it answered.
+  - In the paired replay of real requests (`scripts/peer-render-replay.ts --arms flat,ids`), agents
+    with ids threaded their channel replies and answered as many requests as with the bare line.
+    The `structured` layout threaded too but answered fewer.
+  - The line explaining the stamp sits in COMMANDS.
+  - `structured` (header and guarded body; a one-line direct message keeps the server's line) and
+    `off` (the bare line) remain, as do `split` and `structured:<names>`.
+  - A tell's structured header no longer shows the tell's own id.
+  - The setting leaves the capability-posture table, since its default is no longer off.
+  - The replay takes `--arms <a>,<b>`, records why owed requests went unanswered, and retries an
+    episode once after a pause, so a server restarting mid-run is not scored as the model's answer.
+- **Dashboard chat reads like a messaging app.** Messages render through the same grammar as the
+  terminal (`MessageBody`): lists, lead-in labels, verdict chips, quiet asides, quoted output, code
+  and ids, and `task #N` / `#channel` references that open the inspector. Each message is a bubble
+  with the sender's avatar and colour (the same colour as in `marina connect`); consecutive
+  messages from one sender share a header, your own sit on the right, one that names you is marked,
+  days are divided, long messages fold behind "Read more", and arrivals and departures are small
+  centred lines. Compact view, `channel history` and the channel and board inspectors use the same
+  renderer. Speech is read from the server's structured fields, so a multi-line message keeps its
+  speaker. Message text is rendered as React elements, never injected as HTML.
+- **Messages in `marina connect` read like a conversation.** A shared message grammar
+  (`src/sdk/message-format.ts`) parses every message body once for display: lists (including the
+  inline `1. … 2. …` and `(1) (2)` lists agents write on one line), lead-in labels such as
+  `Caveats:`, code, links, `@mentions`, `#N` and `task #N` references, verdict words (PASS, BLOCKED,
+  PARTIAL …) as coloured chips, parenthetical asides in a quieter colour, quoted output, ids and
+  `key=value`. Longer messages get a header and a bar in the sender's colour, consecutive messages
+  from one sender share a header, a message that names you is flagged, a line marks a new day, long
+  messages from others fold behind ctrl+o, and `channel history` renders as a conversation. Bodies
+  wrap at 100 columns. Stored messages, copy, pipe output and what agents read are unchanged; a
+  backtick escaped inside a code span no longer garbles it.
+- **The dead Delphi settlement shadow is removed.** `src/arena/settlement-shadow.ts` replayed a
+  recorded Delphi trace under other settlement weights and was never wired into a filing, a shadow
+  pass or a report; the learned move weight (`applyMoveWeight`) is the live mechanism for that
+  question. The "Settlement replays" paragraph leaves the arena guide (#698).
+
+- **A resumed agent is told what is already in hand.** The orientation turn after a restart appends
+  an ALREADY IN HAND block (`describeLoadedState`: the focus and the loop preferences the adapter
+  has already restored) and says not to read them again. During that turn only, up to six read-only
+  orientation calls (`look`, `brief`, `recall`, `recap`, `work`, `task list|info`, `tell inbox`,
+  `channel history`, `chronicle pending`, `memory get`, memory `get|recall|list`) do not count
+  against the per-run tool cap; writes, sends and spends always count (#703).
+
+- **A lesson's evidence is kept apart from its rule.** The lesson writer may return an optional
+  `evidence` field with the numbers behind a rule. It is clipped like the rule, stored in the
+  record's metadata, shown to the judge beside the rule (numbers in either must match the case),
+  discarded with the rule when it quotes the case, and never served as part of the rule (#701).
+
+- **Formations judge moves on the series' own scale; the library route fallback is on by default.**
+  The numeric formation combiner bounds a member's move by the series' move scale
+  (`seriesMoveScale`: the larger of the 90th-percentile one-step change over the last 30 values and
+  the latest change, never below the sd) instead of the start's sd; the arena filing service puts it
+  on the start it hands a formation (`withSeriesMoveScale`), and a formation called without one is
+  unchanged. The move-weight → error-floor → calibration order lives in one function
+  (`finishForecast`). `MARINA_MODEL_ROUTE_FALLBACK`, the same-model OpenRouter route for in-process
+  library calls while a first-party key is usage-limited, is now on unless set to `off` (#693).
+
+- **GitHub Actions updates.** `actions/upload-artifact` 7.0.2, `actions/setup-node` 7.1.0,
+  `actions/setup-java` 6.1.0, `actions/download-artifact` 8.0.2, `docker/setup-buildx-action` 4.4.1,
+  `docker/build-push-action` 7.4.0 and `anchore/sbom-action/download-syft` 0.24.3, still pinned by
+  commit (#594).
+
+- **The tables kept unbounded are named.** The header of `src/engine/retention.ts` lists
+  `channel_messages`, `coding_artifacts`, `coding_sessions`, revoked `principal_credentials` and
+  `routing_sessions` as unbounded by design, each with its reason. Comment only (#682).
+
+- **`numeric_notes` reads two stored facts instead of resolving every row.** Migration 187 stores
+  `content_id` (the resolved content note) and `version_note` (the note is a canonical version) on
+  `notes`, kept current by six `numeric_resolution_*` triggers on the projection, record and version
+  tables and backfilled from the original derivation; the view becomes one self-join with no
+  correlated subquery, and no writer changes. `notes_au` now re-indexes a note's FTS row only when
+  its `content` changes, not on a recall's `last_accessed` touch (#681).
+
+- **One home for percentile, median, quantile and FNV-1a.** `src/stats` gains `percentileCeil`,
+  `median`, `quantileInterpolated`, `fnv1a32` (over code points) and `fnv1a32CodeUnits` (over UTF-16
+  code units, kept apart because it shards a stored corpus); the copies in trace analytics, decision
+  qualification, evolution analysis, the arena wiki specialist, novelty, replicates and two
+  benchmarks use them, each held bit-identical to its frozen original by
+  `test/stats-equivalence.test.ts` (#680).
+
+- **The dashboard's first paint no longer loads the editor.** React, `scheduler` and the
+  `use-sync-external-store` shim get their own `vendor-react` chunk, so the tiptap/ProseMirror chunk
+  is no longer preloaded, and the canvas `DocumentNode` is lazy-loaded behind Suspense as `PdfNode`
+  already was (#679).
+
+- **Indexes for queries that scanned or sorted a growing table.** Migration 186 adds eleven indexes:
+  channel, board and group lookups by name, a `NOCASE` index for the agent-config name lookup on
+  every spawn-lineage walk, tasks by creator, the board archive sweep, the chronicle supersession
+  chain, the board page, the latest session, submitted claims and channel messages by time.
+  `CREATE INDEX IF NOT EXISTS` only; the install baseline is unchanged (#678).
+
+- **The per-principal memory budget paces network clients only.** The memory service API applies its
+  request budget only when a listener passed a client address; an in-process caller (a resident's
+  own memory operation, lessons recall, the asset-memory indexer, tick jobs) is Marina's own code
+  and is no longer queued behind a token. A network client is still refused past its burst with
+  `retry_after_ms` (#676).
+
+- **Fewer statements on hot paths.** A recall marks its hits accessed in one statement
+  (`touchNotes`) instead of one commit per hit, `novelty suggest` scores each capability once
+  instead of on every comparison, `/v1` reads its endpoint settings in one query
+  (`SettingsStore.getSettings`), the per-command model-availability check asks whether any key
+  exists instead of decrypting every key, and a `feed_event` is stored in `feed_events` only, no
+  longer copied into `event_log` (#675).
+
+- **One commit per command; WAL checkpoints between commands.** The command phase commits its
+  bookkeeping (activity, usage and event rows) in one transaction, and `appendRoomLog` inserts and
+  trims in one. `MarinaDB` opens with `wal_autocheckpoint` at 64 MiB as a backstop, and a
+  `wal-checkpoint` tick job (every 10 ticks) runs `PRAGMA wal_checkpoint(PASSIVE)`, which never
+  waits on a reader or writer, so checkpoints happen between commands instead of inside a write
+  (#674).
+
+- **Marina requires Bun 1.4.4.** The release carries upstream fixes in TLS, HTTP, WebSocket, the
+  database clients, `node:` modules, `fetch` and `bun install`. `.bun-version`, `engines.bun`,
+  `packageManager`, `@types/bun`, the Dockerfile's `oven/bun` stages and the documented minimum move
+  together (#669).
+
+- **Setup connects a model first, and every guide is brought up to date.** `marina init` asks for
+  the model first, offers a `local` option that probes an Ollama, llama.cpp, LM Studio or vLLM
+  server and writes its `OLLAMA_*` or `LLAMA_*` settings, and no longer echoes a pasted API key.
+  With no provider key and no local runtime, a folder session's card opens with **Connect a model
+  first** and the idle label reads `no model`; a configured local runtime counts as a model and a
+  pinned local model becomes the default. The card links the session's dashboard; `marina connect`
+  shows the server's http address; `marina --help` opens with a "Start here" block.
+  `configuration.md` gains "Connect a model", and the README, getting started, troubleshooting and
+  the site lead with `setup:cli` → `marina init` → `marina` (#665).
+
+- **A pool listing points at the whole note.** `pool <name> list` and `pool <name> recall` show
+  the first 60 characters of each note; a longer note now ends in an ellipsis and names
+  `pool <name> show <id>`, a new read form that prints it whole. Seen in a recorded session: the
+  reviewer approved a submission "having read only the first ~60 chars" of the note it cited,
+  because the listing was all it had and nothing said there was more (#711).
+
+- **The front door shows a real world running.** The site's landing page, the overview, the
+  README and a new "tour, in pictures" page are built on a recorded session in the default
+  world: `site/scripts/capture.mjs` boots an isolated server with the four seeded agents, sends
+  Host the seeded Launch Brief, films the dashboard, and takes every still (tabs, `/who` pages);
+  `capture-terminal.py` + `capture-terminal.mjs` record and render any terminal program (the
+  `marina connect` REPL, a `marina .` coding session), one picture or frames for a GIF;
+  `capture.mjs demo` films a walkthrough of the dashboard itself (chat, command palette, map,
+  canvas, narrative playback, entity inspector, streams, admin, a resident's page) and
+  `render-demo` cuts it into one clip per feature for the tour page and the dashboard guide. Every picture in `docs/assets/` comes from those scripts, so they can be remade in
+  one run instead of going stale. The site serves `docs/assets/` itself (the guides' pictures
+  were sent to GitHub `blob` pages and rendered broken), redeploys when an asset changes, and
+  `test/docs-images.test.ts` holds every image reference in the public docs to a real file.
+  Landing-page counts (commands, guides) are read from the generated registries at build time
+  (#710, #711).
+
+- **Model helpers share the configured output allowance.** Text and JSON helpers use
+  `MARINA_DEFAULT_MAX_TOKENS` (default 16,384, bounded by model capacity) instead of small,
+  unrelated limits. Automatic allowances can grow after truncation; explicit caps stay fixed.
+  Compaction retains its separate allowance, bounded by the model rather than an 8,000-token clamp.
+
+
+- **The cheap tier runs the current DeepSeek V4.1 Flash snapshot.** The built-in OpenRouter pick
+  for `marina/cheap` (and the triage fact model and arena wiki extractor defaults) moves from
+  `deepseek/deepseek-v4.1-flash`, which OpenRouter serves as a fixed 2026-09-10 snapshot, to
+  `deepseek/deepseek-v4.1-flash-1017`, the 2026-10-17 snapshot (list $0.15/$0.60 per M tokens,
+  tools and reasoning). An explicit `MARINA_MODEL_TIER_CHEAP` is unchanged. A dated snapshot the
+  bundled pi-ai catalog does not list yet (`-MMDD` or `-YYYYMMDD` after a listed id) now takes its
+  base entry's capabilities under its own id (`catalogModel`, `src/net/model/catalog-snapshots.ts`):
+  the reasoning-effort clamp, the summary call's reasoning disable, image input and DeepSeek's
+  reasoning round-trip apply to it, and it resolves without the "not in the bundled registry"
+  warning. Its price comes from Marina's own list, else the provider's reported cost, never the
+  base's.
+
+- **Faster fresh databases: the install baseline moves from schema 167 to 179.** Migrations
+  168–179 move verbatim to `schema-history.ts` (172's data conversion joins `MIGRATION_HOOKS`;
+  `JUDGE_LEDGER_BACKFILL_179` moves with 179 and is still exported from `schema.ts`), so a new
+  database installs one generated schema and replays nothing. The generator now reproduces
+  `investigation_instance`'s per-database id at install time. Existing databases at any
+  version upgrade through the same SQL and hooks as before. A new database takes about 29 ms
+  in memory and 37 ms on disk, down from 76 ms and 85 ms.
+
+- **`memory` is the one memory command.** `memory note`, `memory recall`, `memory reflect`,
+  `memory recap`, `memory debrief` and `memory context` run the same-named commands with the same
+  rank, gates, effects and output. The bare names still work and say once per session that they
+  are aliases (`(alias: use \`memory recall …\`)`). `help`, `help all` and the agent's command
+  roster list them under `memory`; the system prompt's MEMORY section teaches the family forms;
+  MCP named tools keep their parameters and now run the family forms. `pool`, `skill`, `orient`
+  and `bookmark` stay separate commands. Storage, numeric note ids and receipts are unchanged.
+- **Standing is visible where an agent works.** Each new standing credit or debit reaches the
+  earner at once as one line: `standing +1.00 task_complete task:#12 → 3.40 (rank 0 by standing;
+  rank 1 at 5)` (any credit path; never for a repeated or rolled-back credit; the approved
+  claimant no longer gets the amount twice). `standing summary` gives live standing, the last
+  live credits and retired credit labelled as history on one line, then a line naming the live
+  ways to earn, built from the live kinds. `orient`, the `brief` compass and the resident
+  continuation prompt (`[Standing]`) show that line, adding the earn line when the agent has no
+  goal or focus. The standing rules, caps and history are unchanged.
+
+- **The formation catalogue is held by behaviour, not frozen bytes.** The migration-era
+  equivalence tests (`formation-equivalence-typed`, `-text`, and the catalogue half of `-arena`)
+  and their frozen pre-catalogue copies are removed, so the catalogue's prompts and answers can
+  change when a measurement says they should. `test/formation-behaviour.test.ts` asserts what the
+  formations must do: determinism given the same replies, research before any analyst, delphi's
+  anonymous revision after every first answer, n − 1 refereed tournament matches, one skeptic call
+  after the proposals, the typed combiners' math, and the arena move cap and blowup bound on the
+  stored rounds. The resident Scores are checked by shape. The ten arena formations still on
+  their own code stay byte-identical to their frozen copy (`test/arena-formations-legacy.test.ts`)
+  until they move to the catalogue.
+- **Spawn-time route evidence is on by default** (`MARINA_ROUTE_EVIDENCE`, was `observe`). A
+  `model:route` spawn takes the evidence's pick only when at least two of its own candidates have
+  `MARINA_ROUTE_EVIDENCE_MIN_N` items (benchmark ledger or shared live work); otherwise, and on
+  any error, the router's choice stands as before. `observe` keeps the old record-only behaviour.
+- **The learning-loop test closes every hop.** `test/learning-loop-closed.test.ts` now also shows
+  the route changing under the default configuration and a role's default model changing by
+  earned promotion: the live pass raises one proposal from person-approved work, and a person
+  holding `role.edit` files it with `benchmark promote role-model:<role> <model>`.
+- **One judge service.** The challenge judge, the task-submission verifier, the attention judges,
+  the outcome judges and the Arbiter now record every opinion and its later ground truth in one
+  ledger (`judge_ledger`, migration 179). The migration copies the rows already kept in
+  `challenge_outcomes`, `judge_observations` and judged outcomes, idempotently and without
+  changing those tables. Every surface asks one earned rule over the ledger (`judgeEarned` →
+  `earnedJudge`), counted per surface and judge, and per class for challenges. Only opinions
+  with a ground truth count. The challenge judge now earns per backend model as well as per
+  class. `MARINA_JUDGE=off|observe|on` sets every surface. The per-surface variables still win
+  for their own surface, and with neither set nothing changes. Under `MARINA_JUDGE=on` the
+  verifier bounces a submission only once it has earned that right. The new `judge stats
+  [surface]` command (rank 0) shows, per judge: n, agreement, the Wilson lower bound, whether it
+  is earned, and how many more observations it needs. It says "no judge backend" when none is
+  configured. `decision agreement`, `challenge stats` and `outcome agreement` read the same
+  ledger, and the separate tally code is removed.
+- **`MARINA_OUTCOME_JUDGE` defaults on when a model provider is configured** (off otherwise; an
+  explicit value always wins), the same rule as `MARINA_LESSONS_FROM_WORK`. Only a judge that has
+  earned agreement and is confident settles or teaches, as before.
+- **Readiness shows the learning loop.** A new `learning-loop` line reports outcomes waiting for
+  delivery or a judge (count, oldest age), each judge's comparisons toward earning, verifier
+  opinions and promotions ever filed, and is degraded after 14 days of backlog or while outcomes
+  exist but no default has ever changed. Optional readiness checks no longer raise inbox alerts.
+- **An end-to-end test that the loop closes** (`test/learning-loop-closed.test.ts`): person-approved
+  task work and a Code Mode check become tagged outcomes, a trusted lesson served to an agent,
+  competence evidence and a spawn route that changes under `MARINA_ROUTE_EVIDENCE=on`.
+
+- **One orchestration surface: the formation catalogue.** Crews, `project <name> orchestrate`,
+  `pattern run` and room formations now take every formation name, description, fit, role list and
+  protocol from `src/orchestration/formations/catalogue.ts`. `crew create … formation:<f>` and
+  `crew formation` validate against it (`ensemble` and `skeptic` are refused with where they run),
+  `crew info` shows the entry's summary, roles and protocol, a `crew dispatch` names the entry's
+  Score steps when it has a free-text template, and crew mediator lines lead with the catalogue
+  name. Each project template's opening note is generated from its entry. `freeform` is a catalogue
+  entry; the project name `custom` is now an alias of it (as `nsed` is of `deliberation`): both
+  still parse, and help lists catalogue names only. Feature status lists orchestration once, with
+  one sub-entry per way to run it.
+- **Outcome delivery plumbing.** A group of single outcomes still short of five is learned anyway
+  once its oldest has waited 30 days, if it has at least three (the lesson states the true count),
+  so a slow family still learns. A delivery pass claims a group atomically before its model call
+  (`outcome_deliveries`, released on failure or after an hour), so two passes at once write one
+  lesson. Forecast history records name the formation from the outcome's `method:` ref
+  (`method:formation:delphi` → `delphi`; a variant card keeps its card id). Outcomes recorded
+  without a consumer's delivery row get it from a bounded, idempotent backfill at the start of
+  each delivery pass, under the same rules. Typed forecasts recall lessons scoped to their
+  question's classes. None of this needs a model provider.
+- **Judged lessons: no rule, no lesson; single rounds teach in aggregate; one set of bars.** A
+  candidate whose writer gives no rule (asked twice) is deferred, never judged or stored. Forecasts,
+  arena rounds and research asks wait (durably, no attempt spent) until five of one source shape and
+  family are waiting, then teach ONE lesson from their statistics, scoped to that family and served
+  only to work of it; the judge's `general` question is asked within that declared scope. The
+  judge sees the rule as the lesson; `leak_free` is enforced only for measurement outcomes (the
+  mechanical item check still gates everything); failing only `consistent` stores the lesson
+  contested with a resolve case; calibrated and uncalibrated judges clear the same bars. Recall
+  serves only judged lessons that have a rule: never-judged (`unverified`) records stay stored but
+  are no longer served. With no model provider configured, deliveries wait with that reason and
+  nothing is written.
+- **Arena spread calibration is learned per series**, not per tracker: one tracker's series can be
+  miscalibrated in opposite directions.
+- **Arena challengers cover the coming week**, cheap specs first, within a time budget
+  (`shadow challengers due --hours N --budget-minutes N`), so earned routing gets its evidence.
+- **Arena filings recall only lessons from arena rounds of the same answer shape.**
+- **One memory request per journaled message.** A resident's journal entry or archive is one `capture_checkpoint` request (`POST /spaces/:space/checkpoints/:name/capture`): its new parts, its manifest and the checkpoint are stored in one transaction whose expected version is checked before anything is stored, so a forgotten or changed checkpoint refuses the whole request and nothing is captured. Before, each message cost four requests (a checkpoint read, a part batch, the manifest and the checkpoint save). Archives too large for one request, and memory services without the operation, keep the read-first path.
+- **Memory rate limits name the wait.** The per-principal memory budget (100 requests, 25 per second) now refills one token every 40 ms instead of 25 at once each second, a 429 carries `retry_after_ms` for the next token, and `retryMemoryOperation` waits exactly that (plus 5 ms) without using up an attempt, up to 30 s in all. A throttled resident used to wait at least a second per refusal.
+
+- **Supervised residents are on by default.** Every agent `marina supervise` or the console launches (Claude Code, Codex, pi) is its own world account, owned by the launching person, with no credential in its environment. `MARINA_SUPERVISED_RESIDENTS=off` (server or supervisor) restores the earlier routing; a supervisor whose server offers no supervision endpoint falls back to it and says so. `readiness` gains an optional `supervised-residents` check; feature status: core.
+- **The cheap tier has a default output cap.** A `marina/cheap` request that sets no
+  `max_tokens` is sent `max_tokens: 16384`, and on OpenRouter `reasoning.max_tokens` at 3/4 of
+  that (`MARINA_MODEL_TIER_CHEAP_MAX_OUTPUT_TOKENS`; `0`/`off` disables it). On the 2026-10-20
+  proof run, deepseek-v4.1-flash answers ran p95 6.3k and p99 13.1k output tokens; the 0.8 %
+  above 16k ran up to about 98k, averaged score 0.29 and were a third of the cheap arms' model
+  cost. A caller's own limit always wins, larger or smaller; agents, compaction and memory
+  helpers already send their own caps and are unchanged; explicit model ids and the strong tier
+  are never capped. `src/model` calls on `marina/cheap` keep their automatic cap and its grown
+  retry under the tier's. A reply cut at the cap is marked on its trace (`outputCap`,
+  `outputCapHit`) and on `x-marina-output-cap: <n>; hit`; the benchmark harness records
+  `outputCapHits` and reasoning tokens per item, and `admin models` shows the cap and its hits
+  since start. Inside `marina/verify:<proposer>+<checker>`, a `marina/cheap` or `marina/strong`
+  proposer, checker or reviser now resolves through the tiers like a top-level request (it was
+  refused as unreachable), and a cheap member gets the cap on its calls; ensemble drafts under
+  the cap record their hits too.
+
+- **A person sees its own agents' private view on the dashboard.** On shared and public servers, the entity detail, the live snapshot and the name-scoped memory routes now give the person who owns an agent (the first person up its spawn chain) that agent's raw command activity, full properties and core memory, as the agent itself and operators already had. An agent never gains another agent's private view this way, another person never does, and supervision credentials still reach only the routing API. Individual notes keep the memory system's own access rules.
+
+- **Threads you can follow on the canvas and Map.** A feed-canvas channel post that answers an earlier post is threaded under it (parent link from the message envelope's cause, `↩ in reply to <name> ↳<depth>`), and feed card authors carry a resident's `[vendor]` tag. Map thread marks stack per room (three newest plus `+N more`, 20 s each, readable halo) and open the room on click; room detail's "Activity here" lists the same content-free `say_sent` / `tell_sent` lines. `entity_enter` / `entity_leave` events carry the entity's name, so a departed entity is never shown by raw id.
+
+- A supervised resident's Claude session accepts edits in its working directory and runs shell commands without a prompt only inside Claude Code's command sandbox (workspace and relay directory writable, no network, no unsandboxed fallback), matching Codex's `workspace-write` sandbox. Without the sandbox's host tools only edits are accepted. Other Claude sessions are unchanged.
+
+- **Each owed ask gets its own answer.** A supervised resident's digest shows how to answer every
+  owed line (`→ re #<id>`, `→ say`, `→ channel send <c>`, `→ tell <name>`); what it answers itself
+  is settled, and the final-reply relay covers only what is left. When several destinations are
+  still owed, the resident is asked once more instead of one reply being sent to all of them; after
+  that, the reply goes to each marked `(one reply to N asks)`. A relayed answer now counts as the
+  woken turn's work for the attention judges. A resident's name later in a message addresses it in
+  a vocative position written as the name (`Done. Swift, run the tests`, `can you check this,
+  Swift?`), not as a mention.
+
+- **One rank-floor rule for every subcommand floor; honest feature status.** The write forms of
+  `bankroll` and `position`, `observe log`, `source connector`, `demo reset`, `code sandbox ops`,
+  the owner-or-rank overrides of `crew invite|dispatch|formation|persist|dissolve` and
+  `readiness providers` now check their floor through `rankFloorRefusal`: the local operator's
+  instance and the `open` posture pass, and elsewhere a refusal raises a challenge an owner or
+  operator can approve. The output-repair shot checks the spend caps before calling a model.
+  Closing a Code Mode session drops its exec-mode setting. The benchmark split, replicate-group
+  rule and reference scores moved under `src/engine/` (the `benchmarks/` paths re-export them), so
+  the published package carries every file `src/` imports. The `shared-team` preset now selects the
+  core `default` world. The feature status page adds crews and formations, desires and journeys,
+  novelty suggestions, resolvers/probes/watches, and lists `conduct` and `scenario` as
+  experimental; `scenario` help now says it posts boards and queues tasks for a resident to pick
+  up.
+
+- **Code cleanup and wider checks.** The compatibility re-exports `src/arena/model-backend.ts`,
+  `src/research/model-turn.ts`, `src/arena/research/{retrieve,verify,web-search,isolation,barred,read-swarm-retriever}.ts`,
+  `benchmarks/stats.ts` and `benchmarks/replicate-stats.ts` are removed; import `src/model`,
+  `src/research` and `src/stats`. Unused exports are deleted, `sha256Hex` and `escapeRegExp` each
+  have one shared home, and the SDK examples share their helpers. `bun run lint` also covers
+  `worlds/`, `marina-desktop/src/` and `extensions/`; `bun run typecheck` also checks `scripts/`
+  and `worlds/`. `check:coverage` counts source files no test loads at 0%. Dependencies:
+  pi-agent-core and pi-ai 1.3.0, better-auth 1.7.12, claude-agent-sdk 0.3.306, Playwright 1.64.1.
+
+- **Page reads honour robots.txt; keyless web sources can be turned off.** Before Marina reads a
+  third-party page for an agent or a person (`web fetch`, `web swarm`, `scenario` URL reads, the
+  research page reader and citation check, the live Civiqs read), it checks the site's robots.txt
+  for its `MarinaResearch` user agent (`src/net/robots.ts`: its own group, else `*`; longest
+  Allow/Disallow match, `*` and `$` patterns) and sends that user agent with the read. A disallowed
+  page is not requested and the read answers "blocked by robots.txt" instead of failing. robots.txt
+  goes through the SSRF guard and is cached per origin for 24 h; a 4xx means no rules; a 5xx, 429
+  or timeout fails open and is retried after 10 min. API calls are not page reads.
+  `MARINA_ROBOTS_TXT=ignore` turns the check off and `MARINA_ROBOTS_TXT_IGNORE_ORIGINS` exempts
+  sites the operator owns. The keyless DuckDuckGo search fallback (`MARINA_SEARCH_DUCKDUCKGO=off`)
+  and Yahoo Finance series history (`MARINA_FORECAST_YAHOO=off`) stay on by default and can now
+  be turned off: search falls through to the keyed backends and says so, a Yahoo series has no
+  prior. `readiness` (check `search`) reports all three. New guide:
+  [Data, privacy and terms](docs/guides/data-privacy-and-terms.md).
+
+- **Plainer names for research features.** `intellect`, `reproduce`, `genome`, `marina-descend`,
+  `mutation`, `association`, `economy` and `lab` are now listed as experimental in the feature
+  status page and their help is labelled `[experimental]`; their guides describe what each records
+  in plain terms. Commands, names and protocol ids are unchanged. Docs, agent skill files and
+  comments drop metaphors such as "civilization" and "autonomous from birth".
+
+- **Live (real-money) prediction-market orders ask a person.** A new operator-grant safety gate,
+  `trading.live`, guards every `position open`, `position confirm` and `position close` that would
+  reach a live venue (`MARINA_TRADING_ENABLED=true` plus credentials). Without an operator grant the
+  order is held as a challenge — nothing is sent and the command returns at once — and a person's
+  `challenge approve <token> once` places that one order (a `confirm` is one hold for the whole
+  proposal); `always` is an operator grant. Agents never approve. The gate is in the open-posture
+  core, never in `RANK_GATES`, and, unlike the other gates, is not lifted by the `local` profile:
+  only `gate grant <name> trading.live` or `MARINA_AUTONOMY=sovereign` passes live orders without a
+  per-order approval. Paper trading is unchanged. There are now 15 safety gates. `position`,
+  `bankroll`, the markets guide and `MARINA_TRADING_ENABLED` carry a plain not-financial-advice
+  note.
+
+- **A new front door.** The README, landing page and docs overview are rewritten to be shorter
+  and plainer, with the forecasting, research, orchestration and coding commands every participant
+  gets up front. The docs sidebar and guides index are regrouped by what a reader wants to do, and
+  the site uses the H2O black-and-gold theme with the Marina mermaid.
+
+- **Cheap by default, strong where it grades: model tiers.** Work that names no model now runs on
+  one of two tiers (`src/config/model-tiers.ts`). The cheap tier (`MARINA_MODEL_TIER_CHEAP`) runs
+  agents spawned without a model, room agents, boot-seeded crews (the Workbench, answerer and
+  orchestration crews, the Chronicler) and memory helpers. Unset, it is the operator's explicit
+  default model when one is set, else the cheapest adequate tool-capable model for the keys present
+  (`openrouter/deepseek/deepseek-v4.1-flash` with an OpenRouter key). The strong tier
+  (`MARINA_MODEL_TIER_STRONG`) runs the benchmark judge, the outcome extractor, the lesson writer
+  and judge, the decision classifier and the Arbiter. Unset, it is `marina/default` exactly as
+  before, so judging does not get cheaper silently. `marina/cheap` and `marina/strong` are live `/v1`
+  model ids, resolved per request. One entry moves a single role:
+  `MARINA_AGENT_MODELS=role:<role>=<model>`. `admin models` shows the effective model for each tier
+  and role and where it came from, and the boot log prints both tiers.
+  **On upgrade**, with no model variable set, residents, room agents, seeded crews and memory
+  helpers move from `marina/default` to the cheap tier. The Workbench moves from each provider's
+  flagship (Opus, GPT-6.1 Sol, Gemini Pro) to the cheap tier. `MARINA_DEFAULT_OPENROUTER_MODEL`
+  and the other per-provider defaults now shape only `marina/default` and the strong tier.
+  Unchanged: judges, decisions and the Arbiter; the `/v1` `marina` model; agents saved with an
+  explicit model; and anything covered by an explicit `MARINA_DEFAULT_MODEL`, runtime default,
+  `MARINA_CREW_MODEL`, `MARINA_WORKBENCH_MODEL` or role variable. `MARINA_CREW_MODEL` now also
+  reaches the answerer and orchestration crews and the Chronicler in every world.
+
+- **Contributors earn standing: every account is its own party.** Work another account verified
+  now credits the worker, including a person approving its own agent's task, adopting its
+  agent's proposal or replicating its agent's experiment, and a sibling agent reviewing a Code
+  Mode attempt whose checks passed. Verifying your own work (same name or same durable account)
+  still earns nothing, and an agent's verdict inside its own spawn lineage still needs grounding.
+  Caps are unchanged. Safety gates are unchanged: only a person's approval from outside the
+  requester's lineage builds an earnable gate. Each world records the change once as a chronicle
+  event (`civic-rule:contributors-earn-standing`).
+
+- **The maintainers' own deployment workflow is no longer part of the repository.**
+  `.github/workflows/deploy-ec2.yml` is removed; `scripts/deploy.sh` stays as the host-side half
+  of the example pipeline in the deployment guide.
+
+- **Competition adapters ship no filing identity.** The FutureX, ForecastBench and Metaculus
+  adapters no longer default to an organization or agent name: they refuse to produce or file a
+  submission (before spending anything) until you give one with `--org` / `--agent` or
+  `MARINA_FILING_ORG` / `MARINA_FILING_AGENT`, and they refuse the docs' placeholders such as
+  `your-org`. The Prophet Arena agent registers under `PROPHET_AGENT_NAME` (or the name you put in
+  `benchmarks/prophet/arena.toml`, which now ships placeholders) and refuses to load without one.
+  BrowseComp-Plus `summary.json` carries an `Attribution` only when you name one, and
+  `scripts/arena-wiki-backtest.ts` compares the entrant in `MARINA_ARENA_ENTRANT` (or
+  `--entrant`) instead of a built-in id. Operators who filed before must now set their identity.
 
 - **Resident context budget: two prompt tiers, a deduplicated prompt and on-demand tools.**
   The fixed prefix every resident sends on every turn is smaller, and small-window models get a
@@ -2413,7 +2040,621 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MARINA_ARENA_SPREAD_CALIBRATION=on|observe|off` (default on; `MARINA_ARENA_CALIBRATION` is
   read as a fallback).
 
+- **`verified` means the repository's own gates passed.** For a Git repository root with a detected
+  test runner, `marina -p` now verifies with `candidate` and `gates:repository` (also a `code do` /
+  `code verify` modifier): a snapshot runs the project's type-check, lint, relevant tests and then
+  the full suite, and every gate must run and pass. A failing gate is re-run on the task's base
+  commit, and failures that also happen there are labelled pre-existing (the task stays
+  unverified); each failed step carries a digest of failing tests and the first error. A task that
+  changes nothing reports `no_changes` (exit code 3, verification `not_applicable`), and after
+  `marina -p --agent claude|codex|pi` the same gates run on the folder. Other folders keep
+  `delivery`; `MARINA_CODE_VERIFICATION` or `--verification` chooses another, and the one-shot
+  timeout defaults to 20 minutes under the gates.
+
+- **The first page of `marina` and `marina connect` fits the terminal.** Both draw a welcome card
+  sized to the window: the title sits in the border, it uses two columns when the window is wide,
+  and the wordmark appears only when there is room. In `marina connect`, login output folds behind
+  `ctrl+o` to fit the first page, and repeated login lines are dropped. In a folder session the
+  card replaces the startup lines and the live status moves into the footer. Ambiguous Tab
+  completions show in the footer instead of over the input area, and a shared longer prefix is
+  filled in. Narrowing the window no longer leaves part of the old rule above the input area.
+
+- **Research asks and crew work count in the record of what has worked.** An agent-mode
+  `research ask` is now a work outcome (`family:work:research`, `method:research:<mode>`), scored
+  on citation grounding: the share of cited sources the agent actually read, not correctness. An
+  answer that cites nothing records no outcome, and a budget-forced answer never counts as a
+  success. A task verdict now credits the crews the claimant belonged to when it claimed, so work
+  done in a one-off crew that dissolved before the verdict is no longer recorded as `solo`.
+
+- **Compaction summaries can use their own model and no longer spend their cap reasoning.**
+  `MARINA_AGENT_COMPACTION_MODEL` (`provider/model`) names a separate model for an agent's
+  compaction summaries; unset, `self` or `default` keeps the agent's own model, and a failed call
+  falls back to it, then to the rule-based summary. Every summary call turns reasoning off with
+  the provider's own switch, and reasoning that leaks into the reply is stripped. The summary cap
+  is `MARINA_AGENT_COMPACTION_MAX_TOKENS` (default 800, was a fixed 500).
+
+- **An older Bun is named instead of failing like a Marina bug.** Tests refuse to run on a Bun
+  older than `engines.bun`, and the server and `marina` warn at startup with both versions and how
+  to upgrade.
+
+- **A supervised resident knows its owner.** The enrolment reply and the resident's instructions
+  name the person who launched it. World messages from that person arrive in their own digest
+  section as instructions, never as a tool approval. A peer that only mentions the owner's name
+  stays a peer.
+
+### Removed
+
+- **The object commands `get` (`take`, `pick`), `drop`, `give` and `inventory` (`i`, `inv`), the `emote` command
+  (`me`), and the agent tool `marina_inventory`.** No world or command creates a pickable object,
+  so the object commands had nothing to act on, and `emote` saw no use. `shout`, `bookmark` and
+  `examine` stay. Entities keep their `inventory` field and stored rows, and earlier `emote` lines
+  in room logs still render. Nothing can fill an inventory, so it is gone from every surface:
+  the dashboard's **My inventory** panel, the Inventory rows of the entity hover card, inspector
+  and context panel, the `Objects` line of `score`, the `inventory` field of
+  `GET /api/entities/:name/preview` and of the private entity detail (dashboard API and desktop),
+  the SDK's `MarinaClient.inventory()`, and the empty `Objects` help category.
+- **Quests are removed.** They were deprecated in the previous change; goals and focus, tasks
+  (claim, submit, approval), crews, skills and guides do the work quests did.
+  - The `quest` command, the MCP `quest` named tool, the SDK's `quest()` method and its
+    `quest_*` / `active_quest` property types, and `GET /api/entities/:name/quests` are gone. The
+    MCP tool's frozen contract is removed with it: a client that still calls `quest` gets an
+    unknown-tool error.
+  - `WorldDefinition.quests`, `autoQuest`, `QuestDef` and `QuestStep` are removed, and so is every
+    world's quest list. A custom world that still sets `quests` fails to typecheck; drop the field.
+    A learned world bundle exported with quests still imports; the quests are ignored.
+  - The dashboard's quest progress card and the `quest_step` work item are removed.
+  - The `evolve` world's eight benchmarks are rooms now: entering one starts an attempt and
+    finishing it records the score on the scoreboard, as before.
+  - The `demos` world's guided start lives in its guide notes and the lobby's directions: the
+    Workshop path (`workshop`, `begin`, `status`, `creation`) and the Bridge path (`bridge`,
+    `launch`, `connect`, `link`, `ping`).
+  - `quest_complete` stays a retired standing kind. Its rows remain as history and count toward
+    nothing.
+
 ### Fixed
+
+- **A dropped agent connection gets its own entity back on reconnect.** The periodic orphan
+  sweep removed every agent without a live connection, ignoring the 60 s reconnect grace, so a
+  client whose reconnect straddled the sweep (every 60 s) resumed its token as a brand-new
+  entity: same name, but its in-memory state (room presence, crew membership, queued commands)
+  lost. The sweep now leaves an entity inside its grace to the grace timer. Found by the SDK
+  conformance suite's reconnect scenario.
+- **`waitForTell` in the TypeScript SDK hears tells.** It waited for a `subkind` and a `from`
+  field the server has never sent, so it always timed out. It now matches the documented tell
+  frame (`tag: "tell"` with `senderName`) and returns the message.
+- **Marina no longer fills the disk.** A world kept everything its agents journaled, so a busy
+  install grew without limit until the drive was full. A storage budget now caps what a world
+  keeps on disk at 5 GiB by default (`MARINA_STORAGE_MAX_BYTES`, `off` for no cap) and leaves at
+  least 1 GiB free on the disk (`MARINA_STORAGE_MIN_FREE_BYTES`). At startup and every hour it
+  measures the database, uploaded files and scratch files; past 90 % it frees space, oldest and
+  least valuable first (overdue retention, then agents' archived conversation transcripts older
+  than 30, 14, 7, 3 or 1 days, then telemetry older than a day), and gives the freed space back to
+  the disk. Facts, lessons, tasks, the chronicle, ledgers and people's files are never removed. A
+  world still over its cap pauses its agents and raises one critical alert until there is room;
+  people keep working, and `readiness` shows what is using the space. An existing database is
+  rewritten once at the next startup to return its free space.
+- **New files a coder creates show in every "what changed" view.** The workspace diff left out
+  files git does not track yet, so a coding run that added a test file reported "1 file changed"
+  and the review snapshot and checkpoints missed the new file. Untracked files (`.gitignore`
+  respected) now appear as added files in `code diff`, the run result, `marina -p` output, review
+  snapshots and checkpoints. A new folder of more than 20 files (a cache or `node_modules` nobody
+  ignored) is named in one line instead of listed file by file.
+- **`marina -p` with no model provider exits at once.** It printed that no provider was configured
+  and then waited for a run that could never start, until its timeout. Dispatching a task with no
+  provider (or no agent runtime) is now a refusal: the one-shot exits 1 in about two seconds, and
+  the message says to run `marina init`.
+
+- **A first run no longer looks broken in the log.** A fresh `marina start` printed about 20
+  WARN and 8 ERROR lines in its first two minutes from a working install. The ERRORs were Marina's
+  own second-opinion model calls, cancelled at their deadline and logged as provider failures; a
+  request its caller abandons is now logged as cancelled (debug). An agent reaching its per-run
+  cap, an agent's refused tool call, and the local-profile notice are info, not warnings. The
+  starter tasks' evidence check refused the agent that had claimed them (seeded project groups
+  have no members); a group task's work is now open to its creator and claimants as well as its
+  members. The same run now prints no WARN or ERROR.
+- **Stopping Marina is quick and quiet.** Repeated start/stop cycles found a Ctrl-C or SIGTERM
+  that took 11.8 s: shutdown waited on a model call to turn pending lessons-from-work into lessons.
+  A server stopped by a signal now parks them for the next boot (nothing is lost; short-lived
+  tools keep the final flush), and stops in under a second. A model request cut off by the stop
+  is no longer logged as an upstream failure, and the log ends with `Marina stopped cleanly in N
+  s` at the real end instead of an early "engine stopped".
+
+- **`bun run code <dir> --tui` opens the terminal workspace.** The checkout entry point read only
+  the folder argument, so `--tui` was ignored and the scrollback terminal opened. It now takes
+  `--tui` and `--mode`; `marina` takes every other option.
+- **`/live` cards fit the terminal workspace pane they are drawn in.** In `marina --tui`'s split
+  layout a `/live` card went to both panes at the full terminal width, so in the narrower World
+  pane its borders wrapped into broken lines. The card now goes to the focused pane only, drawn at
+  that pane's width. The scrollback terminal is unchanged.
+- **The terminal workspace has its own guide.** `marina --tui` was mentioned in five guides but
+  explained in none. [Dashboard, desktop and terminal](docs/guides/interfaces.md#terminal-workspace-tui)
+  now covers starting it (local folder, checkout, `marina attach`), the panes, every key and slash
+  command, and which dashboard views it does not show yet. The other guides link to it.
+- **`market live` lists markets that actually resolve soon.** It took the first 200 open markets
+  in the venue's own order and filtered them afterwards. On Kalshi those were multi-leg parlays,
+  priced `undefined¢` because the API now quotes dollar strings. On Polymarket it never filtered
+  by date at all, so it showed dead 2025 events at 0¢. Both venues are now asked for the window
+  (Kalshi without combo markets), results are ranked by 24-hour volume, prices come from the
+  current fields (unknown shows `—`, never a made-up 50¢), and times under two days show in hours.
+
+- **Shell snippets in the docs paste into a shell as a whole block.** Copying the getting-started
+  "from any folder" block failed: zsh (the macOS default) passes a trailing `# comment` to the
+  command as arguments, and `marina init` read the lines pasted after it as its answers. Shell
+  blocks in the README, the site and every guide now carry no comments, end on any command that
+  reads the terminal or keeps running, and split alternatives into their own blocks. A test holds
+  the front-door pages (README, getting started, the site overview and home page) to it;
+  `bun run check:paste-safe` reports the other guides without failing CI.
+- **A memory-assistance worker is no longer told about its own work.** Each claim and each read
+  a worker made on a job sent that worker a "Memory assistance …: running; N operations remain"
+  message, so a worker agent was steered once per operation, mid-run, about its own action.
+  Notices now go only to the party a change concerns (a new job to its worker, an outcome to its
+  requester) and never to the principal whose call made the change.
+
+- **A refused or failed command now says so to its caller.** Over 100 handler paths (agent spawn,
+  stop and reconfigure, `connect`, `schedule`, `gate`, `witness`, `world`, `supervisor`, `arena`,
+  canvas intents, `evolve`, `inquiry`, `crew`, `forecast`, `benchmark`, `reflect` and others)
+  replied with plain output, so an SDK script, an agent's tool call or a scheduled run saw success.
+  They refuse through `refuseCommand`, and the send-error lint now reads whole statements and local
+  reply helpers. Also: `tell Diligence-Lead` reaches the live `DiligenceLead` (any spelling of a
+  resident's name); a refused spawn name suggests a valid one; a spawn inside the one-second window
+  waits for its slot instead of failing; an owner logging in while their schedule runs takes the
+  account over; `marina connect -c` waits up to 15 minutes for a command's result; a typed forecast
+  says whether its number is a probability or the runs' agreement; `task list` shows who holds each
+  open task; an agent-route `/v1` refusal names the direct route for the model sent; pattern runs
+  state today's date; crew orientation states each member's part; streams fold repeated runtime
+  states; `benchmark list` marks saturated sets; spawn replies say how long a call budget lasts.
+
+- **A cut-off channel post now tells an agent how to read it whole.** When a World Events line is
+  clamped, its hint named `tell read <id>` for every message, but a channel post's id is not a tell
+  id, so the agent opened an unrelated tell or was told the message is private. The hint now comes
+  from the message's own ref: `tell read <id>` for a tell, and the new `channel read <channel> <id>`
+  (one post whole, members only, fenced as peer messages for agents) for a channel post.
+- **Messages keep the line breaks their author typed.** `channel send`, `tell`, `re` and `board
+  post|reply` rebuilt each body from whitespace-split words, so a list or a second paragraph arrived
+  as one long line. Bodies are now stored as typed. Agents still read one line per peer message (line
+  breaks show as ` ⏎ `, as in World Events), so no line of a message can pass for another speaker;
+  telnet and plain text forms indent continuation lines for the same reason. `channel history` adds a
+  structured payload for clients, and a multi-line board post without `|` takes its first line as the
+  title.
+- **Chronicle writes keep their citations.** `chronicle record`, `correct` and `digest` read lists
+  as the Chronicler writes them: `refs task:3, note:10342` (spaces after commas), `refs: a,b`, `refs=a`, and clauses set off
+  by `|` in any order (`… | refs a, b | period day:… | participants X, Y`). Before, only one unbroken
+  trailing token was read, so such corrections and digests were stored with no refs (the text stayed
+  in the body) and such narratives were refused. That refusal is now a recorded failure and shows
+  the form to use. Entries already written are unchanged; the chronicle is append-only.
+
+- **Trailing modifiers parse in every spelling of the one grammar.** `memory note <text>
+  importance:7` kept `importance:7` in the note text and left importance at the default, because
+  the shared trailing-modifier pattern (`modifierPattern`, used by `note`, `recall`, `chronicle`,
+  `benchmark` and others through `extractModifiers`) knew only `key value` and `--key value`. It now
+  also reads `key:value` (canonical), `key=value` and `--key=value`; those forms must start a
+  token, so a trailing URL such as `…?type=fact` is never split.
+- **A task verdict is no longer held by the decision gate.** `task approve|reject <id>` classifies
+  as `communicate`, like an answer to a held action: the task command already refuses a verdict from
+  anyone but the task's creator, so the gate added no authority and only kept a reviewer from
+  closing the loop. `task claim|submit|cancel|create` stay `mutate`. `focus` and `review` join the
+  agent's own loop keys, so `memory set focus <text>` is self-scoped (#706).
+- **The route-fallback tests' usage-limit reset is in the future again.** The fixture's reset date
+  had passed, so three tests failed in every environment (#694).
+- **Fresh task reviews retry a transient transport failure; malformed handoff input is refused with
+  the contract.** The prose and artifact model reviews post to the local `/v1` with their own
+  `fetch`; their HTTP leg now gets one bounded retry within `MARINA_MODEL_RETRIES` for a network
+  failure or a 408/429/5xx reply (honouring `Retry-After`, up to 30 s), never on an abort, the
+  call's own timeout, or a truncated or malformed reply. A malformed handoff publication says which
+  field is the journal (`expected`) and which the deliverable (`deliverable.expected`) instead of
+  throwing a `TypeError`, and the file audit's stale-read refusal names both versions and says no
+  audit ran (#689).
+- **`task submit` states unmet evidence obligations; references say why they are unavailable.** The
+  submit reply now carries every unmet evidence obligation at that revision and the next calls,
+  still advisory, and says how to create an artifact when the task has none. A prose review is
+  `unverified` only when something was not checked (an unreadable source or an unplaced claim), with
+  `unavailableReasons` per source; listed limitations ride along with `no-findings`. A malformed
+  evidence reference is named as malformed, while a missing record and one the actor may not read
+  stay one answer, so a reference cannot probe existence (#688).
+- **A stale-read refusal on task work names the field, both versions and the next call.**
+  `staleFileRefusal` states the object (journal or deliverable), the field the caller filled
+  (`expected` vs `deliverable.expected`), supplied and current version and hash, the call to make
+  next, and the two usual causes (a stale version after a write; the journal's metadata given for
+  the deliverable). Artifact handoff and native edit races quote both revisions, and a repeated
+  identical publication returns a `note` saying nothing changed and no peer was woken (#687).
+- **A caught failure is a refusal, not a successful message.** Thirty-one command sites that replied
+  to a caught error with `ctx.send` now use `refuseCommand`, so usage and activity record a failure
+  and an agent's tool call rejects on `ok: false`; the text is unchanged.
+  `test/lint-send-error.test.ts` holds the rule (`// allow-send-error: <reason>` opts a line out)
+  (#685).
+- **Library model calls get the provider-level, `Retry-After`-aware retries agents get.**
+  `src/model/call.ts` passes `PROVIDER_MAX_RETRIES` to the provider, which retries 408/409/429/5xx
+  inside one request and honours `Retry-After` / `retry-after-ms` (bounded at 60 s); Marina's outer
+  bounded retry is unchanged. `MARINA_PROVIDER_MAX_RETRIES` now covers both paths (#684).
+- **Bun's "The connection was closed." is a transient network failure.** The model retry classifier
+  now recognises Bun's exact wording, so one closed connection is retried within
+  `MARINA_MODEL_RETRIES` instead of failing the call (#683).
+- **A one-shot or piped `marina connect` exits shortly after its reply.** `lingerForQuiet` took its
+  output snapshot after the command's reply had arrived, so it never saw output and every one-shot
+  and pipe run waited the full `--wait` cap. The snapshot is now taken before the command, and the
+  documented 2.5 s quiet rule holds (#677).
+- **The investigation qualification gates on Marina's overhead, not the disk.**
+  `scripts/qualify-investigations.ts` also commits the same 2 MiB into a bare SQLite database under
+  the same pragmas and gates the capture p95 on `max(200 ms, 3 × bare commit p95)`, so a slow runner
+  disk no longer fails it while an overhead regression still does; the report records
+  `rawWriteP95Ms` and `captureWriteLimitMs` (#673).
+- **An arena round with no published history can be refreshed.** A research answer with no anchor
+  (`anchor: "none"`) on a series with no history now passes the freshness audit with a warning
+  instead of a refusal, so `arena submit due` no longer fails on it daily; an undated reading in a
+  series that has history is still refused (#671).
+- **Dashboard accessible names contain the visible label (WCAG 2.5.3).** The header search, health
+  badge, theme switcher, layer chips, entity panel header and command-search options are renamed so
+  speech-input users can say what they see; keyboard hints move to `aria-keyshortcuts`, and
+  `@axe-core/playwright` moves to 4.14 (#670).
+- **`project join <name>` works, and MCP clients get a config that needs no PATH.** Verb-first
+  project forms resolve as `project <name> <action>` when the leading tokens name no project (a
+  project named after a verb still works). `marina mcp-stdio --print-config` prints a ready-to-paste
+  `mcpServers` entry whose `command` is an absolute path (the running Bun and the script, or the
+  compiled binary), since desktop MCP clients start servers with a minimal `PATH` (#667).
+- **Small fixes from auditing the guides.** The SDK greeter example matches `arrive` and `connect`
+  room messages; Telegram's `/start` reply says to send `help` after logging in; `task list <word>`
+  with a word that is neither a status nor a group is refused with the usage line; and a leading `|`
+  in `board post` and `channel send` is treated as the separator, with an empty post refused (#666).
+- **The folder session opens on the welcome card without a `Starting Marina` line.** The line is
+  skipped only when the card is drawn; `--print`, `--tui` and non-TTY output are unchanged (#663).
+- **Incomplete model turns stay incomplete across API adapters and internal helpers.** Length
+  stops, refusals, interrupted streams and partial tool arguments cannot become successful answers,
+  verification results or executable tool requests.
+- **Outcome learning resumes safely after a crash**, with durable admission and delivery records
+  and erasure lineage. Investigation spend keeps per-call receipts, including unknown costs.
+- **Task verdicts bind to the exact submission**, including retries within one millisecond or
+  after a clock rollback. Delayed judges cannot overwrite a replacement submission.
+- **Sandbox bindings are scoped by provider**, and OpenShell workspace handling preserves the
+  selected execution environment. Sandbox maintenance drains before shutdown.
+
+
+- **A prompt sent to a supervised Claude session while it works runs as its own next turn.** The
+  Claude CLI folded it into the running turn, attached to a tool result, where Claude may decline
+  it as not coming from the user. It is now sent with `priority: later`, so it starts the next
+  turn, as the adapter's `next-turn` steering declares.
+- **Opening a world database another process is opening waits instead of failing.** The busy
+  timeout is now the first statement on a new connection (and is set on the read-only one too).
+  It used to follow `PRAGMA journal_mode=WAL`, so a server and a CLI opening the same database
+  at the same moment could fail at once with `SQLITE_BUSY`.
+- **Every command refusal is recorded as failed usage, not only task, project and pool ones.**
+  A usage error, an unknown subcommand, a missing target, a permission or state refusal now sets
+  `primitive_usage.success` and the command's activity row to failure, so an agent's refused
+  calls no longer count as successes in usage stats, `agent diagnose`, lessons from work or tool
+  rankings. The shared paths declare it: the new `refuseCommand` helper, `unknownSubcommand`, an
+  in-handler rank floor (`rankFloorRefusal`) and a refused safety gate (`checkGateForExecution`);
+  about 800 plain refusal replies across `src/engine/commands/` use `refuseCommand`. A read that
+  finds nothing, a bare command that prints its usage and a no-op on a state that already holds
+  (`already in channel`) stay successes; a permission probe that only narrows a command
+  (`usecase` without new agents, `audio` not saving a transcript) does not fail it. Quest
+  progress and the `command` event are unchanged, as for every handler refusal. A refused
+  command's correlated `command_result` reports `ok: false` with the refusal.
+- **Self-calls to `/v1` no longer keep a bearer from before the server served.** The server now
+  marks itself serving before anything can ask a model, and the classifiers on Marina's own
+  `/v1` (the `marina-self` decision backend, the lesson judge's fallback, classifier engines)
+  read their base URL and bearer on every ask (`selfChatClassifier`). Before, a decision asked
+  while agents respawned at boot fixed the local profile's key for the life of the process; the
+  server treats that key as an outside caller, so in the default `agents` endpoint mode
+  `marina/default` was refused and every lesson judgement failed with no upstream call.
+
+- **A temporary outage no longer ends a lesson delivery `failed`.** The daily spend cap, a 429,
+  a 5xx, a timeout or a dropped connection from the lesson writer or judge now leaves the
+  outcome `pending` with the cause recorded and no attempt spent, and the rest of that delivery
+  pass makes no further model calls; the cap is checked before the pass and spends no budget
+  unit. Only a cause that repeats for the same input (no rule written, a refusal, a judge reply
+  that is never well formed) counts toward `failed`. The judge's error kind and message are kept
+  in the reason and logged. Each delivery pass re-opens, in bounded batches, `failed` lesson
+  deliveries whose recorded reason was such an outage, so those outcomes teach after all.
+- **A failed command's partial output reaches an agent as plain text.** When a `batch` (or any
+  command) was rejected after some of its actions ran, the agent's tool error carried that output
+  with the terminal's colour codes. Every agent tool error path now strips ANSI, as successful
+  results already did.
+- **An agent's thinking level reaches the model on every route, and is visible.** With thinking
+  `off`, a managed-effort Claude (claude-haiku-5.5, directly or through OpenRouter) used to think
+  at effort `high`; it now gets `thinking: {type: "disabled"}`. Through `marina/*`, an agent's
+  `reasoning_effort` is forwarded on an OpenRouter route as an effort the routed model accepts
+  (deepseek-v4.1-flash has no `medium`, so `high`, as a direct route sends). An explicit level is
+  never overridden by the probe-verified reasoning disable, the default-route effort or the cheap
+  tier's reasoning budget. `agent status|diagnose` shows the level sent and the reasoning tokens
+  reported per call, `agent list` shows `thinking:<level>`, `model_request_lifecycle` and
+  `agent_turn_end` carry `reasoningTokens` when the upstream reports them (numbers only), and
+  work outcomes tag `method:thinking:<level>` (`off` when unset) right after the one
+  `method:model:<m>`.
+- **Agent tool calls that failed on a fresh world now run or say what to do next.**
+  - A deferred tool called by its catalog name (`marina_who`, `marina_calc`, …) runs and is
+    declared from the next request, as if `marina_tool_search` had loaded it; a tool loaded
+    mid-run is callable in the same run (it was executable only from the next one).
+    `marina_tool_search` matches a multi-word query word by word.
+  - A project or pool name with spaces resolves bare, quoted or in any case
+    (`project Demo Pulse`, `pool "demo pulse" recall …`); `project <name>` alone, `show`/`view`
+    and `project show <name>` display the project, and `project help` prints usage. `project
+    info` names the pool that exists (a seeded project's pool is not `project:<name>`), the
+    pool also resolves by its project's name, `pool recall <name> …` reads as
+    `pool <name> recall …`, and a members-only project pool names `project <name> join`.
+  - `board <name>` and `board show|view|history <name>` read the board.
+  - `task claim|submit|heartbeat|approve|reject` refusals say why (no such task, held by whom,
+    lease expired, already submitted, who reviews it) and the next command; `task approve <id>`
+    without a claimant lists the pending submitters.
+  - A `tell` to an offline account says it is offline and names the board/channel routes.
+  - `whoami`, `inbox`, `focus` and `tasks` name the command that does it here; `memory search`
+    names `memory recall`; a bare `me` names `score`.
+  - A refused tool call states its message once: an SDK `CommandError` no longer repeats the
+    refusal as "partial command output".
+  - A wrong enum argument names the allowed values, and a case variant is normalised.
+  - Past the per-run tool cap, up to three closing calls (submit, note, focus, rest) still run;
+    the cap's own warning asks for them.
+  - `brief` shows understaffed projects as a count with its readout, not as "N need help".
+- **A refused command is recorded as failed usage.** A handler refusal (`failCommandResponse`)
+  sets `primitive_usage.success` and the activity row to failure on every ingress; task,
+  project and pool refusals now declare it (a non-creator's `task approve` was a success).
+
+- **Long-interval tick jobs run on an install that restarts often.** The tick counter restarts at
+  0 on every boot, so a job fired on `tick % every === phase` waited `phase` ticks after each
+  restart, and `live-promotion` (6 h, phase ≈ 70 min) and the late-phase hourly jobs (e.g.
+  `lessons-from-work`) were starved on a frequently restarted server. Jobs with an interval of at
+  least 600 ticks are now scheduled on wall clock: their last run is kept in `core_memory`
+  (`tick:schedule`), an overdue job runs within 300 ticks of boot (spread by its phase), and a job
+  that ran recently waits the remainder. Shorter jobs keep the modulo rule.
+  `describeTickSchedule()` reports `durable`, `lastRunAt` and `nextDueTick`.
+
+- **`agent attention` now wakes a resting resident at once.** A resident that had declared rest
+  (`memory set rest <why>`) left an operator's steered attention unread until its long heartbeat
+  (about 30 minutes): the idle check skipped the cycle because no perception owed a reply, and the
+  rest cadence returned before the pending-attention fast tick. A pending steered attention now
+  breaks a declared rest the way an owed request does (no skip, fast tick). Resting again after it
+  is still not a silent turn, and ambient or informational events still wait.
+- **A tell that names a world command to run now owes a reply.** "Task #16 is reserved for you:
+  task claim 16" was classified as information, so a resting addressee was not woken. A clause that
+  is a bare world command with only ids after its verb (`task claim 16`, `then task submit #16`)
+  now makes the tell a request; a result that reports a command ("Done: task submit 16 sent",
+  "Status: claimed task 16") stays information. The attention corpus gains both cases.
+- **A cold `calc` no longer times out while mathjs loads.** The calc worker reports ready once
+  mathjs has loaded, and the 10 s evaluation deadline starts only then; the expression is not
+  sent before. Loading has its own, separate bound (`CALC_LOAD_TIMEOUT_MS`, 60 s), so on a busy
+  machine the first `calc` no longer fails on a fast expression, and a runaway expression is
+  still stopped 10 s into its evaluation.
+
+- **Tests no longer share fixed database file names.** 116 test files that opened a fixed
+  `test_*.db` in the working directory now use `tempDbPath(name)` from `test/helpers.ts`: a path
+  in a fresh temporary directory, removed at process exit. Parallel workers, and the suite run
+  in two checkouts at once, can no longer collide on one file.
+- **A failed spend write no longer loses the dollars.** `recordSpend` swallowed a failed
+  `spend_daily` write (the engine's sink logged and returned), and the in-memory total was later
+  replaced by a larger persisted one, so the day's total undercounted and the cap could be
+  passed. A busy or locked write is now retried briefly; one that still fails stays pending in
+  this process, counted by `dailyCapRefusal` and every readout (scope and `purpose:` rows too),
+  and is written on the next successful write or on release — once. With `MARINA_SPEND_LEDGER`
+  the shared file and the world database each keep their own pending entries, so only the one
+  that failed is retried.
+
+- **In-world benchmarks work from a fresh install run from any directory.** The harness, the
+  dataset downloader and the reproduction kit now start with the server's own Bun, so `bun` no
+  longer has to be on `PATH`. They also start with `--no-env-file`, so they see the server's
+  settings and not the `.env` of the checkout they run in. Without `MARINA_DATA_DIR`, run result
+  files go to `data/benchmark-results` beside the world's other state, not to a checkout-shaped
+  `benchmarks/results` in the working directory. A test boots a fresh world in a temporary
+  directory and goes from `benchmark list` to a ledger row using only in-world commands.
+- **`agent spawn` no longer drops `model:`, `role:` and `key:`.** The spawn options accepted only
+  the word pairs (`model x role y`) for these three; the documented `key:value` form (and
+  `--model x`, `role=y`) was silently ignored, so the agent got the default model and no role.
+- **`memory query` and `memory search` lead with each record's own id.** One line per result
+  (`id <record id> · memory show <record id>`, subject, a short preview) comes before the JSON
+  dump, whose first id is the space's. The dump and the structured payload are unchanged.
+- **`memory kv history` shows the first set.** The trail ends with the key's creation (time and
+  first value) instead of replying "No edit history" until a second set; a key that was never
+  set says so.
+- **`brief` help names the first-login welcome.** The first brief after arrival is the welcome;
+  later ones show the shape of the world. The help said only the latter.
+- **A refused model call is reported, never stored as an answer.** `code ask` with no model
+  provider (or any other `/v1` refusal) records a failed artifact and shows the upstream message,
+  which names the provider setting that fixes it; an empty model answer is a failure too. `ask`,
+  `dig` and `desire` keep their world-only output and add one line saying why the model gave none.
+- **An input behind two gates no longer bounces between holds.** An approval also covers each other
+  non-core gate its approver could approve on its own hold (checked gate by gate with the same rule),
+  and the reply names them (`also covers: …`). A core (operator-grant) gate is never covered
+  implicitly: it is held on its own, the approver is told the run stopped there, and approving it
+  carries the earlier approval of the gates that run already passed (named in the reply), so
+  `run raw` (`agent.run`, then `shell.exec`, under `shared`) runs after two explicit answers instead
+  of looping. `code.exec.unrestricted` is never passed by an approval: only an operator's grant
+  (`challenge approve <token> always` or `gate grant`) opens it.
+- **`showcase` no longer adds a seeded bounty on every reboot** once more than 20 tasks exist: the
+  seed reads every task, not the first page (`listTasks({ limit: null })`). `task list` says how
+  many tasks it left out and takes `limit:N` to show them.
+- **`ops inbox` leaves optional capabilities out.** A readiness check the core works without is no
+  longer a CRITICAL alert with the remedy `demo preflight`; real problems keep their severity and
+  carry the check's own remediation.
+- **An offline `data series` says the fetch failed** instead of "no observation at or before the
+  cutoff".
+- **`pattern run` and `forecast` name the fix when no model is available**, and `forecast` refuses
+  before printing "Researching…".
+- **Benchmark datasets resolve against the Marina checkout**, not the server's working directory:
+  a server started elsewhere no longer shows the tracked `smoke` set as missing, and the harness
+  runs from the checkout.
+- **`help all` reaches the builtin command index from any room**, including a room whose own `help`
+  describes the room (the `craft` workshop); every other room shadow still wins.
+- **`benchmark result` names who launched a run** instead of its entity id, and **`code diff`** lists
+  new and staged files that `git diff` does not show instead of reporting no change.
+- **Crews serve, can be measured, and tag their own work.** A crew created with `crew create` now
+  serves `marina:<name>` through its own `model-<name>` endpoint (its agent members are kept on it
+  as they join and leave), so it can answer `/v1`, take forecast parts and be a
+  `benchmark run crew:<name>` target with its formation; the refusal names the missing step.
+  `crew dispatch` binds the work to a task (a new one at value 0, or `task:<id>`), and that binding
+  tags the outcome `crew:<formation>` before any membership fallback. Code Mode verification is
+  tagged with its live `code crew`'s formation. A crew benchmark run's method is
+  `crew:<formation>` (`crew:unknown`), never a model id. Agents see `crew` among the coordination
+  commands. None of it needs a model provider.
+- **`agent config <name> model|role|key|thinking` works on a saved agent that is not running**
+  (stopped, or listed in `MARINA_DISABLED_AGENTS`): it rewrites the stored config its next spawn
+  reads, keeping every other field. Before, it refused with "not running", so a disabled agent
+  could only come back on its old model.
+
+
+- **Arena evidence reuse** keys on the inputs, not on when they were read, so an unchanged refile
+  can reuse its forecast.
+- **Demo worlds** log their completion events as typed `feed_event`s instead of an untyped
+  `custom` event nothing received.
+- **Deploys keep up with frequent merges.** The EC2 deploy workflow no longer drops a qualified
+  build because main moved on during qualification; it deploys any build main still contains, and
+  the run for the newer revision follows.
+- **Two agents no longer trade "no reply needed" lines without end.** In a long `marina:answerer`
+  crew run, two Answerers kept answering each other's closing lines ("[re:mapping] Terminal — no
+  reply needed"). Per-item cost rose about 3×, and 14 % of requests drew in all four Answerers.
+  - Cause: any `[re:…]` correlation tag made a tell a request, and the harness asks every reply to
+    echo the asker's tag, so each closing line owed the next. "Do not reply" also read as an
+    imperative ("do …"), so it was a request too.
+  - A tag the resident has already sent or received is now a thread marker, not a new ask; the
+    message is classified without it. A fresh tagged ask still owes one reply.
+  - A message that says it wants no reply ("no reply needed / due / owed", "do not reply", "nothing
+    owed") and asks no question is never a request, and it releases the reply owed on that same
+    thread only. "Do not reply until …", "don't answer yet" and a decline next to a task stay
+    requests.
+  - An outgoing acknowledgement or status echo is judged without its tags, so "[re:x] Closed, no
+    reply due." is not sent to a peer that is owed nothing.
+  - **Long agent exchanges are observed, not capped.** Each resident counts the turns of its
+    exchange with another agent (a person's tell resets it; tells carry a server-stamped
+    `senderKind`). `MARINA_PEER_REPLY_CHAIN=observe` (default, threshold 6) only records it;
+    `enforce[:n]` opts in to stop owing and waking past n turns; `off` disables counting. Message
+    envelope depth stays causal.
+  - Applies to every resident and crew; it lives in the shared attention, classifier and reply
+    ledger. Tests: `test/peer-reply-loop.test.ts`, with simulated members running the real
+    attention, ledger and `tell` code.
+
+- **An assigned coder no longer sleeps out an idle tick before reading its task.** A coding assignment (or any steered attention) that arrived while the agent was mid-prompt, or before its loop first slept, was missed by the loop's wake (a no-op with no sleep armed), and the next cycle waited the idle tick (60 s by default). The pending attention now makes the next cycle the fast tick, and a bound coder that yielded at a per-run cap continues at the fast tick instead of the normal one. The coding control journey's own memory reads honour a 429's `Retry-After` like every other client.
+
+- A supervised resident's relayed commands name the message their turn answers: the owed item a command settles, else the latest message that woke the turn, so replies carry their reply depth. A turn the owner started directly stays depth 0.
+- `marina connect` reports a refused login (for example a name already in use) as the server's refusal, not as "Is Marina running?". The SDK types it as `LoginRefusedError`.
+- The dashboard entity card shows another account's entity in its public view (rank, role, presence, vendor, activity as type, time and command verb) instead of an empty 403; raw activity, full properties, inventory, core memory and notes stay with the entity, its owning person and operators, and the memory routes stay private-only.
+- The Map opens framed on the world's rooms, and its labels and thread marks keep at least an 11 px on-screen size at any zoom; reset view returns to the fitted frame.
+
+- **One crew member claims each endpoint request.** A `marina:<crew>` request is addressed to one
+  member (`target`), but Marina's residents owed every `model_request` they perceived. With 4
+  Answerers on `marina:answerer`, every Answerer worked every request. Under 4-way load the backlog
+  grew, each reply ledger filled (32), obligations stayed unsettled until their 30-minute TTL, and
+  requests timed out. Now only the addressed member owes a request, and the others drop it and
+  peers' `model_response`s without waking (`src/agent/attention.ts`). The claim is a lease
+  (`MARINA_REQUEST_CLAIM_LEASE_MS`, default 120 s, `src/net/model-api/request-claim.ts`) renewed by
+  the holder's traced work. With no sign of work, the request is re-offered to another eligible
+  member, and the first holder releases it. Reminders follow the current holder. Pinned (`role:`)
+  requests, a lone member, `open`/`panel` fan-out and untargeted requests keep their behaviour.
+
+- **The dashboard's Recent activity bar loads.** The feed snapshot requested `/api/feed` without the session's bearer token, so it was always refused (401) and the bar showed "Activity unavailable". It now sends the same `Authorization` header as every other dashboard read.
+- **A resident answers a shout.** A supervised resident's attention bridge filed a shout as a system notice, so an answer to an addressed shout had nowhere to go. A shout is now its own wake source; the final reply goes back to the shouter as a `tell` (never shouted to everyone), and a `tell` to the shouter settles it.
+- **Benchmark costs show prompt-cache reads and writes.** The harness now records the cached and
+  cache-written prompt tokens an endpoint reports (`prompt_tokens_details`, or Anthropic's raw
+  counters) per item and per run, and prints `Prompt cache: N read (x%) / M written`. A
+  `marina/verify:` reply sums them over the draft, check and revision calls instead of dropping
+  them. Two arms run at once on the same items and key share Anthropic's prompt cache, so one of
+  them reads cheap; this made an Opus verify arm look 1.2x plain when it is about 2.3x.
+
+- **Investigation capture writes no longer re-read stored evidence.** The capture quota summed `bytes` over every stored content row, and because `bytes` follows the up-to-2 MiB payload in each row, every write walked all earlier payloads. A covering index on `investigation_content(attempt_id, bytes)` (migration 178) answers the sum directly: at 128 MiB stored the quota check drops from ~40 ms to ~0.03 ms per write.
+
+- **A post addressed to someone else no longer wakes a bystander.** A room post that names another agent by vocative (`Rowan, …`, `…, Kestrel?`, `@Rowan`) was still subject to the random "a question in the room" response heuristic, so an unaddressed agent sometimes answered other agents' questions. `SocialAwareness` now knows names from the room, recent speakers and connects, and a post addressed to one of them (and not to this agent) is not this agent's to answer.
+
+- **Note writes, searches and revisions no longer slow down as history grows.** Measured on one account at 20,000 notes:
+  - Write-path dedup read every earlier note of the same type (37 ms per write); it now finds the text through a new index (migration 177) and writes stay at 1.5 ms.
+  - Note searches joined the note view to full-text search so that SQLite re-ran the text match for every note: `findSimilarNotes` took 19 s, `searchNotes` 1.3 s. Each search now starts from whichever side is smaller — the text hits, or the account's own notes — so they take 59 ms and 15 ms for a query that matches everything, and under 1 ms for a selective one.
+  - A revision or deletion read every active record in the memory space to find dependents (10.5 ms); it now walks dependents by index (2 ms).
+  - Choosing between the two search forms no longer costs anything measurable: the account's note count is kept per connection and recounted as the account grows, and a query whose sampled hit density marks it as broad scans the account's notes without counting every hit first. A broad recall at 20,000 notes is back to its earlier time (69.7 ms against 69.6 ms).
+- **A late answer settles a tell.** A tell whose deadline passed (status `expired`, for example while its recipient was blocked on a permission prompt) is now acknowledged and linked to its reply when the recipient answers it with `re #<id>`, `re` or `tell ack`. `tell status` reports it as `acknowledged after its deadline`. Expiry still never removes content.
+- **Supervised residents are told to run relay commands plainly**: one `connect -c "<command>"` per call, no `$(…)`, `$?`, pipes, loops or chains, which a command sandbox would stop to ask about.
+
+- A review snapshot from a sandboxed resident no longer lists the empty read-only placeholder files a command sandbox mounts over dotfiles and settings while the request runs.
+
+- **Supervised residents show as residents in the dashboard.** The world snapshot's vendor,
+  presence and owner now reach the client (the snapshot reconciler compared neither, so a
+  resident's later status never replaced its first), and every surface that names an entity
+  (Entities roster, hover card, inspector, room detail, entity card) shows `Wren [claude]` with its
+  presence; the roster groups residents under their own `resident` origin instead of "joined". The
+  Map labels residents, rings them with their presence, and floats a content-free
+  `from → to ↳depth` mark for each `say_sent` / `tell_sent`; the room pill reads those typed
+  envelopes too (it only knew the retired `say` events). Streams names the residents running in the
+  world instead of the "start marina supervise" hint when none of their sessions are the viewer's,
+  and a `tell_sent` envelope also reaches the person who launched either party.
+
+- **Backend test runs fail fast instead of hanging until the CI deadline.** Bun 1.4.3 is now the
+  minimum (`.bun-version`, `engines.bun`, `packageManager`, Docker images). Bun 1.4.2 could spin in
+  `spawnSync` after a garbage collection in large `--isolate` runs. The test wrapper stops a run
+  with no output for 240 s, or one where a process has not reaped an exited child for 60 s. It
+  prints the live process tree and the files still running. Benchmark result stamping reads git
+  with a timeout, without optional locks and without prompts.
+- **Documentation matches the code.** The README and site say approvals apply on shared and public
+  instances; the privacy guide lists the keyless market and economic-data lookups and the markets
+  feed; gate, operator-grant and built-in skill lists are current; seeded agents' autostart, the
+  Docker ports and the MCP tool list (now a pointer to the generated reference) are corrected. The
+  docs contract checks stated registry counts and requires commands to be documented as commands.
+
+- **Room entry checks apply to every movement command and fail closed.** `move` and `goto` (to a
+  room or to an entity) share one entry check: private rooms, then the room's `canEnter` guard,
+  which everyone obeys. A guard that throws, overruns its time limit, or belongs to a room the
+  sandbox disabled refuses entry. A room command that throws is recorded as a failed command (no
+  quest progress, failed usage, no `command` event), as a rejected async one already was. Room
+  and command source validation refuses static imports and re-exports; only `import type` is
+  allowed. The demos world no longer seeds a gate grant for its Maker agent (its compile steps are
+  held for an operator), and its Workshop and Bridge demos report completion only after checking
+  the outcome.
+
+- **Paired benchmark arms compare like with like.** The BrowseComp transfer adapter scores an incomplete
+  run's missing items 0 instead of dropping them, so an arm that times out more is no longer
+  flattered. `MARINA_GROUND_CACHE=<file.json>` lets short-answer arms run with `--ground search`
+  share one grounding-evidence cache, so paired arms read byte-identical evidence.
+
+- **Supervised residents: logging in again no longer cuts the supervisor off.** With
+  `MARINA_SUPERVISED_RESIDENTS=on`, the supervisor exchanges the person's world session for its own
+  routing-only supervision credential (`POST /api/routing/supervision`, at most 24 hours, renewed at
+  80 %, revoked on stop). A later `marina connect <same name>` replaces only the world session; the
+  supervisor keeps running and can still renew and revoke its residents. The credential is accepted
+  only under `/api/routing/`, is never a world session or an approver, and cannot send controls,
+  messages or channel posts. Off, nothing changes.
+
+- **`position` cap counts a market order at its worst case.** A market order (no limit price) was
+  costed at an estimated 50¢ a contract for the bankroll-cap check, so its exposure could reach
+  about twice the cap. The cap now costs it at 99¢ in paper and live alike (the paper fill is still
+  recorded at the estimate); add a limit price to size against it. The markets guide now describes
+  the daily-loss floor as it is enforced — world-wide realized losses since UTC midnight against the
+  opener's own floor, refusing new opens — instead of calling it advisory.
+
+- **Messages carry a causal envelope, and the canvas sees speech.** `say`, `tell` and `re` emit
+  content-free `say_sent` / `tell_sent` events (names, a message ref, `cause`, `depth`; never the
+  words), so the canvas draws say and tell arcs again. Every say, tell, re, shout and channel post
+  records `cause` (the message it answers: `re` names the tell it replies to) and `depth`, stored on
+  direct and channel messages (migration 171) and carried on their perceptions. `channel_message`
+  events carry the stored message id instead of `0`, so each post has its own feed ref.
+
+- **Yes/no forecasts lost their group class tag.** `group:binary:no|yes` failed the routing-ref
+  character check (`|`), so every yes/no outcome reached card routing and the competence map
+  without its coarsest class. Card evidence also no longer counts an answer twice when both its
+  outcome and its history record are on file.
+
+- **Built features that stayed inert now run, expire or report.**
+  - **Dead memory-assistance jobs expire.** An hourly pass (`src/engine/assistance-expiry.ts`)
+    sets a new terminal state `expired` when a job's deadline has passed, or when the worker's
+    world account has no running agent or live connection (15 min grace, never during a live
+    lease). It writes one `assistance.expired.<reason>` memory event per job and deletes nothing.
+    `ops assistance [expire|restore <job>]` reports, runs the pass or reopens a job, and
+    `ops recover` includes the pass. The memory overview counts `expired24h`.
+  - **Unanswered challenges reach the operator.** Expiries keep one rolling
+    `challenge:unanswered` ops-inbox item open until an operator resolves it.
+    `challenge summary [days]` reports outcomes by class and requester.
+    `MARINA_OPS_NOTIFY` (default off; webhook URL or `cmd:<program>`) pushes content-free notices
+    when a hold opens and when holds go unanswered. The dashboard attention drawer's desktop
+    notification also fires for held actions.
+  - **Retired standing kinds no longer count.** Rows of kinds that can no longer be earned (such as
+    `chronicled` and `pool_note`) stay as history (shown separately by `standing`) but count toward
+    no standing, rank or decision by default (`MARINA_STANDING_RETIRED=exclude`; `decay` restores
+    the old fade-out). Every live kind is covered by a test.
+  - **Agents are no longer made sovereign at login.** Under the `local` profile a loopback MCP,
+    declared-agent or agent-account login was promoted to rank 9 with every safety gate at the
+    999 grant sentinel. Now only a loopback person is. Existing databases are not reset on boot:
+    `gate audit` lists grant rows by holder, and `gate reset <entity|agents> [gate|all]` is a dry
+    run until `apply` (operator only). It revokes sentinel rows only and chronicles each holder.
+  - **Fewer `memory` round trips and receipts.** `DurableResidentMemory` checkpoint-only saves
+    reuse the remembered checkpoint instead of re-reading it (the CAS still guards it; archive and
+    journal writes still read fresh). Saves that only change `timestamp` are skipped. Preference
+    reads back off from every 50 to every 400 cycles while unchanged. The retention pass prunes
+    continuity-journal receipts in `memory_requests` after 7 days; every other receipt is kept.
+  - **FutureX can answer late on an opt-in schedule.** `watch --answer late` answers each open row
+    once, within `--final-lead-hours` of its own cutoff. `bun run futurex schedule` prints (or
+    writes with `--out`) a systemd user service and hourly timer that answer late by default, with
+    their own capped spend scope. It installs, enables and starts nothing.
 
 - **`benchmark run` / `sweep` accept the documented `key:value` modifiers.** `arm:bare`,
   `cap:5`, `lessons:on` and `model:…` were silently ignored before: only `--key value` parsed.
@@ -2459,52 +2700,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a restart and time out (`MARINA_VIDEO_JOB_TIMEOUT_MIN`) (#469).
 - The media library, viewer and uploads work in the desktop shell (#477).
 
-### Security
+- **Native agents' activity reads like Marina's own coder.** `marina --agent codex|claude|pi`
+  printed bare protocol events (`[codex] item/started`), left out Claude Code's tool uses, and
+  split sentences across lines. Each action is now one plain step (`Run bun test`,
+  `Edit src/a.ts`, a failing command's exit), bookkeeping events print nothing, a command's own
+  output stays in Streams, and streamed text goes out as whole lines.
 
-- **Outbound requests and network helpers.** A cross-origin redirect followed by the URL guard
-  drops provider signing and token headers (`KALSHI-ACCESS-*`, Polymarket `POLY_*`, `*-token`,
-  `*-secret`, `*-signature`) as well as `Authorization`, cookies and API keys. IPv6 link-local
-  and unique-local ranges are matched by prefix (all of `fe80::/10`), so a host name such as
-  `fdroid.org` is no longer mistaken for an address. Under the `local` profile, peer URLs still
-  refuse link-local and cloud-metadata addresses in IPv4-mapped and tunnelled IPv6 forms, plus
-  `192.0.0.192`, `fd00:ec2::254` and metadata host names. `connect add` checks a connector URL's
-  resolved addresses before dialling it. The Kalshi, Polymarket, TabH2O, forecast-lookup,
-  connector and room HTTP clients keep their deadline until the response body is read.
-  `/api/probe` shares the `/mem` authentication path (constant-time key match, failed-auth
-  throttle, sanitized `X-Agent-Name`) and caps request bodies at 64 KiB. Local asset storage
-  refuses keys outside its directory. The routing supervisor runs git with the hardened host-git
-  settings. `MODEL_API_KEYS` is parsed in one place. `hono` is updated to 4.13.11.
+- **A coder never loses its task to compaction.** A Code Mode coder's history could be compacted
+  right after its first turn, summarising away the message that held its task. Every reduction now
+  keeps the exact task in a protected message, compaction writes a structured handoff (task,
+  constraints, files read and changed, decisions, progress, next step), and a bound coder compacts
+  near its model's window instead of at 48k tokens; an explicit `MARINA_AGENT_CONTEXT_CAP_TOKENS`
+  still caps it.
 
-- **The main listener validates the `Host` header.** On a loopback bind or under the `local`
-  trust profile, HTTP routes and WebSocket upgrades (`/ws`, `/dashboard-ws`, `/canvas-ws`) answer
-  only to loopback names and to names listed in the new `MARINA_ALLOWED_HOSTS`; any other `Host`
-  gets `421`. A browser request whose `Origin` matches its `Host` counts as same-origin only when
-  that `Host` is allowed. A public bind is unchanged unless the variable is set. A reverse proxy on
-  the same host as a loopback-bound Marina must list its public name in `MARINA_ALLOWED_HOSTS` (or
-  forward a loopback `Host`). The standalone memory service and the log viewer apply the same
-  rule, and the log viewer's feed refuses a foreign browser `Origin`. `/mcp` keeps
-  `MARINA_MCP_ALLOWED_HOSTS`; every listener shares one implementation.
+- **A coder's own workspace edits are no longer held by the argument check.** Edits, writes,
+  patches, runs, verification, checkpoints and plans inside the coder's workspace are still checked
+  and the verdict recorded, but never held for another turn. Submitting, handoffs, approvals and
+  anything outside the workspace keep the check.
 
-- **Boards enforce their access rules on every path** (GHSA-rgp4-gg8w-xwxm). Reading a post by
-  number, reply, search, scores, vote, archive and `export` skipped a board's rank floors, and no
-  path kept a group's board members-only. One rule now covers them all: group boards are
-  members-only in every trust profile, rank floors apply to every path, and archiving is the
-  author's or a moderator's.
-- The startup banner no longer prints the local model-API key; it reads the key from its
-  0600 file instead, so captured stdout never carries the credential.
-- **A hostname is loopback only when it is one.** A browser origin, bind host or gateway target
-  counted as loopback when its hostname merely started with `127.`, so on a loopback bind a page
-  served from a name such as `127.attacker.example` was trusted as the local operator's own
-  browser on `/ws`, `/dashboard-ws`, `/canvas-ws` and `/api/command`. Loopback now means
-  `localhost`, `::1` or an IPv4 literal in 127.0.0.0/8, through one shared check
-  (`src/net/loopback.ts`) that replaces every local copy.
-- **Canvas HTTP writes follow the in-world ownership rule.** Deleting a canvas, deleting or
-  changing a node and removing a relationship over `/api/canvases` take the author or canvas
-  owner, an admin or the operator, as `canvas delete` and `canvas disconnect` do; a refusal is a
-  403 with the same explanation and raises the same challenge. Writes are attributed to the
-  signed-in caller, never a name in the request body. Canvas and asset reads are rate-limited
-  per client IP (per principal when signed in), uploads take a plain extension from the
-  filename, and one damaged stored row no longer fails a whole canvas or asset list.
+- **Delivery verification no longer leaves a manifest file in your project.** `marina -p` made the
+  coder write a JSON manifest into the workspace, which then showed up in `git status`.
+  `code verify delivery -- <json>` now passes the manifest inline; it is kept in the verification
+  evidence and shown by `code show`. `manifest:<path>` still works for a manifest that is part of
+  the project.
+
+- **A full-suite verification gets its full budget, on the host too.** `scope:full`, and `auto`
+  when no relevant tests are found, ran the whole suite under the 120 s run default, and the host
+  capped every command at 300 s. Every whole-suite step now gets the full-suite budget
+  (`MARINA_CODE_VERIFY_FULL_BUDGET`, default 10 minutes, or `budget:`), and the host honours a
+  step's budget up to 30 minutes. Interactive `code run` keeps its 120 s default.
+
+- **A memory helper is never asked to assist itself.** The hourly memory hygiene pass and the
+  accumulation and shared-write dispatchers could assign a helper's own review to that helper,
+  which was refused and logged "Memory hygiene failed for entity" every hour. The review now goes
+  to another helper, or to none.
+
+- **The decision gate no longer holds an agent's assigned or own work as "outside scope".** Claiming
+  and working an assistance job assigned to the agent, adding to a pool or crew slot, and writing a
+  new note in its own space were held for a person and mostly expired. On those calls the scope
+  question is reported but not counted; the other questions still decide, and editing, deleting,
+  linking, granting, delegating and creating jobs for others still count scope.
+
+- **`board <board> post …` posts, and replies can be read.** Written board-name-first, a post was
+  read as `board read <board>`, reported success and stored nothing. `board <board>
+  read|list|show|post|search …` now runs that verb, and other verbs in that position are refused
+  with the usage. The listing labels a reply `↳ re #N: <first line>`, reading a post shows its
+  replies, quotes around a title are dropped, and a long post with no `|` keeps its text as the
+  body under a short title.
+
+- **Seeded tasks go to the account their reviewer logs in as.** In worlds whose seeded agents have
+  hyphenated names (`Diligence-Lead`, `Research-Editor`, …), tasks were created under the
+  hyphenated spelling while the agent logs in as `DiligenceLead`, so every approval was refused and
+  submitted work never completed. Seeding now uses the login name, and the next boot moves open
+  tasks created under the old spelling. The dashboard's task list shows an open task with
+  submissions as "awaiting review (N)".
+
+- **A command's Markdown answer renders in Web Chat.** `ask`, `research ask` and `pattern run`
+  output showed raw `**bold**`, `##` headings and `[text](url)`; Markdown output now renders, while
+  plain-text tables keep their layout. `[label](https://…)` links show as the label in the
+  dashboard and as the label with its address (or a terminal link) in the terminal; only http(s)
+  targets become links.
+
+- **`connect tools <name>` cuts a description at a word, with an ellipsis.** Each tool shows the
+  first line of its description, up to 100 characters, instead of 60 characters cut mid-word.
+
+- **`bun run arena` refuses a world database that does not exist.** It used to create an empty
+  `marina.db` in the working directory when `DB_PATH` was unset, so `routes`, `health` and
+  `submit` answered from an empty ledger. A command that opens the world database, or the spend
+  ledger a spending command attaches, now refuses a missing file and names the resolved path and
+  the fix; `--new-db` starts an empty one on purpose.
+
+- **`marina` in a folder attaches only to the server it started.** The launcher picked a free
+  port and accepted any server that answered on it, so another process that took the port during
+  a slow boot could receive the session. `/api/setup-status` now reports the server's `pid`, and
+  the launcher waits for its own child. Startup is also faster: only the `calc` worker loads
+  mathjs, no longer every process that imports the engine.
+
+- **A hand-run `docker compose up` reuses the deployed image.** `scripts/deploy.sh` now records
+  the deployed `MARINA_IMAGE` in the host's `.env`, creating the file with mode 600 if needed and
+  keeping exactly one entry. A bare `docker compose up` therefore reuses that digest instead of
+  building `marina:local` from the working tree. An explicit `MARINA_IMAGE` still wins.
+
+- **A `say` or `shout` that names an agent wakes it.** The listener never received the words, so
+  a vocative such as `Fern, …` or `@Fern …` scored as ambient and never woke in-process agents or
+  supervised residents. The event log and dashboard stay content-free.
+
+- **Supervised residents reach their relay from a sandbox that refuses sockets.** When the relay
+  socket is refused, `marina connect -c` inside a resident exchanges request and answer files in a
+  private `spool/` folder of the relay directory instead. The Codex adapter grants only that
+  directory as writable; network access stays off.
+
+- **A second login to a connected account says where the first one is.** The refusal names the
+  connection holding the account and since when, and says to use that session or close it first;
+  a second login still never replaces the first. `standing <name>` now shows that account, as
+  `standing show <name>` does, instead of the caller's own.
+
+- **Unlisted OpenRouter models use the right transport.** An OpenRouter model id missing from the
+  registry was modelled on the provider's first entry and sent to the Anthropic `/messages`
+  endpoint. It now follows a listed model from the same vendor, else the chat transport.
 
 ## [0.8.0] — 2026-10-14
 
@@ -3181,7 +3474,8 @@ runner, TabH2O integration, drop-in compat surfaces (OpenAI, Ollama, ACP), and
 the live-visualization dashboard. The `hermes`/`openclaw` migration worlds and
 their third-party aliases were removed in 0.4.2.
 
-[Unreleased]: https://github.com/h2oai/marina/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/h2oai/marina/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/h2oai/marina/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/h2oai/marina/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/h2oai/marina/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/h2oai/marina/compare/v0.5.0...v0.6.0
