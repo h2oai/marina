@@ -37,7 +37,7 @@ import {
   stopCodeStreamsFor,
   streamSessionAgent,
 } from "./stream";
-import { getWorkspaceRegistry, workspaceForSession } from "./workspace";
+import { getWorkspaceRegistry, isolateLiveMarinaCheckout, workspaceForSession } from "./workspace";
 
 /** Parse only leading options; prose after -- (or the first task word) stays literal. */
 export function parseCodingTask(raw: string) {
@@ -144,14 +144,17 @@ export async function assignCode(
 ): Promise<void> {
   // Agentic dispatch: hands host-affecting work to a coding agent — telnet-denied.
   if (refuseTelnetDispatch(ctx, eid, deps)) return;
-  const session = resolveSession(ctx, eid, entity, deps.db);
-  if (!session) return;
+  const resolved = resolveSession(ctx, eid, entity, deps.db);
+  if (!resolved) return;
   const agentName = args[0];
   const { prompt, verificationRequirement, ownerMode, planMode, budgetMs } = parseCodingTask(
     args.slice(1).join(" "),
   );
-  if (!sameEntityName(session.created_by, entity.name))
+  if (!sameEntityName(resolved.created_by, entity.name))
     throw new Error("Only the coding session creator may dispatch its task.");
+  // Bind the worktree before the coder loads, never while it works.
+  const session = await isolateLiveMarinaCheckout(ctx, eid, entity, deps, resolved);
+  if (!session) return;
   validateTaskContract(session, verificationRequirement);
   if (session.execution_target === "local")
     workspaceForSession(deps, session).assertExecutionReady?.();
@@ -286,7 +289,10 @@ export async function doCode(
   // Auto-start a session on the first task so entering Code Mode + typing just
   // works — no explicit `code start` required.
   if (!ctx.codingTarget && !getActiveSessionId(entity)) startSession(ctx, eid, entity, deps, "");
-  const session = resolveSession(ctx, eid, entity, deps.db);
+  const resolved = resolveSession(ctx, eid, entity, deps.db);
+  if (!resolved) return;
+  // Bind the worktree before the coder loads, never while it works.
+  const session = await isolateLiveMarinaCheckout(ctx, eid, entity, deps, resolved);
   if (!session) return;
 
   // Self-dispatch guard: the bound coder is itself in the code modal, so any

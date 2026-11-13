@@ -116,6 +116,7 @@ import {
   getWorkspaceRegistry,
   handleWorkspace,
   handleWorktree,
+  isolateLiveMarinaCheckout,
   workspaceForSession,
 } from "./code/workspace";
 import { requiresPersistence } from "./command-messages";
@@ -860,6 +861,24 @@ export function codeCommand(deps: CodeDeps): CommandDef {
             gate,
             `code ${canonicalSub}`,
           );
+        }
+
+        // A session on the running Marina's own source edits and runs in its
+        // own worktree, never the live tree (`isolateLiveMarinaCheckout`).
+        if (
+          HOST_ROOT_EXEC_SUBCOMMANDS.has(canonicalSub) &&
+          canonicalSub !== "runner" &&
+          !inspectOnly
+        ) {
+          const sessionId =
+            (ctx.codingTarget as { sessionId?: string } | undefined)?.sessionId ??
+            (entity.properties.coding_session_id as string | undefined);
+          const session = sessionId ? depsWithDb.db.getCodingSession(sessionId) : null;
+          if (
+            session &&
+            !(await isolateLiveMarinaCheckout(ctx, input.entity, entity, depsWithDb, session))
+          )
+            return;
         }
 
         // `Object.hasOwn` so a prototype key (`constructor`, `toString`, …)

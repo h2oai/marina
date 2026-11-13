@@ -3578,6 +3578,66 @@ describe("code worktree (per-session isolation)", () => {
     }
   });
 
+  it("a session on the running Marina's own source edits in its own worktree", async () => {
+    const repo = makeRepoWithCommit();
+    try {
+      const entity = makeAgentEntity("u_wt_self", "WtSelf");
+      db.saveEntity(entity);
+      grant(db, entity.id, "code.exec");
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: (id) => (id === entity.id ? entity : undefined),
+        workspaceRegistry: new WorkspaceRegistry({ defaultRoot: repo, roots: [repo] }),
+        getConnectionProtocol: () => "websocket",
+        marinaRoot: repo,
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Self"));
+      // Reading stays on the live tree; nothing is bound yet.
+      await command.handler(ctx, inputFor(entity, "code read example.txt"));
+      expect(db.listCodingSessions(entity.name, 1)[0]!.worktree_path).toBeNull();
+      await command.handler(ctx, inputFor(entity, "code write fresh.txt\nfrom the session\n"));
+      const session = db.listCodingSessions(entity.name, 1)[0]!;
+      expect(session.worktree_path).toBeTruthy();
+      expect(session.worktree_branch).toStartWith("marina/session-");
+      expect(existsSync(join(session.worktree_path!, "fresh.txt"))).toBe(true);
+      expect(existsSync(join(repo, "fresh.txt"))).toBe(false);
+      expect(stripAnsi(sent.join("\n"))).toContain("The running server is untouched.");
+      // A second edit reuses the same worktree.
+      await command.handler(ctx, inputFor(entity, "code write other.txt\nmore\n"));
+      expect(db.listCodingSessions(entity.name, 1)[0]!.worktree_path).toBe(session.worktree_path);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("an ordinary repository is not isolated automatically", async () => {
+    const repo = makeRepoWithCommit();
+    const other = wtTempDir("marina-wt-other-root-");
+    try {
+      const entity = makeAgentEntity("u_wt_plain", "WtPlain");
+      db.saveEntity(entity);
+      grant(db, entity.id, "code.exec");
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: (id) => (id === entity.id ? entity : undefined),
+        workspaceRegistry: new WorkspaceRegistry({ defaultRoot: repo, roots: [repo] }),
+        getConnectionProtocol: () => "websocket",
+        marinaRoot: other,
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Plain"));
+      await command.handler(ctx, inputFor(entity, "code write fresh.txt\nhere\n"));
+      expect(db.listCodingSessions(entity.name, 1)[0]!.worktree_path).toBeNull();
+      expect(existsSync(join(repo, "fresh.txt"))).toBe(true);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
   it("`code worktree on` is refused without the code.exec gate", async () => {
     const repo = makeRepoWithCommit();
     try {
