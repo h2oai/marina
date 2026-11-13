@@ -14,6 +14,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
+import { findRunningEngineHelper } from "../src/engine/memory-dispatch";
 import {
   formatHygieneLine,
   HYGIENE_DISPATCH_THRESHOLD,
@@ -230,6 +231,45 @@ describe("runMemoryHygiene", () => {
     expect(await ownerOpenJobs()).toHaveLength(1);
     expect(hygieneNotes()).toHaveLength(1);
     expect(tells).toEqual([]);
+  });
+
+  it("never asks the entity under review to assist itself", async () => {
+    using _processState = scopeProcessState();
+
+    setTrustProfile("local");
+    await seedReviewQueue(4);
+    const ownerPrincipal = db.getUserByName(OWNER)!.id;
+    // The only running evaluator is the owner itself (an evaluator's own memory).
+    const warnings: string[] = [];
+    const [report] = await runMemoryHygiene(
+      db,
+      deps({
+        findRunningHelper: (role, except) =>
+          role === "memory-evaluator" && except !== ownerPrincipal
+            ? { name: OWNER, principalId: ownerPrincipal }
+            : undefined,
+        warn: (message) => warnings.push(message),
+      }),
+      T0,
+    );
+    // No self-assigned job (the assistance store would refuse it), no failure.
+    expect(warnings).toEqual([]);
+    expect(report!.dispatched).toBe(false);
+    expect(await ownerOpenJobs()).toHaveLength(0);
+  });
+
+  it("the running-helper lookup skips the excluded principal", () => {
+    const engine = {
+      agentRuntime: {
+        list: () => [
+          { name: OWNER, role: "memory-evaluator", entityId: "e_o", state: "idle" },
+          { name: HELPER, role: "memory-evaluator", entityId: "e_h", state: "idle" },
+        ],
+      },
+    } as unknown as Parameters<typeof findRunningEngineHelper>[0];
+    const owner = db.getUserByName(OWNER)!.id;
+    expect(findRunningEngineHelper(engine, db, "memory-evaluator", owner)?.name).toBe(HELPER);
+    expect(findRunningEngineHelper(engine, db, "memory-evaluator")?.name).toBe(OWNER);
   });
 
   it("counts contradictions parked under await_confirmation (pending) toward the threshold", async () => {
