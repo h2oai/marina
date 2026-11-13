@@ -16,6 +16,7 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { legacyOrHome, marinaPath } from "../config/marina-home";
 import { bunScriptArgv, MARINA_ROOT } from "../runtime-paths";
 import { getErrorMessage } from "./errors";
 
@@ -70,7 +71,9 @@ export function kitRunRoot(env: NodeJS.ProcessEnv = process.env): string {
   const set = env.MARINA_BENCHMARK_KIT_DIR?.trim();
   if (set) return set;
   const db = env.DB_PATH?.trim();
-  return db ? join(dirname(resolve(db)), "kit-runs") : join(homedir(), ".local/share/marina-repro");
+  return db
+    ? join(dirname(resolve(db)), "kit-runs")
+    : legacyOrHome(marinaPath("tools", "repro"), join(homedir(), ".local/share/marina-repro"));
 }
 
 /** The world DB the kit files into (`DB_PATH`, as the server resolved it). */

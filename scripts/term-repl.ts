@@ -11,10 +11,10 @@
  */
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { marinaPathIn } from "../src/config/marina-home";
 import { footerLine, frameCompletion, InputFrame, ruleLine } from "./term-frame";
 import { glyphsFor } from "./term-render";
 import type { Theme } from "./term-theme";
@@ -47,7 +47,7 @@ const SECRET_LINE = /\b(key|token|password|passwd|secret|login)\b|sk-[a-z0-9]{8,
 
 export function defaultHistoryFile(env = process.env): string | undefined {
   if (env.MARINA_HISTORY === "off" || env.MARINA_HISTORY === "0") return undefined;
-  return env.MARINA_HISTORY || join(homedir(), ".marina", "history", "connect");
+  return env.MARINA_HISTORY || marinaPathIn(env, "history", "connect");
 }
 
 function loadHistory(file: string | undefined): string[] {

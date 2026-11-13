@@ -53,17 +53,18 @@ Terminal window open while you use it.
 
 What it does, in order:
 
-1. Downloads Marina into `~/marina`.
-2. Installs [Bun](https://bun.sh), the runtime Marina uses, into `~/.bun`, unless a recent
-   enough one is already there.
+1. Downloads Marina into `~/.marina/app`.
+2. Uses the [Bun](https://bun.sh) you have (the runtime Marina uses), or installs its own copy
+   into `~/.marina/bun` when there is none recent enough.
 3. Installs Marina's packages and builds the dashboard.
-4. Puts the `marina` command on your PATH. When new terminals would not find it, it adds one
+4. Puts the `marina` command in `~/.marina/bin`. When new terminals would not find it, it adds one
    line to your shell's startup file (`~/.zshrc`, `~/.bashrc`, `~/.bash_profile` or fish's
-   `config.fish`) and says which.
-5. Asks for the key, saves it in `~/marina/.env` (readable only by you), and starts Marina.
+   `config.fish`), marked `# Added by Marina setup`, and says which.
+5. Asks for the key, saves it in `~/.marina/.env` (readable only by you), and starts Marina.
 
 It never uses `sudo`. Run the same command again to update; your settings and your world are
-kept. Next time, start Marina with `marina start` in a new terminal.
+kept. Next time, start Marina with `marina start` in a new terminal. An install made before
+everything moved into `~/.marina` (in `~/marina`) is moved in when you run it again.
 
 Options go after `bash -s --`. For example, to install somewhere else:
 
@@ -73,13 +74,61 @@ curl -fsSL https://h2oai.github.io/marina/setup.sh | bash -s -- --dir ~/apps/mar
 
 | Option | Effect |
 |---|---|
-| `--dir <path>` | Install there instead of `~/marina` (or set `MARINA_DIR`). |
+| `--dir <path>` | Put the code there instead of `~/.marina/app` (or set `MARINA_DIR`). |
 | `--yes` | Ask nothing and do not start Marina. For agents and scripts. |
 | `--no-start` | Set up, but do not start Marina at the end. |
 | `--no-modify-path` | Leave your shell's startup file alone. |
+| `--uninstall` | Remove Marina; the same as `marina uninstall` ([below](#remove-marina)). |
 
 On Windows, run it inside [WSL](https://learn.microsoft.com/windows/wsl/install), or use the
 desktop app or Docker ([README](../../README.md#desktop-app-and-docker)).
+
+## What Marina puts on your computer
+
+Everything is in one folder, `~/.marina` (set `MARINA_HOME` to use another):
+
+| Folder | What |
+|---|---|
+| `app/` | Marina's code (setup.sh) |
+| `bin/marina` | the `marina` command |
+| `bun/` | Bun, only when Marina had to install it |
+| `.env` | your settings and model keys (`marina init`) |
+| `world/` | the world `marina start` runs |
+| `projects/` | one world per folder you code in (`marina .`) |
+| `worktrees/` | Code Mode's private checkouts of your repositories |
+| `mcp/` | the Claude Code plugin's world |
+| `desktop/` | the desktop app's data |
+| `sessions/`, `history/`, `cache/`, … | sign-ins, command history, caches (Bun's package cache included) |
+
+Outside it: one PATH line in your shell's startup file, and, while a Code Mode session is open,
+a worktree entry and a `marina/session-…` branch in the repository it works on. `marina start`
+run in a folder that already holds a world (`marina.db`) keeps using that folder.
+
+## Remove Marina
+
+```bash
+marina uninstall
+```
+
+It lists everything it will remove, with sizes, and asks once. Then it stops Marina's running
+servers, removes `~/.marina`, the PATH line setup added, and anything older versions left
+elsewhere (`~/marina`, `~/.cache/marina`, the desktop app's old data folder, …), and unregisters
+Code Mode's worktrees from your repositories. It says what it leaves:
+
+- **Bun** in `~/.bun`, if you had it: other programs may use it.
+- **Your repositories' `marina/session-…` branches**: they may hold work you want. It names them.
+- **The Claude Code plugin** (`/plugin uninstall marina@marina` in Claude Code) and **the desktop
+  app** itself (delete it like any other app).
+
+| Option | Effect |
+|---|---|
+| `--keep-data` | Keep your worlds, settings and worktrees; remove the rest. |
+| `--dry-run` | Only show what would be removed. |
+| `--yes` | Remove without asking. |
+
+If the `marina` command no longer works, the installer does the same:
+`curl -fsSL https://h2oai.github.io/marina/setup.sh | bash -s -- --uninstall`. A Marina checkout
+of your own (one with your changes) is never removed.
 
 ## By hand
 
@@ -97,18 +146,18 @@ the last step, and the person's API key never passes through you.
    curl -fsSL https://h2oai.github.io/marina/setup.sh | bash -s -- --yes
    ```
 
-   This takes a few minutes. It installs into `~/marina`, Bun into `~/.bun/bin`, and links
-   `marina` into `~/.bun/bin` or `~/.local/bin`. New terminals find both; your own shell may not
-   yet, so put them on its PATH:
+   This takes a few minutes. Everything goes in `~/.marina`; the command is
+   `~/.marina/bin/marina`. New terminals find it; your own shell may not yet, so put it on its
+   PATH:
 
    ```bash
-   export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"
+   export PATH="$HOME/.marina/bin:$PATH"
    ```
 
 2. Start Marina in the background, so it keeps running after your command returns:
 
    ```bash
-   cd ~/marina && nohup bun run start > ~/marina/marina.log 2>&1 &
+   nohup marina start > ~/.marina/marina.log 2>&1 &
    ```
 
 3. Wait until it answers, for up to a minute:

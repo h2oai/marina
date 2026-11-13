@@ -4,11 +4,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as fs from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import * as readline from "node:readline/promises";
 import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { isSecretKey, parseEnvironment, writeEnvironment } from "../src/config/environment";
+import { marinaHome } from "../src/config/marina-home";
 import { configurationPreset, validateConfiguration } from "../src/config/presets";
 import { testKeyConnectivity } from "../src/engine/commands/key";
 import { dailySpendCapUsd } from "../src/engine/spend-ledger";
@@ -304,8 +305,12 @@ export async function runInit(args: string[] = []): Promise<void> {
   // Default target: the checkout's own `.env` when run inside it, else the
   // user's `~/.marina/.env`, which every folder reads (scripts/cli-env.ts).
   // `--directory` names one instance instead.
+  // Code setup.sh installed inside Marina's home (~/.marina/app) is not a
+  // source checkout of anyone's: its settings are the user's too.
+  const installed = resolve(ROOT).startsWith(marinaHome() + sep);
   const userWide =
-    values.directory === undefined && (IS_COMPILED || resolve(process.cwd()) !== resolve(ROOT));
+    values.directory === undefined &&
+    (IS_COMPILED || installed || resolve(process.cwd()) !== resolve(ROOT));
   const directory = resolve(values.directory ?? (userWide ? userMarinaDir() : process.cwd()));
   if (userWide) fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const ENV_PATH = join(directory, ".env");

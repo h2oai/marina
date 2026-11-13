@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { marinaPath } from "../src/config/marina-home";
 import { glyphsFor } from "./term-render";
 import type { WorldSnapshot } from "./term-status";
 import { fgParams, type Theme, type Token } from "./term-theme";
@@ -495,7 +496,7 @@ export const FORMAT_ENV: Record<keyof CliFormats, string> = {
   rule: "MARINA_PROMPT_RULE",
 };
 
-const CONFIG_FILE = join(homedir(), ".marina", "cli.json");
+const CONFIG_FILE = marinaPath("cli.json");
 
 export interface CliConfig extends CliFormats {
   theme?: string;

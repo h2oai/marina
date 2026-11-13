@@ -1,4 +1,5 @@
 #!/usr/bin/env -S bun --no-env-file
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -33,6 +34,7 @@
  *                                (scripts/learned.ts)
  *   marina status [--url|--port] is a Marina running? health + capability readiness
  *   marina init                  interactive .env setup
+ *   marina uninstall [...]       remove Marina from this computer (scripts/home.ts)
  *   marina supervise [...]       manage local coding agents from the dashboard
  *   marina route [...]           join, publish, and exchange participant messages
  *   marina predict <question>    start a private, saved forecast
@@ -48,12 +50,12 @@
  * `.env` (scripts/cli-env.ts).
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_THINKING_LEVELS, parseAgentThinkingLevel } from "../src/agent/agent-types";
+import { marinaPath } from "../src/config/marina-home";
 import { bunVersionRefusal, MARINA_VERSION } from "../src/version";
-import { applyCliEnvironment } from "./cli-env";
+import { applyCliEnvironment, startInstanceDir } from "./cli-env";
 import { ATTACH_USAGE } from "./code-attach";
 import { parseMode, WORKSPACE_MODES, type WorkspaceMode } from "./code-modes";
 import { themeFor } from "./code-style";
@@ -69,6 +71,7 @@ export type Dispatch =
   | { kind: "help" }
   | { kind: "version" }
   | { kind: "init" }
+  | { kind: "uninstall"; rest: string[] }
   /** `url` is set only when `--url`/`--port` was given; env defaults resolve at run time. */
   | { kind: "status"; url?: string }
   /** `message`, when present, is a complete one-line error printed without the usage text. */
@@ -243,6 +246,7 @@ export function parseDispatch(
   if (first === "--help" || first === "-h" || first === "help") return { kind: "help" };
   if (first === "--version" || first === "-v" || first === "version") return { kind: "version" };
   if (first === "init") return { kind: "init" };
+  if (first === "uninstall") return { kind: "uninstall", rest: argv.slice(1) };
   if (first === "status") return parseStatus(argv.slice(1));
   if (first === "supervise") return { kind: "supervise", rest: argv.slice(1) };
   if (first === "route") return { kind: "route", rest: argv.slice(1) };
@@ -486,6 +490,9 @@ Usage:
                                health + capability readiness of the running Marina
   marina init                  set up: a model first, then server settings
                                (writes ~/.marina/.env, which every folder reads)
+  marina uninstall [--keep-data] [--dry-run] [--yes]
+                               remove Marina from this computer: shows all of
+                               it (everything lives in ~/.marina), asks once
   marina version               print the package version
   marina --help                show this help
 
@@ -665,7 +672,7 @@ export function formatStatus(
 
 /** Newest cached `marina connect` session token for this server URL, if any. */
 function cachedSessionToken(url: string): string | undefined {
-  const dir = join(homedir(), ".marina", "sessions");
+  const dir = marinaPath("sessions");
   try {
     let best: { token: string; mtime: number } | undefined;
     for (const file of readdirSync(dir)) {
@@ -792,9 +799,22 @@ if (import.meta.main) {
   const dispatch = parseDispatch(
     process.argv[2] === "__marina_server" ? ["start"] : process.argv.slice(2),
   );
-  // A server's working directory is its instance; every other command reads
-  // only the user and checkout settings (a folder session adds its own later).
-  applyCliEnvironment(dispatch.kind === "start" ? { instanceDir: process.cwd() } : {});
+  // A server's folder is its instance: the working directory when it is one,
+  // else ~/.marina/world (startInstanceDir). Every other command reads only
+  // the user and checkout settings (a folder session adds its own later).
+  if (dispatch.kind === "start") {
+    const instance = startInstanceDir(process.cwd());
+    if (instance.home) {
+      // The home world is a data directory: everything it writes stays in it,
+      // and its endpoint.json lets `marina uninstall` find and stop it.
+      mkdirSync(instance.dir, { recursive: true, mode: 0o700 });
+      process.chdir(instance.dir);
+      process.env.MARINA_DATA_DIR = instance.dir;
+    }
+    applyCliEnvironment({ instanceDir: instance.dir });
+  } else {
+    applyCliEnvironment({});
+  }
   switch (dispatch.kind) {
     case "help":
       console.log(styleUsage(USAGE, themeFor(process.stdout.isTTY ? process.stdout : undefined)));
@@ -816,6 +836,14 @@ if (import.meta.main) {
       );
       process.exit(1);
       break;
+    case "uninstall": {
+      const { runUninstall } = await import("./home");
+      const paths = await import("../src/runtime-paths");
+      process.exit(
+        await runUninstall(dispatch.rest, paths.IS_COMPILED ? undefined : paths.MARINA_ROOT),
+      );
+      break;
+    }
     case "init": {
       const { runInit } = await import("./init");
       await runInit(process.argv.slice(3));

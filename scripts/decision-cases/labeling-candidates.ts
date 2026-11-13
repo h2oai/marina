@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -21,10 +22,10 @@
  */
 
 import { readdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { classifyToolRisk } from "../../src/agent/tool-policy";
+import { marinaPath } from "../../src/config/marina-home";
 import {
   ALLOWED_LICENSES,
   type DefenseClawCase,
@@ -43,9 +44,8 @@ const { values } = parseArgs({
     seed: { type: "string" },
   },
 });
-const publicIn = values["public-in"] ?? join(homedir(), ".cache/marina/decision-cases/out");
-const outPath =
-  values.out ?? join(homedir(), ".cache/marina/decision-cases/labeling-candidates.json");
+const publicIn = values["public-in"] ?? marinaPath("cache", "decision-cases", "out");
+const outPath = values.out ?? marinaPath("cache", "decision-cases", "labeling-candidates.json");
 const publicPerTool = Number(values["public-per-tool"] ?? 3);
 const publicMax = Number(values["public-max"] ?? 300);
 let seed = Number(values.seed ?? 20260927) >>> 0;

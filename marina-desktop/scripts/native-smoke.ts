@@ -27,7 +27,8 @@ writeFileSync(
   view,
   readFileSync(view, "utf8").replace("</body>", `<script>${probe}</script></body>`),
 );
-const data = resolve(isolated, "data/marina");
+// The app keeps its data in desktop/ under Marina's home (MARINA_HOME, isolated here).
+const data = resolve(isolated, "marina-home/desktop");
 mkdirSync(data, { recursive: true });
 const reservation = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
 const port = reservation.port!;
@@ -40,6 +41,7 @@ const child = Bun.spawn([launcher], {
   cwd: dirname(launcher),
   env: {
     ...process.env,
+    MARINA_HOME: resolve(isolated, "marina-home"),
     XDG_DATA_HOME: resolve(isolated, "data"),
     XDG_CONFIG_HOME: resolve(isolated, "config"),
     XDG_CACHE_HOME: resolve(isolated, "cache"),

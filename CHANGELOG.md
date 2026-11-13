@@ -133,6 +133,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One home, and a clean uninstall.** Everything Marina writes for a person now lives in one
+  folder, `~/.marina` (`MARINA_HOME`): the code setup.sh installs (`app/`), the `marina` command
+  (`bin/`), its own Bun when it had to install one (`bun/`), settings, the world `marina start`
+  runs (`world/`, wherever it is started), folder worlds, Code Mode worktrees, the Claude Code
+  plugin's world, the desktop app's data (`desktop/`), sessions, history and caches. setup.sh
+  puts one PATH line in the shell's startup file. `marina uninstall` (or `setup.sh --uninstall`)
+  lists all of it with sizes, asks once, stops Marina's servers, removes the home, that PATH
+  line and every folder older versions used, and unregisters Code Mode's worktrees from your
+  repositories (their branches stay). `--keep-data` keeps worlds, settings and worktrees;
+  `--dry-run` only shows. A Marina checkout with your own changes is never removed, and Bun in
+  `~/.bun` stays. Older installs move in: setup.sh moves `~/marina` (code and world) into the
+  home, the desktop app moves its data on first start, and small caches move on first use; an
+  older world is never overwritten (it lands in `world-old`), and large search corpora and
+  operator tools whose folders an installed timer points at keep using their old folders. Folder worlds keep their uploads and scratch files
+  in their own folder instead of the code folder, and tests no longer write into the developer's
+  real `~/.marina`.
+
 - **SDK conformance: one scenario list every SDK must pass.** `protocol/conformance.md` defines
   eight scenarios (a coding run, commands with typed forms, reconnect after a dropped socket, an
   agent asking and answering by tell, typed memory calls with retry through a real rate limit, the

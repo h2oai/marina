@@ -14,8 +14,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createConnection, createServer, type Server } from "node:net";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { marinaPath } from "../config/marina-home";
 import { getErrorMessage } from "../engine/errors";
 
 /**
@@ -74,7 +74,7 @@ export interface ResidentRelay {
 /** Where relay directories go: short, per-user, visible inside agent sandboxes. */
 export function relayBaseDirectory(env: NodeJS.ProcessEnv = process.env): string {
   if (env.XDG_RUNTIME_DIR) return env.XDG_RUNTIME_DIR;
-  const base = join(homedir(), ".marina", "relay");
+  const base = marinaPath("relay");
   mkdirSync(base, { recursive: true, mode: 0o700 });
   return base;
 }

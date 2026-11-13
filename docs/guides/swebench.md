@@ -61,7 +61,7 @@ workspace is built so that none of these routes exists:
 Export the solver-visible fields only, written outside the repository:
 
 ```bash
-python benchmarks/swebench/export.py ~/.local/share/marina-swebench/data/verified.jsonl
+python benchmarks/swebench/export.py ~/.marina/tools/swebench/data/verified.jsonl
 ```
 
 Then draw seeded ids, mixed across repositories, and run, score and file the arms:
@@ -85,7 +85,7 @@ bun run swebench file --arm single --replicate 1 --db marina.db
   export` writes the task fields with `SWEBENCH_PYTHON` when `<data>/verified.jsonl` is missing.
 - **Re-filing is a no-op:** the ledger result is stamped with the last attempt's write, never the
   filing time, and every replicate of an arm records the same target (no replicate number or path).
-- **Location:** everything is written under `--data` (default `~/.local/share/marina-swebench/data`).
+- **Location:** everything is written under `--data` (default `~/.marina/tools/swebench/data`; an existing `~/.local/share/marina-swebench/data` keeps being used).
 - **`--env-image` (opt-in):** the agent's commands run inside the instance's official environment
   image (`swebench/sweb.eval.x86_64.<id>`, pulled or built beforehand) through Marina's general
   container runner, in patch sync at `/testbed` with the `testbed` conda env and no network. The

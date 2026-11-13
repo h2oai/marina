@@ -748,6 +748,9 @@ export function spawnFolderServer(o: {
         MCP_PORT: "0",
         LOG_PORT: "0",
         DB_PATH: dbPath,
+        // The folder world's own directory roots every other path (uploads,
+        // scratch, its settings file, endpoint.json), never the code folder.
+        MARINA_DATA_DIR: dirname(dbPath),
         MARINA_NAME: process.env.MARINA_NAME ?? (basename(dir) || "marina"),
         MARINA_WORLD: process.env.MARINA_WORLD ?? "empty",
         MARINA_ROOM_AGENTS: process.env.MARINA_ROOM_AGENTS ?? "false",

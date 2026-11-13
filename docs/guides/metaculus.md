@@ -101,7 +101,7 @@ bun run metaculus select --backtest-tournament <resolved tournament> --budget 15
 bun run metaculus timer
 ```
 
-It writes `~/.local/share/marina-metaculus/systemd/marina-metaculus.{service,timer}`. The units
+It writes `~/.marina/tools/metaculus/systemd/marina-metaculus.{service,timer}` (an existing `~/.local/share/marina-metaculus` keeps being used, since installed units run from it). The units
 run one pass every 20 minutes, reading credentials from `~/.config/marina-metaculus/env` (create
 it with mode 0600). They are written, never enabled; the command prints the two `systemctl --user`
 lines to enable them after review.

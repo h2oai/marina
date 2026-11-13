@@ -6,37 +6,44 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/h2oai/marina/main/setup.sh | bash
 #
-# It installs Bun if needed (Bun's official installer, into ~/.bun), downloads Marina into
-# ~/marina, installs its packages, builds the dashboard, puts `marina` on your PATH, asks for one
-# thing (a model API key, Enter to skip), then starts Marina and opens it in your browser.
-# Run it again to update; your settings and world are kept.
+# Everything goes in one folder, ~/.marina (MARINA_HOME): the code in ~/.marina/app, Bun in
+# ~/.marina/bun when you have none, the `marina` command in ~/.marina/bin, and your worlds and
+# settings beside them. It installs packages, builds the dashboard, puts `marina` on your PATH,
+# asks for one thing (a model API key, Enter to skip), then starts Marina and opens it in your
+# browser. Run it again to update; your settings and world are kept. An older install in
+# ~/marina is moved in.
 #
 # Options (after `bash -s --` when piped):
-#   --dir <path>   install here instead of ~/marina (or set MARINA_DIR)
+#   --dir <path>   put the code here instead of ~/.marina/app (or set MARINA_DIR)
 #   --yes          ask nothing and do not start Marina: for AI agents and scripts
 #   --no-start     set up, but do not start Marina at the end
 #   --no-modify-path  leave your shell's startup file alone
+#   --uninstall    remove Marina and everything it made (asks first; `--yes` to not ask,
+#                  `--keep-data` to keep your worlds)
 #   --help         this text
 #
-# It never uses sudo. Outside the install folder it changes only ~/.bun (Bun), the `marina` link,
-# and one PATH line in your shell's startup file when `marina` would not be found otherwise.
+# It never uses sudo. Outside ~/.marina it changes only one PATH line in your shell's startup
+# file (marked "# Added by Marina setup"), and only when `marina` would not be found otherwise.
 
 set -euo pipefail
 
 # Everything runs from main(), called on the last line, so a download cut short runs nothing.
 main() {
-  local dir="${MARINA_DIR:-$HOME/marina}"
+  local home="${MARINA_HOME:-$HOME/.marina}"
+  local dir="${MARINA_DIR:-$home/app}" dir_set=0
+  [ -n "${MARINA_DIR:-}" ] && dir_set=1
   local assume_yes=0 start=1 modify_path=1
   local repo="${MARINA_SETUP_REPO:-https://github.com/h2oai/marina.git}"
   local ref="${MARINA_SETUP_REF:-main}"
 
   while [ $# -gt 0 ]; do
     case "$1" in
-      --dir) dir="${2:?--dir needs a folder}"; shift 2 ;;
-      --dir=*) dir="${1#--dir=}"; shift ;;
+      --dir) dir="${2:?--dir needs a folder}"; dir_set=1; shift 2 ;;
+      --dir=*) dir="${1#--dir=}"; dir_set=1; shift ;;
       --yes|-y) assume_yes=1; start=0; shift ;;
       --no-start) start=0; shift ;;
       --no-modify-path) modify_path=0; shift ;;
+      --uninstall) shift; uninstall "$home" "$@"; return ;;
       --help|-h) usage; return 0 ;;
       *) fail "Unknown option: $1 (try --help)" ;;
     esac
@@ -57,15 +64,36 @@ main() {
   need curl "Install curl with your system's package manager, then run this again."
   need tar "Install tar with your system's package manager, then run this again."
 
-  say "Setting up Marina in $dir"
+  # An install from before the one home (~/marina): update it where it is, then move it in.
+  local legacy=""
+  if [ "$dir_set" -eq 0 ] && [ ! -e "$dir" ] && [ -f "$HOME/marina/.bun-version" ]; then
+    legacy="$HOME/marina"
+  fi
+
+  say "Setting up Marina in $home"
+  mkdir -p "$home"
+  chmod 700 "$home" 2>/dev/null || true
 
   step "1/5" "Downloading Marina"
-  fetch_marina "$repo" "$ref" "$dir"
-  cd "$dir"
+  fetch_marina "$repo" "$ref" "${legacy:-$dir}"
 
   step "2/5" "Checking Bun (the runtime Marina uses)"
   local bun
-  bun="$(ensure_bun "$(tr -d '[:space:]' <.bun-version)")"
+  bun="$(ensure_bun "$(tr -d '[:space:]' <"${legacy:-$dir}/.bun-version")" "$home")"
+
+  if [ -n "$legacy" ]; then
+    if [ -f "$legacy/scripts/home.ts" ]; then
+      say "  Moving your Marina from $legacy into $home"
+      dir="$("$bun" --no-env-file "$legacy/scripts/home.ts" migrate "$legacy")" ||
+        fail "Could not move $legacy into $home (see above)."
+    else
+      dir="$legacy"
+    fi
+  fi
+  cd "$dir"
+  # Bun keeps a copy of every package it installs in its cache (hard links into node_modules):
+  # keep that in the home too, so removing ~/.marina removes all of it.
+  export BUN_INSTALL_CACHE_DIR="$home/cache/bun"
 
   step "3/5" "Installing packages (a minute or two)"
   "$bun" install --no-env-file --no-progress >/dev/null 2>&1 || "$bun" install --no-env-file
@@ -74,20 +102,20 @@ main() {
   "$bun" run --no-env-file dashboard:build >/dev/null 2>&1 || "$bun" run --no-env-file dashboard:build
 
   step "5/5" "Putting marina on your PATH"
-  "$bun" --no-env-file scripts/setup-cli.ts >/dev/null
-  local link_dir
-  link_dir="$(marina_link_dir "$bun")"
-  # `marina` runs on `bun`, so both folders must be on PATH.
+  write_command "$home" "$bun" "$dir"
+  remove_old_links "$home"
   if [ "$modify_path" -eq 1 ]; then
-    add_to_path "$link_dir" "$(dirname "$bun")"
+    add_to_path "$home/bin"
   else
-    say "  marina is in $link_dir; it needs $(dirname "$bun") on PATH too."
+    say "  marina is in $home/bin; add it to your PATH to use it."
   fi
 
+  # Settings and the world live in the home, never in the code folder.
+  cd "$home"
   if [ "$assume_yes" -eq 1 ]; then
-    "$bun" --no-env-file scripts/marina.ts init --yes | sed 's/^/  /'
+    "$bun" --no-env-file "$dir/scripts/marina.ts" init --yes | sed 's/^/  /'
   else
-    "$bun" --no-env-file scripts/marina.ts init </dev/tty
+    "$bun" --no-env-file "$dir/scripts/marina.ts" init </dev/tty
   fi
 
   local url="http://localhost:${WS_PORT:-3300}"
@@ -97,27 +125,31 @@ main() {
     say "Keep this window open while you use it; close it (or press Ctrl+C) to stop."
     say "To start it again later, open a new terminal and type: marina start"
     open_when_ready "$url" &
-    exec "$bun" --no-env-file scripts/marina.ts start </dev/tty
+    exec "$bun" --no-env-file "$dir/scripts/marina.ts" start </dev/tty
   fi
 
   say ""
-  say "Marina is installed in $dir."
+  say "Marina is installed in $home."
   say "Start it: open a new terminal window and type  marina start"
   say "Then open $url. With no model key yet, add one in the dashboard: Admin, then Keys."
+  say "To remove it later: marina uninstall"
 }
 
 usage() {
   cat <<'USAGE'
-Marina setup: installs Bun if needed, downloads Marina, builds it, puts `marina` on your PATH,
-asks for a model API key (Enter to skip), then starts Marina and opens it in your browser.
+Marina setup: puts everything in ~/.marina (the code, Bun if you have none, your worlds and
+settings), builds it, puts `marina` on your PATH, asks for a model API key (Enter to skip), then
+starts Marina and opens it in your browser.
 
   curl -fsSL https://raw.githubusercontent.com/h2oai/marina/main/setup.sh | bash
   curl -fsSL https://raw.githubusercontent.com/h2oai/marina/main/setup.sh | bash -s -- --yes
+  curl -fsSL https://raw.githubusercontent.com/h2oai/marina/main/setup.sh | bash -s -- --uninstall
 
-  --dir <path>   install here instead of ~/marina (or set MARINA_DIR)
+  --dir <path>   put the code here instead of ~/.marina/app (or set MARINA_DIR)
   --yes          ask nothing and do not start Marina: for AI agents and scripts
   --no-start     set up, but do not start Marina at the end
   --no-modify-path  do not add marina's folder to your shell's startup file
+  --uninstall    remove Marina and everything it made (also: marina uninstall)
   --help         this text
 USAGE
 }
@@ -126,20 +158,58 @@ step() { printf '\n[%s] %s\n' "$1" "$2"; }
 fail() { printf 'Marina setup stopped: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "$1 is not installed. $2"; }
 
-# The folder setup-cli linked `marina` into (the first of ~/.bun/bin and ~/.local/bin on PATH,
-# else Bun's).
-marina_link_dir() {
-  local bun="$1" d
-  for d in "${BUN_INSTALL:-$HOME/.bun}/bin" "$HOME/.local/bin"; do
-    if [ -L "$d/marina" ] && case ":$PATH:" in *":$d:"*) true ;; *) false ;; esac; then
-      printf '%s\n' "$d"; return
-    fi
-  done
-  printf '%s\n' "${BUN_INSTALL:-$HOME/.bun}/bin"
+# The `marina` command: a small script in the home's bin/ that runs the code with its Bun, so
+# one folder on PATH is enough (Bun itself need not be on PATH).
+write_command() {
+  local home="$1" bun="$2" dir="$3"
+  mkdir -p "$home/bin"
+  cat >"$home/bin/marina" <<EOF
+#!/bin/sh
+# Marina's command, written by setup.sh. \`marina uninstall\` removes it with the rest of Marina.
+exec "$bun" --no-env-file "$dir/scripts/marina.ts" "\$@"
+EOF
+  chmod 755 "$home/bin/marina"
 }
 
-# Make `marina` (and the `bun` it runs on) found in new terminals: add each folder that is not
-# on PATH to the shell's startup file once, unless the file already names it.
+# Links older setups made (~/.bun/bin/marina, ~/.local/bin/marina) to code that has since moved
+# (into the home, or away): remove them so the new command is the one found. A link to some
+# other Marina checkout that still exists (a developer's) is left alone.
+remove_old_links() {
+  local home="$1" d link target
+  for d in "${BUN_INSTALL:-$HOME/.bun}/bin" "$HOME/.local/bin"; do
+    link="$d/marina"
+    [ -L "$link" ] || continue
+    target="$(readlink "$link")"
+    case "$target" in */scripts/marina.ts) ;; *) continue ;; esac
+    if [ ! -e "$target" ] || case "$target" in "$home"/*|"$HOME/marina"/*) true ;; *) false ;; esac; then
+      rm -f "$link"
+    fi
+  done
+}
+
+# Remove Marina: the code's own uninstaller does the work (it shows everything and asks once).
+uninstall() {
+  local home="$1" app="" bun="" d b
+  shift
+  for d in "${MARINA_DIR:-}" "$home/app" "$HOME/marina"; do
+    if [ -n "$d" ] && [ -f "$d/scripts/home.ts" ]; then app="$d"; break; fi
+  done
+  for b in "$home/bun/bin/bun" "$(command -v bun 2>/dev/null || true)" "${BUN_INSTALL:-$HOME/.bun}/bin/bun"; do
+    if [ -n "$b" ] && [ -x "$b" ]; then bun="$b"; break; fi
+  done
+  if [ -z "$app" ] || [ -z "$bun" ]; then
+    say "No Marina to run the uninstaller from. To remove it by hand: delete $home, the line after"
+    say "\"# Added by Marina setup\" in your shell's startup file, and ~/marina if an older setup made it."
+    return 1
+  fi
+  if { [ -r /dev/tty ] && : </dev/tty; } 2>/dev/null; then
+    exec "$bun" --no-env-file "$app/scripts/home.ts" uninstall "$@" </dev/tty
+  fi
+  exec "$bun" --no-env-file "$app/scripts/home.ts" uninstall "$@"
+}
+
+# Make `marina` found in new terminals: add each folder that is not on PATH to the shell's
+# startup file once, unless the file already names it. `marina uninstall` removes the line.
 add_to_path() {
   local rc shell_name d added=0
   shell_name="$(basename "${SHELL:-bash}")"
@@ -201,26 +271,26 @@ fetch_marina() {
   rm -rf "$tmp"
 }
 
-# Print the path of a Bun at least version $1, installing it with Bun's official installer when
-# missing or older.
+# Print the path of a Bun at least version $1: one already on this machine, else Marina's own,
+# installed into $2/bun with Bun's official installer (told SHELL=sh, so it edits no shell file).
 ensure_bun() {
-  local want="$1" bun=""
-  if command -v bun >/dev/null 2>&1; then bun="$(command -v bun)"
-  elif [ -x "${BUN_INSTALL:-$HOME/.bun}/bin/bun" ]; then bun="${BUN_INSTALL:-$HOME/.bun}/bin/bun"
-  fi
-  if [ -n "$bun" ] && version_at_least "$("$bun" --version)" "$want"; then
-    printf '  Bun %s found.\n' "$("$bun" --version)" >&2
-    printf '%s\n' "$bun"
-    return
-  fi
+  local want="$1" home="$2" bun="" candidate
+  for candidate in "$home/bun/bin/bun" "$(command -v bun 2>/dev/null || true)" "${BUN_INSTALL:-$HOME/.bun}/bin/bun"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ] && version_at_least "$("$candidate" --version)" "$want"; then
+      printf '  Bun %s found.\n' "$("$candidate" --version)" >&2
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
   if [ "$(uname -s)" = Linux ]; then
     need unzip "Bun's installer needs unzip: install it with your package manager, then run this again."
   fi
-  printf '  Installing Bun %s from bun.sh...\n' "$want" >&2
-  curl -fsSL https://bun.sh/install | bash -s "bun-v$want" >/dev/null 2>&1 ||
-    curl -fsSL https://bun.sh/install | bash -s "bun-v$want" >&2 ||
+  printf '  Installing Bun %s into %s/bun from bun.sh...\n' "$want" "$home" >&2
+  local install=(env BUN_INSTALL="$home/bun" SHELL=/bin/sh bash -s "bun-v$want")
+  curl -fsSL https://bun.sh/install | "${install[@]}" >/dev/null 2>&1 ||
+    curl -fsSL https://bun.sh/install | "${install[@]}" >&2 ||
     fail "Installing Bun failed. See https://bun.sh/docs/installation"
-  bun="${BUN_INSTALL:-$HOME/.bun}/bin/bun"
+  bun="$home/bun/bin/bun"
   [ -x "$bun" ] || fail "Bun was installed but $bun is missing."
   printf '%s\n' "$bun"
 }

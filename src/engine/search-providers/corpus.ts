@@ -47,6 +47,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { legacyOrHome, marinaPathIn } from "../../config/marina-home";
 import type { EmbeddingProvider } from "../../memory/embeddings";
 import {
   type CorpusVectorInfo,
@@ -107,7 +108,15 @@ export function isCorpusName(name: string): boolean {
 /** The directory corpora live in (created on build, never under the temp dir). */
 export function corpusDir(env: Record<string, string | undefined> = process.env): string {
   const configured = env.MARINA_CORPUS_DIR?.trim();
-  return resolve(configured || join(homedir(), ".local", "share", "marina", "corpora"));
+  // An existing corpus folder from an older version keeps being used (it can
+  // be many GB; nothing moves it behind a lookup); new ones go in the home.
+  return resolve(
+    configured ||
+      legacyOrHome(
+        marinaPathIn(env, "cache", "corpora"),
+        join(env.HOME?.trim() || homedir(), ".local", "share", "marina", "corpora"),
+      ),
+  );
 }
 
 /** True when `dir` sits under the system temp dir (usually a RAM-backed tmpfs). */

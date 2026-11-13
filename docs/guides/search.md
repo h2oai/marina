@@ -230,7 +230,7 @@ bun run corpus search <name> <query> [--k 5]
 bun run corpus get <name> <docid>
 ```
 
-- **Location:** indexes live in `MARINA_CORPUS_DIR` (default `~/.local/share/marina/corpora`), one `<name>.db` each. Building writes a side file and renames it into place, so a half-built index is never served. Large corpora need a real disk: set `SQLITE_TMPDIR` too, if `/tmp` is small.
+- **Location:** indexes live in `MARINA_CORPUS_DIR` (default `~/.marina/cache/corpora`; an existing `~/.local/share/marina/corpora` keeps being used), one `<name>.db` each. Building writes a side file and renames it into place, so a half-built index is never served. Large corpora need a real disk: set `SQLITE_TMPDIR` too, if `/tmp` is small.
 - **Search:** `web search engines:corpus:<name> <query>`. In a search room, use `search engine:corpus:<name> <query>` (in the Library, `find`).
 - **Read:** `web fetch corpus://<name>/<docid>`, or the room's fetch verb (`fetch` / `archive`) with the same URL.
 - **Research:** the research retriever takes `corpus:<name>` (`MARINA_FORECAST_RETRIEVER`, `MARINA_ARENA_RESEARCH_RETRIEVER`). It searches the brief's queries and cites `corpus://` URLs.

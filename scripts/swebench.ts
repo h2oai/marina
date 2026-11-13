@@ -53,6 +53,7 @@ import {
   type SweBenchmark,
   selectSubset,
 } from "../benchmarks/swebench/adapter";
+import { legacyOrHome, marinaPath } from "../src/config/marina-home";
 import { featureEnvSnapshot } from "../src/engine/feature-env";
 import { SpendGuard } from "../src/engine/spend-guard";
 import { projectSlug } from "./code";
@@ -61,7 +62,13 @@ const REPO_ROOT = resolve(import.meta.dir, "..");
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
-    data: { type: "string", default: join(homedir(), ".local/share/marina-swebench/data") },
+    data: {
+      type: "string",
+      default: legacyOrHome(
+        marinaPath("tools", "swebench", "data"),
+        join(homedir(), ".local/share/marina-swebench/data"),
+      ),
+    },
     instances: { type: "string" },
     n: { type: "string", default: "50" },
     seed: { type: "string", default: "7" },

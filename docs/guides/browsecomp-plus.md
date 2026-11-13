@@ -25,7 +25,7 @@ $DATA/venv/bin/python benchmarks/browsecomp-plus/export.py queries $DATA/hf/quer
 
 The queries are published obfuscated. `export.py` decrypts them with the benchmark's own scheme, and only into your private data directory. **Never commit or publish the decrypted queries or answers.** The benchmark asks that they not appear as plain text online.
 
-Build the index once. It takes about 20 minutes and several GB, under `MARINA_CORPUS_DIR` (default `~/.local/share/marina/corpora`):
+Build the index once. It takes about 20 minutes and several GB, under `MARINA_CORPUS_DIR` (default `~/.marina/cache/corpora`; an existing `~/.local/share/marina/corpora` keeps being used):
 
 ```bash
 SQLITE_TMPDIR=$DATA/tmp bun run corpus build browsecomp-plus $DATA/data/corpus.jsonl \

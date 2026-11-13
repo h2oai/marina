@@ -36,3 +36,17 @@ process.env.MARINA_DASHBOARD_AUTOBUILD ??= "off";
 // robots.txt before a page; tests stub page fetches and never reach the
 // network, so the check is off unless a test opts in (test/robots.test.ts).
 process.env.MARINA_ROBOTS_TXT ??= "ignore";
+// Marina's home (src/config/marina-home.ts) is a per-run temporary folder:
+// worktrees, sessions and history a test writes never land in the developer's
+// real ~/.marina. A test that needs its own home passes MARINA_HOME or HOME
+// in the environment it hands the code under test.
+if (!process.env.MARINA_HOME) {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const home = mkdtempSync(join(tmpdir(), "marina-test-home-"));
+  process.env.MARINA_HOME = home;
+  // Removed after the last test of this process, so runs leave nothing behind.
+  const { afterAll } = await import("bun:test");
+  afterAll(() => rmSync(home, { recursive: true, force: true }));
+}

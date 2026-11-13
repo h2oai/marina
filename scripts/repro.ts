@@ -33,6 +33,7 @@ import { blocking, doctor, type Probe, renderChecks } from "../benchmarks/repro/
 import { budgetRefusal, executePlan, renderPlan } from "../benchmarks/repro/run";
 import { SETUPS, setupNamed } from "../benchmarks/repro/setups";
 import type { ReproFlags } from "../benchmarks/repro/types";
+import { legacyOrHome, marinaPath } from "../src/config/marina-home";
 import { parseServerEnv } from "../src/engine/feature-env";
 
 const FS_TYPES: Record<number, string> = { 16914836: "tmpfs", 2240043254: "ramfs" };
@@ -137,7 +138,10 @@ async function main(): Promise<number> {
     const setup = arg ? setupNamed(arg) : undefined;
     if (arg && !setup) throw new Error(`unknown setup ${arg}`);
     const { tier, checks } = doctor(probe, {
-      runDir: join(homedir(), ".local/share/marina-repro"),
+      runDir: legacyOrHome(
+        marinaPath("tools", "repro"),
+        join(homedir(), ".local/share/marina-repro"),
+      ),
       ...(setup ? { only: setup.requires } : {}),
     });
     console.log(renderChecks(tier, checks));

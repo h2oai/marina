@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -61,6 +62,7 @@ import {
   spentToday,
 } from "../benchmarks/metaculus/bot";
 import { timerUnits } from "../benchmarks/metaculus/timer";
+import { legacyOrHome, marinaPath } from "../src/config/marina-home";
 import { forecastLessonsFor } from "../src/learning/forecast-bridge";
 import { enableOutcomeLearning, noteOutcome, settleOutcomes } from "../src/learning/service";
 import { fileTypedAnswer, resolveFiled } from "../src/outcomes/filing";
@@ -96,7 +98,13 @@ const { positionals, values } = parseArgs({
     retriever: { type: "string" },
     org: { type: "string" },
     agent: { type: "string" },
-    "timer-dir": { type: "string", default: join(homedir(), ".local/share/marina-metaculus") },
+    "timer-dir": {
+      type: "string",
+      default: legacyOrHome(
+        marinaPath("tools", "metaculus"),
+        join(homedir(), ".local/share/marina-metaculus"),
+      ),
+    },
   },
 });
 const cmd = positionals[0] ?? "pass";
@@ -278,7 +286,10 @@ function statusCmd(db: MarinaDB): number {
 function timerCmd(): number {
   const dir = join(values["timer-dir"]!, "systemd");
   mkdirSync(dir, { recursive: true });
-  const envFile = join(homedir(), ".config/marina-metaculus/env");
+  const envFile = legacyOrHome(
+    marinaPath("tools", "metaculus", "env"),
+    join(homedir(), ".config/marina-metaculus/env"),
+  );
   const units = timerUnits({
     repoDir: resolve("."),
     bun: process.execPath,
