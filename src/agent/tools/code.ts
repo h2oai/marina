@@ -9,6 +9,31 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, type TLiteral, Type } from "typebox";
 import { execCommand, plainErrorMessage, type ToolContext, wrap } from "./shared";
 
+const readRangeProperties = {
+  offset: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      description: "read: one-based starting line (default 1)",
+    }),
+  ),
+  limit: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      description: "read: requested lines (default/max 2000); pages also cap at 50 KiB",
+    }),
+  ),
+  column: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      description:
+        "read: one-based Unicode character column for continuing an oversized line (default 1)",
+    }),
+  ),
+};
+
 const verificationMode = Type.Optional(
   Type.Union(
     [
@@ -148,6 +173,7 @@ const codeSchema = Type.Object({
         "Relative workspace path for files/read/search/diff/edit/write; limits search to this file or directory",
     }),
   ),
+  ...readRangeProperties,
   oldText: Type.Optional(codeEditSchema.properties.oldText),
   newText: Type.Optional(codeEditSchema.properties.newText),
   replaceAll: codeEditSchema.properties.replaceAll,
@@ -192,6 +218,7 @@ const codePathSchema = Type.Object({
 
 const codeReadFileSchema = Type.Object({
   path: Type.String({ description: "Relative workspace file path" }),
+  ...readRangeProperties,
 });
 
 const codeSearchSchema = Type.Object({
@@ -293,6 +320,49 @@ const codeExternalSchema = Type.Object({
   artifactId: Type.Optional(Type.String({ description: "External link artifact id" })),
 });
 
+/** Typed Code Mode tools that change only the session's own working copy. */
+const WORKSPACE_AUTHORING_TOOLS: ReadonlySet<string> = new Set([
+  "marina_code_edit",
+  "marina_code_write",
+  "marina_code_patch",
+  "marina_code_apply_patch",
+  "marina_code_reject_patch",
+  "marina_code_run",
+  "marina_code_verify",
+  "marina_code_checkpoint",
+  "marina_code_plan",
+]);
+/** The same work through the generic `marina_code` tool's `action`. */
+const WORKSPACE_AUTHORING_ACTIONS: ReadonlySet<string> = new Set([
+  "edit",
+  "write",
+  "patch",
+  "apply",
+  "reject",
+  "run",
+  "verify",
+  "checkpoint",
+  "revert",
+  "plan",
+]);
+
+/**
+ * A coder working in its own Code Mode workspace: editing files, running the
+ * allowed checks, verifying, planning. Its paths and text are its own work, not
+ * values the requester stated, so the conversation-support argument check does
+ * not apply; the session's diffs, verification receipts and review check this
+ * work instead. Submitting, handing off, approvals and anything outside the
+ * workspace are not covered.
+ */
+export function isWorkspaceAuthoringCall(name: string, args: Record<string, unknown>): boolean {
+  if (WORKSPACE_AUTHORING_TOOLS.has(name)) return true;
+  return (
+    name === "marina_code" &&
+    typeof args.action === "string" &&
+    WORKSPACE_AUTHORING_ACTIONS.has(args.action)
+  );
+}
+
 export function createCodeTool(ctx: ToolContext): AgentTool<typeof codeSchema> {
   return {
     name: "marina_code",
@@ -335,10 +405,9 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
     wrap(
       "marina_code_read_file",
       "Code Read File",
-      "Read one relative file from the active coding session workspace.",
+      "Read numbered lines from one workspace file. offset is one-based; limit defaults to 2000. Pages cap at 50 KiB and name the exact continuation, including column for oversized lines.",
       codeReadFileSchema,
-      (p) =>
-        `code read ${requiredSingleLineCodeParam(p.path as string | undefined, "path", "path is required")}`,
+      (p) => buildCodeReadCommand(p),
       ctx,
     ),
     wrap(
@@ -410,7 +479,7 @@ export function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
     wrap(
       "marina_code_edit",
       "Code Edit",
-      "Surgically replace exact text in one workspace file. Prefer this over patches for small targeted changes; if a patch fails to apply, fall back to this instead of retrying the same diff. oldText must match the file byte-for-byte (copy it from marina_code_read_file, including whitespace); set replaceAll only when every occurrence should change.",
+      "Surgically replace exact text in one workspace file. Prefer this over patches for small targeted changes; if a patch fails to apply, fall back to this instead of retrying the same diff. oldText must match the file byte-for-byte (copy it from marina_code_read_file, removing line-number prefixes and preserving whitespace); set replaceAll only when every occurrence should change.",
       codeEditSchema,
       buildCodeEditCommand,
       ctx,
@@ -779,7 +848,7 @@ function buildCodeCommand(params: Record<string, unknown>): string {
     case "files":
       return `code files ${singleLineCodeParam(path ?? ".", "path")}`;
     case "read":
-      return `code read ${requiredSingleLineCodeParam(path, "path", "action=read requires path")}`;
+      return buildCodeReadCommand(params, "action=read requires path");
     case "search":
       return buildCodeSearchCommand(params);
     case "diff":
@@ -908,6 +977,25 @@ function buildCodeCommand(params: Record<string, unknown>): string {
         `Unknown marina_code action "${String(action)}". Valid: ${CODE_ACTIONS.join(", ")}.`,
       );
   }
+}
+
+function buildCodeReadCommand(
+  params: Record<string, unknown>,
+  missingPath = "path is required",
+): string {
+  const path = requiredSingleLineCodeParam(params.path as string | undefined, "path", missingPath);
+  const modifiers: string[] = [];
+  for (const key of ["offset", "limit", "column"] as const) {
+    const value = params[key];
+    if (value === undefined) continue;
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
+      throw new Error(`${key} must be a positive safe integer`);
+    modifiers.push(`${key}:${value}`);
+  }
+  // Preserve the legacy plain command for ordinary paths; use a terminator
+  // when modifiers or modifier-like filenames could be reinterpreted.
+  if (!modifiers.length && !/[:=]|(?:^|\s)--/.test(path)) return `code read ${path}`;
+  return ["code read", ...modifiers, "--", path].join(" ");
 }
 
 function buildCodeSearchCommand(params: Record<string, unknown>): string {

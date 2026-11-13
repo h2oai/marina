@@ -411,6 +411,22 @@ describe("Passwordless login rank posture", () => {
     }
   });
 
+  it("the orphan sweep leaves a dropped agent to its reconnect grace: the token resumes the same entity", () => {
+    addConn("c1", "127.0.0.1");
+    const first = engine.login("c1", "Graceful");
+    if (!("token" in first)) throw new Error("expected token");
+    // A client (every SDK) is an agent; its socket drops.
+    engine.entities.get(first.entityId)!.kind = "agent";
+    engine.removeConnection("c1");
+    // The periodic orphan sweep runs while the client is still reconnecting…
+    (engine as unknown as { cleanupOrphanedAgents(): void }).cleanupOrphanedAgents();
+    expect(engine.entities.get(first.entityId)).toBeDefined();
+    // …and the token brings back the very same entity.
+    addConn("c2", "127.0.0.1");
+    const back = engine.reconnect("c2", first.token);
+    expect("entityId" in back && back.entityId).toBe(first.entityId);
+  });
+
   it("restores stored rank from a LOOPBACK-minted token even on a remote reconnect", () => {
     addConn("c0", "127.0.0.1");
     const bootstrap = engine.login("c0", "LocalOp");

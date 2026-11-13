@@ -13,6 +13,7 @@ WebSocket and send JSON, you can drive Marina from any language.
 - **SDKs:** [TypeScript](../src/sdk/README.md), [Python](../sdks/python/README.md),
   [Java](../sdks/java/README.md) and [Rust](../sdks/rust/README.md) implement it. Each runs a
   whole coding task on a live server in CI, with every coding frame checked against the schema.
+  All of them pass the same [conformance scenarios](conformance.md).
 
 ## Try it in a minute
 

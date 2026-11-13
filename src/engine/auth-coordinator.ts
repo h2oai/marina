@@ -114,6 +114,14 @@ export class AuthCoordinator {
    * account over (`releaseQuietHolder`); the run keeps going and its output
    * reaches the owner. Any other live connection still refuses the login.
    */
+  /**
+   * The entity's connection dropped and its reconnect grace is still running: a
+   * token-bearing `auth` may yet resume it, so nothing else may remove it.
+   */
+  hasPendingEviction(entityId: EntityId): boolean {
+    return this.entityEvictionTimers.has(entityId);
+  }
+
   private heldQuietly(entityId: EntityId): boolean {
     return this.host.connections.getConnectionForEntity(entityId)?.quiet === true;
   }

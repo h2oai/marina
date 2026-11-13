@@ -21,6 +21,12 @@ import { captureGitCandidate } from "./candidate";
 import { prepareCandidateBunDependencies } from "./candidate-dependencies";
 import { prepareCandidateNpmDependencies } from "./candidate-npm-dependencies";
 import type { ExecApprover } from "./exec-approver";
+import {
+  type FileReadOptions,
+  type FileReadResult,
+  readFilePage,
+  resolveFileReadOptions,
+} from "./file-read";
 import { CODE_RUN_HOME, hostGitArgv, hostGitEnv, isGitArgv } from "./host-git";
 import { preparationStepKind } from "./verification-plan";
 import { insideRoot, type WorkspaceFileGrant } from "./workspace-file-grants";
@@ -44,6 +50,12 @@ export interface WorkspaceDiff {
 }
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const MAX_RUN_TIMEOUT_MS = 300_000;
+/**
+ * The ceiling for a step that asks for more than {@link MAX_RUN_TIMEOUT_MS}: a
+ * verification's full suite under its budget (MARINA_CODE_VERIFY_FULL_BUDGET,
+ * `budget:`). The container runner's ceiling, so a budget means the same on both.
+ */
+const MAX_BUDGETED_RUN_TIMEOUT_MS = 1_800_000;
 
 const SKIP_DIRS = new Set([".git", ".turbo", ".vite", "coverage", "dist", "node_modules", "tmp"]);
 const SHELL_METACHARACTERS = /[;&|`$()><\n\r\\]/;
@@ -146,10 +158,7 @@ export interface WorkspaceDescriptor {
 export interface WorkspaceFiles {
   displayRoot(): string;
   list(input?: string, limit?: number): WorkspaceEntry[];
-  read(
-    input: string,
-    maxBytes?: number,
-  ): Promise<{ path: string; content: string; truncated: boolean; size: number }>;
+  read(input: string, options?: number | FileReadOptions): Promise<FileReadResult>;
   /** Bounded bytes from the same authorized file surface; never a guest-only path. */
   readBytes?(input: string, maxBytes: number): Promise<{ path: string; data: Uint8Array }>;
   /** Bounded streaming reads for large deliverables on this same authorized file surface. */
@@ -376,16 +385,34 @@ export class LocalWorkspace implements WorkspaceRuntime {
 
   async read(
     input: string,
-    maxBytes = DEFAULT_MAX_READ_BYTES,
-  ): Promise<{
-    path: string;
-    content: string;
-    truncated: boolean;
-    size: number;
-  }> {
+    options: number | FileReadOptions = DEFAULT_MAX_READ_BYTES,
+  ): Promise<FileReadResult> {
+    if (typeof options !== "number") resolveFileReadOptions(options);
     const target = this.resolvePath(input);
     const stat = statSync(target);
     if (!stat.isFile()) throw new Error("Path is not a file.");
+    if (typeof options !== "number") {
+      const file = await open(
+        target,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      try {
+        const opened = await file.stat();
+        const current = statSync(this.resolvePath(input));
+        if (!opened.isFile() || opened.dev !== current.dev || opened.ino !== current.ino)
+          throw new Error("Path is not a stable regular file.");
+        const stream = file.createReadStream({ encoding: "utf8", autoClose: false });
+        try {
+          const result = await readFilePage(stream, options);
+          return { path: this.relativePath(target), size: opened.size, ...result };
+        } finally {
+          stream.destroy();
+        }
+      } finally {
+        await file.close();
+      }
+    }
+    const maxBytes = options;
     const file = Bun.file(target);
     const bytes = new Uint8Array(await file.arrayBuffer());
     const slice = bytes.byteLength > maxBytes ? bytes.slice(0, maxBytes) : bytes;
@@ -844,7 +871,7 @@ export class LocalWorkspace implements WorkspaceRuntime {
     return runWorkspaceCommand(
       normalized,
       this.root,
-      Math.min(timeoutMs, MAX_RUN_TIMEOUT_MS),
+      Math.min(timeoutMs, MAX_BUDGETED_RUN_TIMEOUT_MS),
       maxBytes,
       this.hostExecForbidden,
     );

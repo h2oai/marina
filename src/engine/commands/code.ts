@@ -227,7 +227,20 @@ const filesHandler: SubcommandHandler = async (c) => {
   await files(c.ctx, c.eid, c.entity, c.deps, c.args.join(" ") || ".");
 };
 const readHandler: SubcommandHandler = async (c) => {
-  await readFile(c.ctx, c.eid, c.entity, c.deps, c.args.join(" "));
+  const parsed = parseModifiers(c.args, {
+    offset: { type: "int" },
+    limit: { type: "int" },
+    column: { type: "int" },
+  });
+  if (parsed.errors.length) {
+    refuseCommand(c.ctx, c.eid, parsed.errors.join("; "));
+    return;
+  }
+  await readFile(c.ctx, c.eid, c.entity, c.deps, parsed.rest.join(" "), {
+    offset: parsed.values.offset as number | undefined,
+    limit: parsed.values.limit as number | undefined,
+    column: parsed.values.column as number | undefined,
+  });
 };
 /** test / lint / typecheck / build / dashboard:build — the canonical name IS the command. */
 const namedRunHandler: SubcommandHandler = async (c) => {
@@ -600,6 +613,15 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       { syntax: "code project switch <id|name>", effect: "write" },
       { syntax: "code run --argv <json-array>", effect: "execute" },
       { syntax: "code read <path>", effect: "read" },
+      {
+        syntax: "code read <path> [offset:<line>] [limit:<lines>] [column:<character>]",
+        effect: "read",
+        fields: {
+          offset: { kind: "number", integer: true, min: 1, max: Number.MAX_SAFE_INTEGER },
+          limit: { kind: "number", integer: true, min: 1, max: Number.MAX_SAFE_INTEGER },
+          column: { kind: "number", integer: true, min: 1, max: Number.MAX_SAFE_INTEGER },
+        },
+      },
       { syntax: "code see <path> [question]", effect: "write" },
       { syntax: "code recipe", effect: "read" },
       { syntax: "code recipe list", effect: "read" },

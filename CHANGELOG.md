@@ -133,6 +133,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SDK conformance: one scenario list every SDK must pass.** `protocol/conformance.md` defines
+  eight scenarios (a coding run, commands with typed forms, reconnect after a dropped socket, an
+  agent asking and answering by tell, typed memory calls with retry through a real rate limit, the
+  live panel event stream, typed routing calls, and `Marina.local` on a clean machine) and the
+  JSON-lines driver each SDK ships. `test/sdk-conformance.test.ts` runs every SDK's driver against
+  a live server with the same assertions; the TypeScript SDK passes all eight.
 - **The protocol is written down, so any language can drive Marina.** `protocol/README.md` walks
   through the whole WebSocket conversation: log in, run a command, read its output and result, run
   a coding task and follow its steps, edits and result, reconnect. `marina.wire.v1.schema.json`
@@ -813,6 +819,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A dropped agent connection gets its own entity back on reconnect.** The periodic orphan
+  sweep removed every agent without a live connection, ignoring the 60 s reconnect grace, so a
+  client whose reconnect straddled the sweep (every 60 s) resumed its token as a brand-new
+  entity: same name, but its in-memory state (room presence, crew membership, queued commands)
+  lost. The sweep now leaves an entity inside its grace to the grace timer. Found by the SDK
+  conformance suite's reconnect scenario.
+- **`waitForTell` in the TypeScript SDK hears tells.** It waited for a `subkind` and a `from`
+  field the server has never sent, so it always timed out. It now matches the documented tell
+  frame (`tag: "tell"` with `senderName`) and returns the message.
+- **Marina no longer fills the disk.** A world kept everything its agents journaled, so a busy
+  install grew without limit until the drive was full. A storage budget now caps what a world
+  keeps on disk at 5 GiB by default (`MARINA_STORAGE_MAX_BYTES`, `off` for no cap) and leaves at
+  least 1 GiB free on the disk (`MARINA_STORAGE_MIN_FREE_BYTES`). At startup and every hour it
+  measures the database, uploaded files and scratch files; past 90 % it frees space, oldest and
+  least valuable first (overdue retention, then agents' archived conversation transcripts older
+  than 30, 14, 7, 3 or 1 days, then telemetry older than a day), and gives the freed space back to
+  the disk. Facts, lessons, tasks, the chronicle, ledgers and people's files are never removed. A
+  world still over its cap pauses its agents and raises one critical alert until there is room;
+  people keep working, and `readiness` shows what is using the space. An existing database is
+  rewritten once at the next startup to return its free space.
 - **New files a coder creates show in every "what changed" view.** The workspace diff left out
   files git does not track yet, so a coding run that added a test file reported "1 file changed"
   and the review snapshot and checkpoints missed the new file. Untracked files (`.gitignore`

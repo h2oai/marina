@@ -1,6 +1,11 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type FileReadOptions,
+  fileReadContinuation,
+  resolveFileReadOptions,
+} from "../../../coding/file-read";
 import type { WorkspaceRuntime } from "../../../coding/local-workspace";
 import {
   formatProjectInstructions,
@@ -83,15 +88,21 @@ export async function readFile(
   entity: Entity,
   deps: CodeDeps & { db: MarinaDB },
   path: string,
+  options: FileReadOptions = {},
 ): Promise<void> {
   if (!path.trim()) {
-    refuseCommand(ctx, eid, "Usage: code read <path>");
+    refuseCommand(
+      ctx,
+      eid,
+      "Usage: code read <path> [offset:<line>] [limit:<lines>] [column:<character>]",
+    );
     return;
   }
+  const range = resolveFileReadOptions(options);
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const workspace = workspaceForSession(deps, session);
-  const result = await workspace.read(path).catch((error: unknown) => {
+  const result = await workspace.read(path, range).catch((error: unknown) => {
     // A receipt is durable world data, not a source file. Offer the precise
     // recovery only for artifacts in this already-authorized session. Never
     // reinterpret a successful file read or disclose another session's IDs.
@@ -108,6 +119,9 @@ export async function readFile(
       );
     throw error;
   });
+  if (!result.page) throw new Error("Workspace does not support line-range reads.");
+  const { numberedContent, ...page } = result.page;
+  const continuation = fileReadContinuation(result.path, result.page);
   const instructions = await loadProjectInstructions({
     root: workspace.displayRoot(),
     target: result.path,
@@ -122,22 +136,35 @@ export async function readFile(
       path: result.path,
       size: result.size,
       truncated: result.truncated,
+      ...page,
+      continuation,
       projectInstructions: instructionMetadata,
     },
   });
-  const suffix = result.truncated ? dim("\n[truncated]") : "";
+  const suffix = continuation ? dim(`\n[truncated; continue with: ${continuation}]`) : "";
+  const content =
+    numberedContent ||
+    (continuation
+      ? "[No content in the requested range.]"
+      : `[No lines at offset ${range.offset}; EOF.]`);
   sendCode(
     ctx,
     eid,
     [
-      `${header(result.path)} ${dim(`${result.size}b`)}\n${result.content}${suffix}`,
+      `${header(result.path)} ${dim(`${result.size}b`)}\n${content}${suffix}`,
       ...formatProjectInstructions(instructions),
     ].join("\n"),
     {
-      commands: [`code diff ${result.path}`, `code search ${result.path}`],
-      content: result.content,
+      commands: [
+        ...(continuation ? [continuation] : []),
+        `code diff ${result.path}`,
+        `code search ${result.path}`,
+      ],
+      content,
       event: "file_read",
       metadata: {
+        ...page,
+        continuation,
         projectInstructions: instructionMetadata,
         contextBlocks: projectInstructionContextBlocks(instructions),
       },
