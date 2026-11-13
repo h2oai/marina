@@ -23,6 +23,8 @@ export const PROTECTED_PATHS: readonly string[] = [
   "src/engine/role-guard.ts",
   "src/engine/trust-profile.ts",
   "src/engine/evidence-fence.ts",
+  "src/engine/panel-authority.ts",
+  "src/net/canvas/panel-actor.ts",
   "src/engine/command-phase-coordinator.ts",
   "src/engine/auth-coordinator.ts",
   "src/auth/",
