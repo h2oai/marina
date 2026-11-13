@@ -1261,9 +1261,11 @@ describe.skipIf(!BWRAP || !VAR_TMP)("SandboxWorkspace (real bubblewrap)", () => 
     for (const entry of listed.output.split("\n").filter(Boolean))
       expect(allowed.has(entry)).toBe(true);
     if (bun.startsWith(`${home}/`)) {
-      // Only the executable: its siblings in the same directory stay hidden.
+      // Only Bun itself: the executable alone, or its directory when that holds
+      // nothing but bun/bunx (a fresh setup-bun install). Nothing else is visible.
       const siblings = await real.run(["sh", "-c", `ls -A ${join(bun, "..")}`]);
-      expect(siblings.output.split("\n").filter(Boolean).sort()).toEqual(["bun"]);
+      const seen = siblings.output.split("\n").filter(Boolean).sort();
+      expect([["bun"], ["bun", "bunx"]]).toContainEqual(seen);
     }
     writeFileSync(
       join(root, "x.test.ts"),
@@ -1308,8 +1310,13 @@ describe.skipIf(!BWRAP || !VAR_TMP)("SandboxWorkspace (real bubblewrap)", () => 
 
   it("no nested user namespaces; prlimit caps apply; tmpfs is size-capped", async () => {
     expect((await ws.run(["unshare", "-U", "true"])).exitCode).not.toBe(0);
-    const limits = await ws.run(["sh", "-c", "ulimit -u; ulimit -c"]);
-    expect(limits.output.trim().split("\n")).toEqual(["4096", "0"]);
+    // Read the soft limits from the kernel: `ulimit -u` is not POSIX (dash lacks it).
+    const limits = await ws.run([
+      "sh",
+      "-c",
+      "awk '/^Max processes|^Max core file size/ {print $(NF-2)}' /proc/self/limits",
+    ]);
+    expect(limits.output.trim().split("\n")).toEqual(["0", "4096"]);
     const small = new SandboxWorkspace(root, [], {
       home: join(fakeSystem, "home"),
       systemPaths: [...systemPaths, fakeSystem],
