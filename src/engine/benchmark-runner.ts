@@ -199,6 +199,15 @@ export interface BenchmarkRunOptions {
   capUsd?: number;
   /** Explicit replicate group for the run's ledger row (`benchmark compare-run` sets one per arm). */
   replicateGroup?: string;
+  /**
+   * Measure another Marina instead of this one (a code trial's child build):
+   * its endpoint and the key it accepts. No run key is minted (one would be
+   * valid only in this process), so a remote run takes no arm or cap; the
+   * child enforces its own daily spend cap.
+   */
+  target?: HarnessTarget;
+  /** The source revision the remote target runs, recorded instead of this server's. */
+  source?: string;
 }
 
 let cachedSource: string | null | undefined;
@@ -480,7 +489,9 @@ export function benchmarkRunConfig(
     ...(opts.arm ? { arm: opts.arm.trim().toLowerCase() } : {}),
     ...(opts.capUsd !== undefined ? { capUsd: opts.capUsd } : {}),
     ...(opts.replicateGroup ? { replicateGroup: opts.replicateGroup } : {}),
-    ...(sourceRevision() ? { source: sourceRevision() as string } : {}),
+    ...((opts.source ?? sourceRevision())
+      ? { source: (opts.source ?? sourceRevision()) as string }
+      : {}),
     ...(Object.keys(serverFeatures).length ? { serverFeatures } : {}),
   };
 }
@@ -600,6 +611,10 @@ export class BenchmarkRunner {
       if ("error" in stack) throw new Error(stack.error);
     }
     if (opts.capUsd !== undefined && !(opts.capUsd > 0)) throw new Error("cap must be above $0");
+    if (opts.target && (opts.arm || opts.capUsd !== undefined))
+      throw new Error("a run on another Marina takes no arm or cap; that Marina enforces its own");
+    if (opts.target && !/^[0-9a-f]{7,40}(-dirty)?$/.test(opts.source ?? ""))
+      throw new Error("a run on another Marina names the source revision it runs");
     // A run never grades itself unless it opts in (src/engine/benchmark-judge.ts).
     // Benchmarks no judge grades get none.
     const entry = benchmarkEntry(opts.benchmark);
@@ -671,9 +686,9 @@ export class BenchmarkRunner {
     started: number,
   ): Promise<void> {
     const resultFile = join(benchmarkResultsDir(), `${id}.json`);
-    const target = this.target();
+    const target = opts.target ?? this.target();
     const crewRun = config.targetKind === "crew";
-    const grant = runKeyGrant(id, opts, config);
+    const grant = opts.target ? undefined : runKeyGrant(id, opts, config);
     if (grant?.entityName && !this.db.getUserByName(grant.entityName))
       this.db.createUser({ id: `benchmark:${id}`, name: grant.entityName });
     const runKey = grant

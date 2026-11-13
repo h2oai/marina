@@ -184,6 +184,29 @@ describe("BenchmarkRunner judge and ledger target", () => {
     );
   });
 
+  test("a run on another Marina records that build's source and never mints a run key", () => {
+    const remote = { endpoint: "http://127.0.0.1:1", apiKey: "child-key" };
+    const config = benchmarkRunConfig(
+      { benchmark: "smoke", model: "marina", target: remote, source: "abcdef123456" },
+      {},
+    );
+    expect(config.source).toBe("abcdef123456");
+    // The key and endpoint are never part of the recorded configuration.
+    expect(JSON.stringify(config)).not.toContain("child-key");
+    expect(JSON.stringify(config)).not.toContain("127.0.0.1:1");
+    const runner = new ReadyRunner(db, () => {});
+    expect(() =>
+      runner.start({ benchmark: "smoke", target: remote, source: "abcdef123456", capUsd: 1 }),
+    ).toThrow(/takes no arm or cap/);
+    expect(() =>
+      runner.start({ benchmark: "smoke", target: remote, source: "abcdef123456", arm: "bare" }),
+    ).toThrow(/takes no arm or cap/);
+    expect(() => runner.start({ benchmark: "smoke", target: remote })).toThrow(
+      /names the source revision/,
+    );
+    expect(db.queryBenchmarkRuns({ benchmark: "smoke", limit: 5 })).toEqual([]);
+  });
+
   test("a crew run files as a crew target with its formation", () => {
     const runner = new BenchmarkRunner(db, () => {});
     const config = benchmarkRunConfig(
