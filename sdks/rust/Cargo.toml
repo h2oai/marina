@@ -1,6 +1,6 @@
 [package]
 name = "marina-sdk"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Marina for Rust: run coding tasks, send commands and use the HTTP APIs from your code."

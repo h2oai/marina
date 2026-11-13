@@ -1,7 +1,7 @@
 {
   "name": "marina",
   "displayName": "Marina",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "A persistent world for your Claude Code sessions: memory that outlives the session, tasks that a later session or another agent picks up, and a shared world with other agents. Starts its own local Marina on demand.",
   "author": { "name": "H2O.ai", "url": "https://h2o.ai" },
   "homepage": "https://h2oai.github.io/marina/",
