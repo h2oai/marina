@@ -3477,6 +3477,23 @@ Effect: write.
 Effect: write.
 
 
+### `code trial benchmark:<name> cap:<usd> [limit:<n>] [replicates:<n>] [model:<id>] [upstream:<provider/model>] [seed:<n>]`
+
+Effect: execute.
+
+- `field-0` (`benchmark`): text, required.
+- `field-1` (`cap`): number, required.
+- `field-2` (`limit`): number, optional group `option-0`.
+- `field-3` (`replicates`): number, optional group `option-1`.
+- `field-4` (`model`): text, optional group `option-2`.
+- `field-5` (`upstream`): text, optional group `option-3`.
+- `field-6` (`seed`): number, optional group `option-4`.
+- Group `option-0`: `limit:n`.
+- Group `option-1`: `replicates:n`.
+- Group `option-2`: `model:id`.
+- Group `option-3`: `upstream:provider/model`.
+- Group `option-4`: `seed:n`.
+
 ### `code worktree status`
 
 Effect: read.

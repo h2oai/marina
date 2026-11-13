@@ -3,13 +3,12 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { DATA_DIR_PATHS, dataDir } from "../config/data-dir";
+import { dataDir } from "../config/data-dir";
 import { tryLog } from "../engine/errors";
 import { Logger } from "../engine/logger";
-import { childSpendEnv } from "../engine/spend-ledger";
 import type { MarinaDB } from "../persistence/database";
-import { keySecretIsAutomatic } from "../persistence/key-secret-file";
 import { MARINA_ROOT } from "../runtime-paths";
+import { type ChildMarina, inheritedChildEnv, spawnChildMarina } from "./child-marina";
 
 const logger = new Logger();
 const SAFE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,47}$/;
@@ -44,7 +43,7 @@ function startTimeoutMs(): number {
 }
 
 export class WorldCollectiveManager {
-  private readonly processes = new Map<string, Bun.Subprocess>();
+  private readonly processes = new Map<string, ChildMarina>();
   readonly sourceRoot: string;
 
   constructor(
@@ -118,50 +117,17 @@ export class WorldCollectiveManager {
     if (this.processes.has(id)) throw new Error("Variant is already running.");
     if (!this.sourceAvailable()) throw new Error("Marina source is not available.");
     this.db.updateWorldVariant(id, { status: "starting", pid: null, lastError: null });
-    const assetsDir = join(dirname(variant.db_path), "assets");
     // The variant's directory can be gone (a cleaned checkout); the child
     // cannot open its database without it, so recreate it rather than crash.
-    mkdirSync(assetsDir, { recursive: true });
-    const child = Bun.spawn([process.execPath, "run", "src/main.ts"], {
-      cwd: variant.source_root,
-      env: {
-        ...inheritedChildEnv(process.env, dirname(variant.db_path)),
-        MARINA_NAME: variant.name,
-        MARINA_WORLD: variant.world_template,
-        MARINA_COLLECTIVE_CHILD: "1",
-        // A child world spends against its own daily budget ($50 unless the
-        // parent sets MARINA_CHILD_DAILY_SPEND_CAP_USD), never more than the
-        // parent's own cap; under a shared MARINA_SPEND_LEDGER that budget is
-        // a `child:<name>` scope inside the parent's one shared cap.
-        ...childSpendEnv(variant.name),
-        DB_PATH: variant.db_path,
-        ASSETS_DIR: assetsDir,
-        WS_PORT: String(variant.ws_port),
-        MCP_PORT: String(variant.ws_port + 1),
-        LOG_PORT: String(variant.ws_port + 2),
-        // Telnet is plaintext + unauthenticated: descendants never get one
-        // (explicit "0" also prevents inheriting the parent's TELNET_PORT,
-        // which would collide across children).
-        TELNET_PORT: "0",
-        AGENT_AUTORESPAWN: "false",
-      },
-      stdout: "ignore",
-      stderr: "pipe",
+    mkdirSync(join(dirname(variant.db_path), "assets"), { recursive: true });
+    const child = spawnChildMarina({
+      name: variant.name,
+      sourceRoot: variant.source_root,
+      dir: dirname(variant.db_path),
+      dbPath: variant.db_path,
+      port: variant.ws_port,
+      env: { MARINA_WORLD: variant.world_template, MARINA_COLLECTIVE_CHILD: "1" },
     });
-    // Keep the tail of the child's stderr (drained continuously so a chatty
-    // child never blocks on a full pipe) — a failed start says WHY.
-    let stderrTail = "";
-    void (async () => {
-      const decoder = new TextDecoder();
-      for await (const chunk of child.stderr as ReadableStream<Uint8Array>) {
-        stderrTail = (stderrTail + decoder.decode(chunk, { stream: true })).slice(-2_000);
-      }
-      // allow-empty-catch: the stderr tail is diagnostic only
-    })().catch(() => undefined);
-    const why = (base: string) => {
-      const tail = stderrTail.trim().split("\n").slice(-3).join(" | ").slice(-400);
-      return tail ? `${base} Last output: ${tail}` : base;
-    };
     this.processes.set(id, child);
     this.db.updateWorldVariant(id, { status: "starting", pid: child.pid, lastError: null });
     void child.exited.then((exitCode) => {
@@ -173,19 +139,18 @@ export class WorldCollectiveManager {
           this.db.updateWorldVariant(id, {
             status: exitCode === 0 ? "stopped" : "failed",
             pid: null,
-            lastError: exitCode === 0 ? null : why(`Child exited with code ${exitCode}.`),
+            lastError: exitCode === 0 ? null : child.why(`Child exited with code ${exitCode}.`),
           });
         }
       });
     });
-    const ready = await this.waitForReady(variant.ws_port, child);
-    if (!ready) {
-      child.kill();
+    if (!(await child.ready(startTimeoutMs()))) {
+      await child.stop();
       this.processes.delete(id);
       return this.db.updateWorldVariant(id, {
         status: "failed",
         pid: null,
-        lastError: why(
+        lastError: child.why(
           `Child did not become ready within ${Math.round(startTimeoutMs() / 1000)} seconds.`,
         ),
       })!;
@@ -198,15 +163,7 @@ export class WorldCollectiveManager {
     if (!variant) throw new Error("Variant not found.");
     const child = this.processes.get(id);
     if (child) {
-      child.kill();
-      const exited = await Promise.race([
-        child.exited.then(() => true),
-        new Promise<false>((resolveTimeout) => setTimeout(() => resolveTimeout(false), 5_000)),
-      ]);
-      if (!exited && child.exitCode === null) {
-        child.kill(9);
-        await child.exited;
-      }
+      await child.stop();
       this.processes.delete(id);
     }
     return this.db.updateWorldVariant(id, {
@@ -237,63 +194,6 @@ export class WorldCollectiveManager {
     })!;
     return promoted;
   }
-
-  private async waitForReady(port: number, child: Bun.Subprocess): Promise<boolean> {
-    const deadline = Date.now() + startTimeoutMs();
-    while (Date.now() < deadline) {
-      if (child.exitCode !== null) return false;
-      try {
-        const response = await fetch(`http://127.0.0.1:${port}/api/setup-status`, {
-          signal: AbortSignal.timeout(500),
-        });
-        if (response.ok) return true;
-      } catch {
-        // Expected while the child binds its ports and applies migrations.
-      }
-      await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 200));
-    }
-    return false;
-  }
 }
 
-/** Model caches: read-mostly downloads a child may share with its parent rather than fetch again. */
-const SHARED_DATA_DIR_PATHS = new Set([
-  "MARINA_MEMORY_EMBEDDING_CACHE",
-  "MARINA_CORPUS_EMBEDDING_CACHE",
-]);
-
-/**
- * The parent's environment for a child world, minus what belongs to the
- * parent alone:
- *
- * - an automatic key-encryption secret: it belongs to the file next to the
- *   PARENT's database, so the child mints its own beside its database;
- * - the parent's `MARINA_DATA_DIR` and the paths derived from it (auth
- *   database, scratch): the child gets its own data directory, `variantDir`,
- *   so it never writes the parent's `endpoint.json` or opens its auth
- *   database. Model caches stay shared. An explicitly set path still passes;
- * - the embedding lifecycle: no inherited `MARINA_IDLE_SHUTDOWN` (the parent
- *   decides when a child stops) or `MARINA_SINGLE_PORT` (a child keeps the
- *   port layout the collective assigns), and `MARINA_PARENT_PID` names THIS
- *   process, so a child never outlives the Marina that started it.
- */
-export function inheritedChildEnv(
-  env: NodeJS.ProcessEnv = process.env,
-  variantDir?: string,
-): NodeJS.ProcessEnv {
-  const copy = { ...env };
-  if (keySecretIsAutomatic()) delete copy.MARINA_KEY_SECRET;
-  delete copy.MARINA_IDLE_SHUTDOWN;
-  delete copy.MARINA_SINGLE_PORT;
-  copy.MARINA_PARENT_PID = String(process.pid);
-  const parentDir = dataDir(env);
-  if (parentDir) {
-    for (const [key, name] of Object.entries(DATA_DIR_PATHS)) {
-      if (SHARED_DATA_DIR_PATHS.has(key)) continue;
-      if (copy[key] === join(parentDir, name)) delete copy[key];
-    }
-    if (variantDir) copy.MARINA_DATA_DIR = resolve(variantDir);
-    else delete copy.MARINA_DATA_DIR;
-  }
-  return copy;
-}
+export { inheritedChildEnv };

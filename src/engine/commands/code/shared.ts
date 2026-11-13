@@ -22,6 +22,7 @@ import type {
   EntityId,
   RoomContext,
 } from "../../../types";
+import type { BenchmarkRunner } from "../../benchmark-runner";
 import { failCommandResponse, refuseCommand } from "../../command-response";
 import { sanitizeEntityName } from "../../entity-name";
 import type { VisualDescription, VisualSource } from "../../media/vision";
@@ -319,6 +320,8 @@ export const CODE_EXEC_SUBCOMMANDS = new Set<string>([
   "service",
   "edit",
   "write",
+  // A trial boots this session's build as a child Marina: it runs the session's code.
+  "trial",
   // Choosing where commands execute (host vs a container image) is an
   // execution change, so configuring a runner is earned like running.
   "runner",
@@ -395,6 +398,10 @@ export interface CodeDeps {
    * isolated automatically.
    */
   marinaRoot?: string;
+  /** The world's benchmark runner, for `code trial` (absent ⇒ trials are unavailable). */
+  benchmarkRunner?: Pick<BenchmarkRunner, "start" | "done" | "list" | "datasetReady">;
+  /** The concrete `provider/model` this server's default resolves to (a trial's builds use it). */
+  defaultUpstream?: () => string | undefined;
   describeVisual?: (
     source: VisualSource,
     question: string,

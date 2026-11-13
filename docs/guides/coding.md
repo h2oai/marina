@@ -384,6 +384,33 @@ Reading (`code read`, `code search`, `code diff`) stays on the checkout until th
 clone or a linked worktree is an ordinary repository and is not isolated automatically. If the
 worktree cannot be created, the command is refused and nothing changes.
 
+### Measure a change to Marina
+
+```text
+code trial benchmark:<name> cap:<usd> [limit:<n>] [replicates:<n>] [model:<id>] [upstream:<provider/model>] [seed:<n>]
+```
+
+`code trial` measures the session's change against the build it branched from:
+
+1. It snapshots the session's worktree, uncommitted changes included, without moving the branch.
+2. It starts the base build and the candidate build as two child Marinas, each on its own port
+   and database, from temporary trees.
+3. This Marina's harness sends both the same benchmark items, in paired replicates (default 2 of
+   50 items). Each run is filed in the ledger with the commit it measured.
+4. The verdict uses the rule that changes any default: the paired interval above zero and the
+   gain past the margin for the number of trials already tried. It is one of `candidate-wins`,
+   `candidate-regresses`, `no-measurable-difference` or `incomplete`.
+
+The trial runs in the background and reports here; `code show <artifact>` has the numbers.
+The builds run someone's unreviewed code, so they get no provider key and no path into this
+Marina's data. Their only model access is this Marina's `/v1`, through a key minted for the trial
+that adds no instruments of its own, stops at `cap:` and is revoked when the trial ends. Their
+default model is the provider model this Marina's default resolves to; `upstream:<provider/model>`
+names another.
+Both builds are stopped and their trees removed when the trial ends. The benchmark's dataset must
+be downloaded first (`benchmark fetch <name>`). A trial runs the session's code, so it takes the
+`code.exec` capability.
+
 ## Code inside an existing world
 
 Use connected coding when your Marina already contains conversations, agents and ongoing
