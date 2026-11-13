@@ -14727,6 +14727,10 @@
               "model": {
                 "type": "string"
               },
+              "effort": {
+                "description": "Reasoning depth: off, minimal, low, medium, high or xhigh; unset keeps the runtime's default.",
+                "type": "string"
+              },
               "prompt": {
                 "type": "string"
               },
@@ -14918,6 +14922,10 @@
             "type": "string"
           },
           "model": {
+            "type": "string"
+          },
+          "effort": {
+            "description": "Reasoning depth the run was launched with (off, minimal, low, medium, high, xhigh).",
             "type": "string"
           },
           "resumeSupported": {

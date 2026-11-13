@@ -311,6 +311,7 @@ export class NativeTerminal {
       label,
       workspace,
       model: harness.model,
+      ...(harness.thinking ? { effort: harness.thinking } : {}),
     });
     const agent = [...this.agents.values()].find(
       (a) => a.session.clientKey === `run:${message.id}`,
