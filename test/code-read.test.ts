@@ -224,9 +224,9 @@ describe("code read command", () => {
       content: "1: first\n2: second\n3: third\n",
     });
     const command = codeCommand({ getEntity: () => undefined });
-    const form = describeCommand(command).forms?.find((entry) =>
-      entry.syntax.startsWith("code read "),
-    );
+    const forms = describeCommand(command).forms ?? [];
+    expect(forms.find((entry) => entry.syntax === "code read <path>")?.effect).toBe("read");
+    const form = forms.find((entry) => entry.syntax.startsWith("code read <path> [offset"));
     expect(form).toMatchObject({
       syntax: "code read <path> [offset:<line>] [limit:<lines>] [column:<character>]",
       effect: "read",

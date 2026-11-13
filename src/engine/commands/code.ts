@@ -607,6 +607,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       { syntax: "code project status", effect: "read" },
       { syntax: "code project switch <id|name>", effect: "write" },
       { syntax: "code run --argv <json-array>", effect: "execute" },
+      { syntax: "code read <path>", effect: "read" },
       {
         syntax: "code read <path> [offset:<line>] [limit:<lines>] [column:<character>]",
         effect: "read",

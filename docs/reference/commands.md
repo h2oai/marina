@@ -2904,6 +2904,12 @@ Effect: execute.
 
 - `field-0` (`json-array`): json, required.
 
+### `code read <path>`
+
+Effect: read.
+
+- `field-0` (`path`): text, required.
+
 ### `code read <path> [offset:<line>] [limit:<lines>] [column:<character>]`
 
 Effect: read.
