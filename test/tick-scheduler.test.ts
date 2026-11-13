@@ -457,6 +457,7 @@ describe("Engine tick schedule", () => {
       { name: "agent-cleanup", every: 60, phase: 0 },
       { name: "rank-progression", every: 3600, phase: 3000 },
       { name: "lessons-from-work", every: 3600, phase: 3300 },
+      { name: "self-improve-finder", every: 3600, phase: 3350 },
       { name: "outcome-delivery", every: 300, phase: 150 },
       // ~5 s, floored at 2 ticks so it has a phase of its own (this engine ticks every 60 s).
       { name: "media-video-poll", every: 2, phase: 1 },

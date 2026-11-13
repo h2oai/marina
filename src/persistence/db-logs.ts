@@ -151,3 +151,21 @@ function toStoredLog(row: LogRow): StoredLogEntry {
     ...(row.entity_id ? { entityId: row.entity_id } : {}),
   };
 }
+
+export interface ProblemLogRow {
+  level: "warn" | "error";
+  category: string;
+  message: string;
+  data: string | null;
+  timestamp: number;
+}
+
+/** Warnings and errors since `sinceMs`, newest first (the self-improvement work finder). */
+export function recentProblemLogs(db: Database, sinceMs: number, limit = 50_000): ProblemLogRow[] {
+  return db
+    .query(
+      `SELECT level, category, message, data, timestamp FROM structured_logs
+       WHERE level IN ('warn', 'error') AND timestamp > ? ORDER BY timestamp DESC LIMIT ?`,
+    )
+    .all(sinceMs, limit) as ProblemLogRow[];
+}

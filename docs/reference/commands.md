@@ -3503,6 +3503,11 @@ Effect: execute.
 - Group `option-0`: `merge`.
 - Group `option-1`: `-- title`.
 
+### `code improve`
+
+Effect: read.
+
+
 ### `code worktree status`
 
 Effect: read.

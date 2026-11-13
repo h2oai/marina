@@ -432,6 +432,18 @@ The repository's own checks and merge queue still decide whether the change land
 uses the server's `gh` sign-in. A person ships; an agent ships only under
 `MARINA_AUTONOMY=sovereign`. The result arrives here, and `code show <artifact>` has the link.
 
+### Find what to fix
+
+`code improve` shows what Marina's own log says needs fixing. Every hour the work finder reads
+this server's warnings and errors from the last 24 hours and groups them by signature: level,
+category and message, with names, numbers and quoted values masked, so one bug reported for many
+residents counts once. A signature seen 20 or more times is a candidate.
+
+With `MARINA_SELF_IMPROVE=on`, each candidate becomes one task, at most 3 a day. The task names the
+signature, its count and the latest error text, and says how to fix it on Marina's own source:
+a Code Mode session, `code trial`, then `code ship`. The default, `observe`, only lists candidates;
+`off` reads nothing.
+
 ## Code inside an existing world
 
 Use connected coding when your Marina already contains conversations, agents and ongoing

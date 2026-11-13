@@ -61,6 +61,7 @@ import {
   search,
   writeWorkspaceFile,
 } from "./code/files";
+import { improveCode } from "./code/improve";
 import { formatHelp, handleProfile } from "./code/profiles";
 import { projectLifecycle } from "./code/project";
 import { isReviewRequestForm, reviewRequestCommand } from "./code/review-request";
@@ -522,6 +523,9 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   ship: async (c) => {
     await shipCode(c.ctx, c.eid, c.entity, c.deps, c.rawAfterSub);
   },
+  improve: (c) => {
+    improveCode(c.ctx, c.eid, c.deps.db);
+  },
 };
 
 export function codeCommand(deps: CodeDeps): CommandDef {
@@ -741,6 +745,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         effect: "execute",
       },
       { syntax: "code ship [merge] [-- <title>]", effect: "execute" },
+      { syntax: "code improve", effect: "read" },
       { syntax: "code worktree status", effect: "read" },
       { syntax: "code write <path> <content>", effect: "write" },
       { syntax: "code writer [<agent>]", effect: "write" },

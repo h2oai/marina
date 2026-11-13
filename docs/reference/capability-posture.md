@@ -17,7 +17,7 @@ on installs: that line is optional and never raises an alert. `test/capability-p
 fails when a new
 off-by-default setting has no entry.
 
-## Measure (70)
+## Measure (71)
 
 | Subject | Evidence | Promote when | Decide by |
 |---|---|---|---|
@@ -90,6 +90,7 @@ off-by-default setting has no entry.
 | `MARINA_RESEARCH_EVIDENCE` | benchmark ledger forecastbench-backtest | a held-out forecast backtest wins by the promotion margin | 2026-12-01 |
 | `MARINA_RESEARCH_TARGET_EVIDENCE` | benchmark ledger forecastbench-backtest | a held-out forecast backtest wins by the promotion margin | 2026-12-01 |
 | `MARINA_ROUTE_EVIDENCE_WINDOW` | outcomes (any) | live-work evidence picks the same or better models as the benchmark ledger | 2026-12-01 |
+| `MARINA_SELF_IMPROVE` | outcomes kind task | filed improve tasks get fixed (shipped and merged) more often than they are dismissed, and the signatures they name stop recurring | 2027-01-15 |
 | `MARINA_VERIFY_ARBITER` | judge ledger surface arbiter | overrule precision clears the Arbiter's earned bar | 2026-12-01 |
 
 ## By design (39)

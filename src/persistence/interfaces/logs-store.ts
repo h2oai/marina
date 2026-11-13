@@ -10,6 +10,7 @@ export interface LogsStore {
   queryStructuredLogs(query?: logsDb.LogQuery): logsDb.LogPage;
   pruneStructuredLogs(keepLast: number): number;
   pruneEvents(keepLast: number): number;
+  recentProblemLogs(sinceMs: number, limit?: number): logsDb.ProblemLogRow[];
 }
 
 /** Runtime mirror of `LogsStore`'s method names — the drift test compares it to the facade. */
@@ -18,6 +19,7 @@ export const LOGS_STORE_METHODS = [
   "queryStructuredLogs",
   "pruneStructuredLogs",
   "pruneEvents",
+  "recentProblemLogs",
 ] as const satisfies readonly (keyof LogsStore)[];
 
 export const LOGS_STORE_COMPLETE: ExactKeys<LogsStore, typeof LOGS_STORE_METHODS> = true;
