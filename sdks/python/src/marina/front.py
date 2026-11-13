@@ -13,9 +13,12 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Sequence
 
+from . import agent
 from .client import CommandResult, Connection, MarinaError, Session
 from .coding import Coding
-from .http import HttpApi
+from .forms import CommandForm, forms_of
+from .models import InvestigationsApi, MemoryApi, RoutingApi
+from .panels import Panels
 from .wire import Frame
 
 LOCAL_PROTOCOL = "marina.local.v1"
@@ -136,9 +139,9 @@ class Marina:
         self.code = Coding(connection)
         """Code Mode: run coding tasks, follow them, review their changes."""
         self._server = server
-        self._routing: Optional[HttpApi] = None
-        self._investigations: Optional[HttpApi] = None
-        self._panels: Optional[HttpApi] = None
+        self._routing: Optional[RoutingApi] = None
+        self._investigations: Optional[InvestigationsApi] = None
+        self._panels: Optional[Panels] = None
 
     @classmethod
     def connect(
@@ -150,11 +153,17 @@ class Marina:
         principal: str = "agent",
         model: Optional[str] = None,
         command_timeout: float = 120.0,
+        auto_reconnect: bool = True,
     ) -> Marina:
-        """Connect to a running Marina: log in with `name`, or resume a dropped session with `token`."""
+        """Connect to a running Marina: log in with `name`, or resume a dropped session with `token`.
+
+        With `auto_reconnect` (the default) a dropped socket resumes the session on its own.
+        """
         if (name is None) == (token is None):
             raise ValueError("Pass name= to log in, or token= to resume a session (one of them).")
-        connection = Connection(url, principal=principal, model=model, command_timeout=command_timeout)
+        connection = Connection(
+            url, principal=principal, model=model, command_timeout=command_timeout, auto_reconnect=auto_reconnect
+        )
         try:
             if token is not None:
                 connection.resume(token)
@@ -226,29 +235,101 @@ class Marina:
         """Everything the server sends this session. Returns a function that stops listening."""
         return self.connection.on_frame(listener)
 
+    def on_reconnect(self, callback: Callable[[Session], None]) -> Callable[[], None]:
+        """Call `callback(session)` each time a dropped session is back. Returns a function that stops it."""
+        return self.connection.on_reconnect(callback)
+
+    def forms(self, command: str) -> list[CommandForm]:
+        """The typed forms of one command (from `capabilities()`), for `compose_command`."""
+        return forms_of(self.capabilities(), command)
+
+    # ─── Talking to others ────────────────────────────────────────────────
+
+    def tell(self, target: str, message: str) -> CommandResult:
+        """Send `target` a private message."""
+        return self.command(f"tell {target} {message}")
+
+    def say(self, message: str) -> CommandResult:
+        """Say something to the room."""
+        return self.command(f"say {message}")
+
+    def tell_and_await(
+        self,
+        target: str,
+        message: str,
+        timeout: float = 30.0,
+        *,
+        correlate: bool = True,
+        grace: float = agent.TELL_AWAIT_GRACE,
+        ignore_notices: bool = True,
+        strict_correlation: bool = False,
+    ) -> str:
+        """Tell `target` something and wait for its reply; returns the reply's text.
+
+        The message gets a ` [re:<id>]` tag; a reply echoing it wins at once, an untagged one is
+        taken after `grace` seconds. Notices ("I've spent my model-call budget") and tells sent
+        before yours are never the reply. Raises TellTimeout when nothing arrives in time.
+        """
+        return agent.tell_and_await(
+            self.connection,
+            target,
+            message,
+            timeout,
+            correlate=correlate,
+            grace=grace,
+            ignore_notices=ignore_notices,
+            strict_correlation=strict_correlation,
+        )
+
+    def wait_for_tell(self, from_: Optional[str] = None, timeout: float = 30.0) -> str:
+        """Wait for a tell to you (from anyone, or from `from_`); returns its text."""
+        return agent.wait_for_tell(self.connection, from_, timeout)
+
+    # ─── Shortcuts: each one world command ────────────────────────────────
+
+    def look(self, target: Optional[str] = None) -> CommandResult:
+        """`look`: the room, or one thing in it."""
+        return self.command(f"look {target}" if target else "look")
+
+    def who(self) -> CommandResult:
+        """`who`: who is here."""
+        return self.command("who")
+
+    def note(self, text: str) -> CommandResult:
+        """`note <text>`: write a note to your memory."""
+        return self.command(f"note {text}")
+
+    def recall(self, query: str, mode: Optional[str] = None) -> CommandResult:
+        """`recall <query> [mode]`: search your memory (`mode`: recent, important, ...)."""
+        return self.command(f"recall {query} {mode}" if mode else f"recall {query}")
+
+    def task(self, sub: str, *args: str) -> CommandResult:
+        """`task <sub> ...`: the task board (`task("list")`, `task("claim", "12")`)."""
+        return self.command(" ".join(["task", sub, *args]))
+
     # ─── HTTP ─────────────────────────────────────────────────────────────
 
     @property
-    def routing(self) -> HttpApi:
+    def routing(self) -> RoutingApi:
         """Participant routing (`/api/routing`), signed in as this session."""
-        self._routing = self._routing or HttpApi(self.http_url, lambda: self.token, "routing")
+        self._routing = self._routing or RoutingApi(self.http_url, lambda: self.token)
         return self._routing
 
     @property
-    def investigations(self) -> HttpApi:
+    def investigations(self) -> InvestigationsApi:
         """Investigations (`/api/investigations`), signed in as this session."""
-        self._investigations = self._investigations or HttpApi(self.http_url, lambda: self.token, "investigations")
+        self._investigations = self._investigations or InvestigationsApi(self.http_url, lambda: self.token)
         return self._investigations
 
     @property
-    def panels(self) -> HttpApi:
-        """Published panels (`/api/canvases`), signed in as this session."""
-        self._panels = self._panels or HttpApi(self.http_url, lambda: self.token, "panels")
+    def panels(self) -> Panels:
+        """Published panels (`/api/canvases`), signed in as this session, and `watch_changes`."""
+        self._panels = self._panels or Panels(self.http_url, lambda: self.token)
         return self._panels
 
-    def memory(self, credential: str) -> HttpApi:
+    def memory(self, credential: str) -> MemoryApi:
         """Memory (`/v1/memory`), with a memory credential of its own (never the session token)."""
-        return HttpApi(self.http_url, credential, "memory")
+        return MemoryApi(self.http_url, credential)
 
     # ─── Closing ──────────────────────────────────────────────────────────
 

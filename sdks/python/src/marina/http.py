@@ -3,10 +3,10 @@
 """`marina.http.v1`: memory, routing, investigations and panels over HTTP.
 
 Every operation in protocol/marina.http.v1.openapi.json is a method, named in snake_case after
-its operation id:
+its operation id, typed in `marina.models` (generated from the same document):
 
 >>> marina.routing.discover()
->>> marina.memory(credential).remember(space=space_id, body={"content": "Deploys run from main"})
+>>> marina.memory(credential).remember(space_id, {"content": "Deploys run from main"})
 >>> marina.investigations.call("investigation", id="inv_1")
 """
 
@@ -33,6 +33,10 @@ class ApiError(MarinaError):
         self.message = message
         self.retry_after_ms = retry_after_ms
         """On 429 (and some memory failures): wait this long before retrying."""
+
+
+class NetworkError(MarinaError):
+    """The server could not be reached, or the connection failed mid-request (worth retrying)."""
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -131,5 +135,7 @@ class HttpApi:
                 parsed = raw.decode("utf-8", errors="replace")
             raise _error(error.code, parsed, error.headers.get("Retry-After")) from None
         except URLError as error:
-            raise MarinaError(f"Could not reach {self.base_url}: {error.reason}") from error
+            raise NetworkError(f"Could not reach {self.base_url}: {error.reason}") from error
+        except (ConnectionError, TimeoutError) as error:
+            raise NetworkError(f"The request to {self.base_url} failed: {error}") from error
         return json.loads(raw) if raw else None

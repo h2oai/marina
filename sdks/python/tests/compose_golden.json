@@ -1,0 +1,1147 @@
+[
+ {
+  "form": {
+   "syntax": "say <message>",
+   "label": "say <message>",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "message",
+     "label": "message",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    }
+   ],
+   "groups": [],
+   "parts": [
+    {
+     "literal": "say"
+    },
+    {
+     "field": "field-0"
+    }
+   ]
+  },
+  "values": {},
+  "enabled": {},
+  "expected": {
+   "command": "say ",
+   "errors": {
+    "field-0": "Required"
+   }
+  }
+ },
+ {
+  "form": {
+   "syntax": "say <message>",
+   "label": "say <message>",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "message",
+     "label": "message",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    }
+   ],
+   "groups": [],
+   "parts": [
+    {
+     "literal": "say"
+    },
+    {
+     "field": "field-0"
+    }
+   ]
+  },
+  "values": {
+   "field-0": "  hello there  "
+  },
+  "enabled": {},
+  "expected": {
+   "command": "say hello there",
+   "errors": {}
+  }
+ },
+ {
+  "form": {
+   "syntax": "say <message>",
+   "label": "say <message>",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "message",
+     "label": "message",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    }
+   ],
+   "groups": [],
+   "parts": [
+    {
+     "literal": "say"
+    },
+    {
+     "field": "field-0"
+    }
+   ]
+  },
+  "values": {
+   "field-0": "two\nlines"
+  },
+  "enabled": {},
+  "expected": {
+   "command": "say two\nlines",
+   "errors": {
+    "field-0": "Use a single line"
+   }
+  }
+ },
+ {
+  "form": {
+   "syntax": "task claim <id>",
+   "label": "task claim <id>",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "id",
+     "label": "id",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": false
+    }
+   ],
+   "groups": [],
+   "parts": [
+    {
+     "literal": "task"
+    },
+    {
+     "literal": "claim"
+    },
+    {
+     "field": "field-0"
+    }
+   ]
+  },
+  "values": {
+   "field-0": "1 2"
+  },
+  "enabled": {},
+  "expected": {
+   "command": "task claim 1 2",
+   "errors": {
+    "field-0": "Use one value without spaces"
+   }
+  }
+ },
+ {
+  "form": {
+   "syntax": "recall <query> [recent|important]",
+   "label": "recall <query> [recent|important]",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "query",
+     "label": "query",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    },
+    {
+     "id": "field-1",
+     "placeholder": "recent|important",
+     "label": "recent|important",
+     "optionalGroup": "option-0",
+     "kind": "choice",
+     "choices": [
+      "recent",
+      "important"
+     ],
+     "allowNewlines": false,
+     "multiline": false
+    }
+   ],
+   "groups": [
+    {
+     "id": "option-0",
+     "label": "recent|important"
+    }
+   ],
+   "parts": [
+    {
+     "literal": "recall"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "group": "option-0",
+     "children": [
+      {
+       "field": "field-1"
+      }
+     ]
+    }
+   ]
+  },
+  "values": {
+   "field-0": "deploy"
+  },
+  "enabled": {
+   "option-0": true
+  },
+  "expected": {
+   "command": "recall deploy ",
+   "errors": {
+    "field-1": "Required"
+   }
+  }
+ },
+ {
+  "form": {
+   "syntax": "recall <query> [recent|important]",
+   "label": "recall <query> [recent|important]",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "query",
+     "label": "query",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    },
+    {
+     "id": "field-1",
+     "placeholder": "recent|important",
+     "label": "recent|important",
+     "optionalGroup": "option-0",
+     "kind": "choice",
+     "choices": [
+      "recent",
+      "important"
+     ],
+     "allowNewlines": false,
+     "multiline": false
+    }
+   ],
+   "groups": [
+    {
+     "id": "option-0",
+     "label": "recent|important"
+    }
+   ],
+   "parts": [
+    {
+     "literal": "recall"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "group": "option-0",
+     "children": [
+      {
+       "field": "field-1"
+      }
+     ]
+    }
+   ]
+  },
+  "values": {
+   "field-0": "deploy",
+   "field-1": "recent"
+  },
+  "enabled": {
+   "option-0": true
+  },
+  "expected": {
+   "command": "recall deploy recent",
+   "errors": {}
+  }
+ },
+ {
+  "form": {
+   "syntax": "recall <query> [recent|important]",
+   "label": "recall <query> [recent|important]",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "query",
+     "label": "query",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    },
+    {
+     "id": "field-1",
+     "placeholder": "recent|important",
+     "label": "recent|important",
+     "optionalGroup": "option-0",
+     "kind": "choice",
+     "choices": [
+      "recent",
+      "important"
+     ],
+     "allowNewlines": false,
+     "multiline": false
+    }
+   ],
+   "groups": [
+    {
+     "id": "option-0",
+     "label": "recent|important"
+    }
+   ],
+   "parts": [
+    {
+     "literal": "recall"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "group": "option-0",
+     "children": [
+      {
+       "field": "field-1"
+      }
+     ]
+    }
+   ]
+  },
+  "values": {
+   "field-0": "deploy",
+   "field-1": "nope"
+  },
+  "enabled": {
+   "option-0": true
+  },
+  "expected": {
+   "command": "recall deploy nope",
+   "errors": {
+    "field-1": "Choose one of the available values"
+   }
+  }
+ },
+ {
+  "form": {
+   "syntax": "task create <title> [value:<n>]",
+   "label": "task create <title> [value:<n>]",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "title",
+     "label": "title",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    },
+    {
+     "id": "field-1",
+     "placeholder": "n",
+     "label": "value",
+     "optionalGroup": "option-0",
+     "kind": "number",
+     "allowNewlines": false,
+     "multiline": false
+    }
+   ],
+   "groups": [
+    {
+     "id": "option-0",
+     "label": "value:n"
+    }
+   ],
+   "parts": [
+    {
+     "literal": "task"
+    },
+    {
+     "literal": "create"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "group": "option-0",
+     "children": [
+      {
+       "literal": "value:"
+      },
+      {
+       "field": "field-1"
+      }
+     ]
+    }
+   ]
+  },
+  "values": {
+   "field-0": "Ship it",
+   "field-1": "3"
+  },
+  "enabled": {
+   "option-0": true
+  },
+  "expected": {
+   "command": "task create Ship it value:3",
+   "errors": {}
+  }
+ },
+ {
+  "form": {
+   "syntax": "task create <title> [value:<n>]",
+   "label": "task create <title> [value:<n>]",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "title",
+     "label": "title",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    },
+    {
+     "id": "field-1",
+     "placeholder": "n",
+     "label": "value",
+     "optionalGroup": "option-0",
+     "kind": "number",
+     "allowNewlines": false,
+     "multiline": false
+    }
+   ],
+   "groups": [
+    {
+     "id": "option-0",
+     "label": "value:n"
+    }
+   ],
+   "parts": [
+    {
+     "literal": "task"
+    },
+    {
+     "literal": "create"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "group": "option-0",
+     "children": [
+      {
+       "literal": "value:"
+      },
+      {
+       "field": "field-1"
+      }
+     ]
+    }
+   ]
+  },
+  "values": {
+   "field-0": "Ship it",
+   "field-1": "3"
+  },
+  "enabled": {},
+  "expected": {
+   "command": "task create Ship it",
+   "errors": {}
+  }
+ },
+ {
+  "form": {
+   "syntax": "task create <title> [value:<n>]",
+   "label": "task create <title> [value:<n>]",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "title",
+     "label": "title",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    },
+    {
+     "id": "field-1",
+     "placeholder": "n",
+     "label": "value",
+     "optionalGroup": "option-0",
+     "kind": "number",
+     "allowNewlines": false,
+     "multiline": false,
+     "min": 0,
+     "max": 10,
+     "integer": true
+    }
+   ],
+   "groups": [
+    {
+     "id": "option-0",
+     "label": "value:n"
+    }
+   ],
+   "parts": [
+    {
+     "literal": "task"
+    },
+    {
+     "literal": "create"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "group": "option-0",
+     "children": [
+      {
+       "literal": "value:"
+      },
+      {
+       "field": "field-1"
+      }
+     ]
+    }
+   ]
+  },
+  "values": {
+   "field-0": "x",
+   "field-1": "11"
+  },
+  "enabled": {
+   "option-0": true
+  },
+  "expected": {
+   "command": "task create x value:11",
+   "errors": {
+    "field-1": "Enter a number between 0 and 10"
+   }
+  }
+ },
+ {
+  "form": {
+   "syntax": "task create <title> [value:<n>]",
+   "label": "task create <title> [value:<n>]",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "title",
+     "label": "title",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    },
+    {
+     "id": "field-1",
+     "placeholder": "n",
+     "label": "value",
+     "optionalGroup": "option-0",
+     "kind": "number",
+     "allowNewlines": false,
+     "multiline": false,
+     "integer": true
+    }
+   ],
+   "groups": [
+    {
+     "id": "option-0",
+     "label": "value:n"
+    }
+   ],
+   "parts": [
+    {
+     "literal": "task"
+    },
+    {
+     "literal": "create"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "group": "option-0",
+     "children": [
+      {
+       "literal": "value:"
+      },
+      {
+       "field": "field-1"
+      }
+     ]
+    }
+   ]
+  },
+  "values": {
+   "field-0": "x",
+   "field-1": "1.5"
+  },
+  "enabled": {
+   "option-0": true
+  },
+  "expected": {
+   "command": "task create x value:1.5",
+   "errors": {
+    "field-1": "Enter an integer"
+   }
+  }
+ },
+ {
+  "form": {
+   "syntax": "task create <title> [value:<n>]",
+   "label": "task create <title> [value:<n>]",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "title",
+     "label": "title",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    },
+    {
+     "id": "field-1",
+     "placeholder": "n",
+     "label": "value",
+     "optionalGroup": "option-0",
+     "kind": "number",
+     "allowNewlines": false,
+     "multiline": false
+    }
+   ],
+   "groups": [
+    {
+     "id": "option-0",
+     "label": "value:n"
+    }
+   ],
+   "parts": [
+    {
+     "literal": "task"
+    },
+    {
+     "literal": "create"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "group": "option-0",
+     "children": [
+      {
+       "literal": "value:"
+      },
+      {
+       "field": "field-1"
+      }
+     ]
+    }
+   ]
+  },
+  "values": {
+   "field-0": "x",
+   "field-1": "abc"
+  },
+  "enabled": {
+   "option-0": true
+  },
+  "expected": {
+   "command": "task create x value:abc",
+   "errors": {
+    "field-1": "Enter a number"
+   }
+  }
+ },
+ {
+  "form": {
+   "syntax": "task create <title> [value:<n>]",
+   "label": "task create <title> [value:<n>]",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "title",
+     "label": "title",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    },
+    {
+     "id": "field-1",
+     "placeholder": "n",
+     "label": "value",
+     "optionalGroup": "option-0",
+     "kind": "number",
+     "allowNewlines": false,
+     "multiline": false
+    }
+   ],
+   "groups": [
+    {
+     "id": "option-0",
+     "label": "value:n"
+    }
+   ],
+   "parts": [
+    {
+     "literal": "task"
+    },
+    {
+     "literal": "create"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "group": "option-0",
+     "children": [
+      {
+       "literal": "value:"
+      },
+      {
+       "field": "field-1"
+      }
+     ]
+    }
+   ]
+  },
+  "values": {
+   "field-0": "x",
+   "field-1": "0x10"
+  },
+  "enabled": {
+   "option-0": true
+  },
+  "expected": {
+   "command": "task create x value:0x10",
+   "errors": {}
+  }
+ },
+ {
+  "form": {
+   "syntax": "task create <title> [value:<n>]",
+   "label": "task create <title> [value:<n>]",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "title",
+     "label": "title",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    },
+    {
+     "id": "field-1",
+     "placeholder": "n",
+     "label": "value",
+     "optionalGroup": "option-0",
+     "kind": "number",
+     "allowNewlines": false,
+     "multiline": false,
+     "min": 0.5
+    }
+   ],
+   "groups": [
+    {
+     "id": "option-0",
+     "label": "value:n"
+    }
+   ],
+   "parts": [
+    {
+     "literal": "task"
+    },
+    {
+     "literal": "create"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "group": "option-0",
+     "children": [
+      {
+       "literal": "value:"
+      },
+      {
+       "field": "field-1"
+      }
+     ]
+    }
+   ]
+  },
+  "values": {
+   "field-0": "x",
+   "field-1": "0.25"
+  },
+  "enabled": {
+   "option-0": true
+  },
+  "expected": {
+   "command": "task create x value:0.25",
+   "errors": {
+    "field-1": "Enter a number between 0.5 and ∞"
+   }
+  }
+ },
+ {
+  "form": {
+   "syntax": "data set <key> <json>",
+   "label": "data set <key> <json>",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "key",
+     "label": "key",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": false
+    },
+    {
+     "id": "field-1",
+     "placeholder": "json",
+     "label": "json",
+     "kind": "json",
+     "allowNewlines": false,
+     "multiline": true
+    }
+   ],
+   "groups": [],
+   "parts": [
+    {
+     "literal": "data"
+    },
+    {
+     "literal": "set"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "field": "field-1"
+    }
+   ]
+  },
+  "values": {
+   "field-0": "k",
+   "field-1": " { \"b\": 1.0, \"2\": [1e3, \"é\"], \"1\": null } "
+  },
+  "enabled": {},
+  "expected": {
+   "command": "data set k {\"1\":null,\"2\":[1000,\"é\"],\"b\":1}",
+   "errors": {}
+  }
+ },
+ {
+  "form": {
+   "syntax": "data set <key> <json>",
+   "label": "data set <key> <json>",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "key",
+     "label": "key",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": false
+    },
+    {
+     "id": "field-1",
+     "placeholder": "json",
+     "label": "json",
+     "kind": "json",
+     "allowNewlines": false,
+     "multiline": true
+    }
+   ],
+   "groups": [],
+   "parts": [
+    {
+     "literal": "data"
+    },
+    {
+     "literal": "set"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "field": "field-1"
+    }
+   ]
+  },
+  "values": {
+   "field-0": "k",
+   "field-1": "{bad"
+  },
+  "enabled": {},
+  "expected": {
+   "command": "data set k {bad",
+   "errors": {
+    "field-1": "Enter valid JSON"
+   }
+  }
+ },
+ {
+  "form": {
+   "syntax": "data set <key> <json scalar>",
+   "label": "data set <key> <json scalar>",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "key",
+     "label": "key",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": false
+    },
+    {
+     "id": "field-1",
+     "placeholder": "json scalar",
+     "label": "json scalar",
+     "kind": "json",
+     "allowNewlines": false,
+     "multiline": true
+    }
+   ],
+   "groups": [],
+   "parts": [
+    {
+     "literal": "data"
+    },
+    {
+     "literal": "set"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "field": "field-1"
+    }
+   ]
+  },
+  "values": {
+   "field-0": "k",
+   "field-1": "[1]"
+  },
+  "enabled": {},
+  "expected": {
+   "command": "data set k [1]",
+   "errors": {
+    "field-1": "Enter a JSON string, number, boolean, or null"
+   }
+  }
+ },
+ {
+  "form": {
+   "syntax": "pick <a|b> | <c>",
+   "label": "pick <a|b> | <c>",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "a|b",
+     "label": "a|b",
+     "kind": "text",
+     "choices": [
+      "a",
+      "b"
+     ],
+     "allowNewlines": false,
+     "multiline": false
+    },
+    {
+     "id": "field-1",
+     "placeholder": "c",
+     "label": "c",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": false
+    }
+   ],
+   "groups": [],
+   "parts": [
+    {
+     "literal": "pick"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "literal": "|"
+    },
+    {
+     "field": "field-1"
+    }
+   ]
+  },
+  "values": {
+   "field-0": "a",
+   "field-1": "x|y"
+  },
+  "enabled": {},
+  "expected": {
+   "command": "pick a | x|y",
+   "errors": {
+    "field-1": "This field cannot contain a pipe separator"
+   }
+  }
+ },
+ {
+  "form": {
+   "syntax": "agent spawn <name> [role:<role>] [model:<model>]",
+   "label": "agent spawn <name> [role:<role>] [model:<model>]",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "name",
+     "label": "name",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": false
+    },
+    {
+     "id": "field-1",
+     "placeholder": "role",
+     "label": "role",
+     "optionalGroup": "option-0",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": false
+    },
+    {
+     "id": "field-2",
+     "placeholder": "model",
+     "label": "model",
+     "optionalGroup": "option-1",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": false
+    }
+   ],
+   "groups": [
+    {
+     "id": "option-0",
+     "label": "role:role"
+    },
+    {
+     "id": "option-1",
+     "label": "model:model"
+    }
+   ],
+   "parts": [
+    {
+     "literal": "agent"
+    },
+    {
+     "literal": "spawn"
+    },
+    {
+     "field": "field-0"
+    },
+    {
+     "group": "option-0",
+     "children": [
+      {
+       "literal": "role:"
+      },
+      {
+       "field": "field-1"
+      }
+     ]
+    },
+    {
+     "group": "option-1",
+     "children": [
+      {
+       "literal": "model:"
+      },
+      {
+       "field": "field-2"
+      }
+     ]
+    }
+   ]
+  },
+  "values": {
+   "field-0": "bob",
+   "field-1": "coder"
+  },
+  "enabled": {
+   "option-0": true
+  },
+  "expected": {
+   "command": "agent spawn bob role:coder",
+   "errors": {}
+  }
+ },
+ {
+  "form": {
+   "syntax": "note <text>",
+   "label": "note <text>",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "text",
+     "label": "text",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true,
+     "default": "fallback"
+    }
+   ],
+   "groups": [],
+   "parts": [
+    {
+     "literal": "note"
+    },
+    {
+     "field": "field-0"
+    }
+   ]
+  },
+  "values": {},
+  "enabled": {},
+  "expected": {
+   "command": "note fallback",
+   "errors": {}
+  }
+ },
+ {
+  "form": {
+   "syntax": "say <message>",
+   "label": "say <message>",
+   "fields": [
+    {
+     "id": "field-0",
+     "placeholder": "message",
+     "label": "message",
+     "kind": "text",
+     "allowNewlines": false,
+     "multiline": true
+    }
+   ],
+   "groups": [],
+   "parts": [
+    {
+     "literal": "say"
+    },
+    {
+     "field": "field-0"
+    }
+   ],
+   "encoding": "named"
+  },
+  "values": {
+   "field-0": "x"
+  },
+  "enabled": {},
+  "expected": {
+   "command": "",
+   "errors": {
+    "form": "Use this form's named tool, or choose a command form"
+   }
+  }
+ }
+]
