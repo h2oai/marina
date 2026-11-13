@@ -37,6 +37,7 @@ import {
 import { createServer } from "node:net";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { hostGitArgv, hostGitEnv } from "../src/coding/host-git";
 import { diffStat } from "../src/coding/unified-diff";
 import { formatAge } from "../src/engine/commands/format-duration";
 import { waitForDatabaseLease } from "../src/persistence/database-lease";
@@ -794,6 +795,7 @@ export async function runCodeSession(
     ...(opts.agent ? { agent: opts.agent } : {}),
     ...(opts.model ? { model: opts.model } : {}),
     ...(opts.profile ? { profile: opts.profile } : {}),
+    ...(opts.thinking ? { thinking: opts.thinking } : {}),
   });
   if (harness.agent !== "marina" && !installedCodingAdapters().some((a) => a.id === harness.agent))
     throw new Error(`${harness.agent} is not installed in PATH. Install it or use --agent marina.`);
@@ -901,7 +903,7 @@ export async function runCodeSession(
     dbPath,
     serverHome,
     defaultModel,
-    thinking: opts.thinking,
+    thinking: harness.thinking,
   });
 
   // Rolling stderr tail so a boot failure can say why.
@@ -1127,7 +1129,16 @@ export async function runCodeSession(
     if (opts.json) {
       process.stdout.write(
         `${JSON.stringify(
-          printResultJson(outcome, end, diff ? diffFileStats(diff) : [], Date.now() - started),
+          printResultJson(
+            outcome,
+            end,
+            diff
+              ? diffFileStats(diff)
+              : harness.agent === "marina"
+                ? []
+                : workingTreeFileStats(dir),
+            Date.now() - started,
+          ),
         )}\n`,
       );
     }
@@ -1229,6 +1240,45 @@ export async function runCodeSession(
       (opts.json ? process.stderr : process.stdout).write(`\n${terminal.summary}\n`);
     await finishPrint(printOutcome(terminal, opts.allowUnverified), terminal, diff);
   }
+}
+
+/**
+ * Per-file line counts of a folder's uncommitted changes, new files included, read with the
+ * hardened host git. A native one-shot works in the folder itself and has no Marina session
+ * diff, so its result lists what changed from here. With no Git repository or no commit yet
+ * the tracked part is skipped and only untracked files are counted.
+ */
+export function workingTreeFileStats(
+  dir: string,
+): Array<{ path: string; added: number; removed: number }> {
+  const git = (args: string[]) => {
+    const run = Bun.spawnSync(hostGitArgv(["git", ...args]), {
+      cwd: dir,
+      env: hostGitEnv(),
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    return run.exitCode === 0 ? run.stdout.toString() : undefined;
+  };
+  const files: Array<{ path: string; added: number; removed: number }> = [];
+  for (const line of (git(["diff", "--numstat", "HEAD", "--"]) ?? "").split("\n")) {
+    const [added, removed, path] = line.split("\t");
+    if (path) files.push({ path, added: Number(added) || 0, removed: Number(removed) || 0 });
+  }
+  const untracked = git(["ls-files", "--others", "--exclude-standard", "-z"]) ?? "";
+  for (const path of untracked.split("\0")) {
+    if (!path) continue;
+    let added = 0;
+    try {
+      const bytes = readFileSync(join(dir, path));
+      if (!bytes.includes(0))
+        added = bytes.toString("utf8").split("\n").length - (bytes.at(-1) === 10 ? 1 : 0);
+    } catch {
+      // allow-empty-catch: a file removed since it was listed counts as zero lines
+    }
+    files.push({ path, added, removed: 0 });
+  }
+  return files;
 }
 
 /** Per-file added/removed line counts of a unified diff (the shared, hunk-aware parser). */

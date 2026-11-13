@@ -3872,6 +3872,8 @@ export interface RuntimeState {
     cwd: string;
     nativeSessionId?: string;
     model?: string;
+    /** Reasoning depth the run was launched with (off, minimal, low, medium, high, xhigh). */
+    effort?: string;
     resumeSupported?: boolean;
     request?: RuntimeRequest;
     error?: string;
@@ -3892,6 +3894,8 @@ export type RuntimeControl = {
     directory?: string;
     workspace?: "worktree" | "shared";
     model?: string;
+    /** Reasoning depth: off, minimal, low, medium, high or xhigh; unset keeps the runtime's default. */
+    effort?: string;
     prompt?: string;
     /** Supervised residents only: the world name to run as (else one is chosen). */
     name?: string;

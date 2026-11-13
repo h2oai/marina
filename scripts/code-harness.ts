@@ -3,6 +3,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { type AgentThinkingLevel, parseAgentThinkingLevel } from "../src/agent/agent-types";
 
 export const CODING_AGENTS = ["marina", "claude", "codex", "pi"] as const;
 export type CodingAgent = (typeof CODING_AGENTS)[number];
@@ -12,6 +13,8 @@ export interface CodingHarness {
   model?: string;
   /** Marina's command dialect; independent of the native runtime. */
   profile?: CodingAgent;
+  /** Reasoning depth for any runtime (Marina's coder or a native agent); unset keeps its default. */
+  thinking?: AgentThinkingLevel;
 }
 interface HarnessPreferences {
   version: 1;
@@ -29,7 +32,7 @@ export function validateHarness(value: unknown): CodingHarness {
   const row = value as Record<string, unknown>;
   if (row.version !== 1) throw new Error("Unsupported harness version (expected 1)");
   for (const key of Object.keys(row))
-    if (!["version", "agent", "model", "profile"].includes(key))
+    if (!["version", "agent", "model", "profile", "thinking"].includes(key))
       throw new Error(`Unsupported harness field: ${key}`);
   const agent = codingAgent(String(row.agent));
   if (
@@ -42,11 +45,16 @@ export function validateHarness(value: unknown): CodingHarness {
     throw new Error(
       "Model must be a nonempty model identifier without whitespace (up to 256 characters)",
     );
+  const thinking =
+    row.thinking === undefined ? undefined : parseAgentThinkingLevel(String(row.thinking));
+  if (row.thinking !== undefined && !thinking)
+    throw new Error("Thinking must be off, minimal, low, medium, high or xhigh");
   return {
     version: 1,
     agent,
     ...(row.model === undefined ? {} : { model: row.model as string }),
     ...(row.profile === undefined ? {} : { profile: codingAgent(String(row.profile)) }),
+    ...(thinking ? { thinking } : {}),
   };
 }
 

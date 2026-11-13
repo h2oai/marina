@@ -500,9 +500,11 @@ Options:
   --agent <runtime>           marina (default), claude, codex, or pi
   --model <id>                model for the selected runtime; \`route\` picks a tier
                               model for the task from MARINA_ROUTES / tier models
-  --thinking <level>          the coder's reasoning depth (off, minimal, low, medium,
-                              high, xhigh); default MARINA_CODE_THINKING (high), used
-                              only where the model declares reasoning support
+  --thinking <level>          reasoning depth for any runtime (off, minimal, low, medium,
+                              high, xhigh). Marina's coder defaults to MARINA_CODE_THINKING
+                              (high), used only where the model declares reasoning
+                              support; claude, codex and pi get their own effort setting
+                              and keep their defaults when it is omitted
   --driver <name>             Code Mode driver: single (default, one bound coder) or
                               crew (a lead owns the task and its contract; a crew
                               reviews and tests alongside it)

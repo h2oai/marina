@@ -9,6 +9,7 @@ import {
   query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import type { AgentThinkingLevel } from "../agent/agent-types";
 import { getErrorMessage } from "../engine/errors";
 import type { RuntimeRequest, RuntimeState } from "../sdk/routing-runtime-types";
 import { AgentTransport, type WireMessage } from "./agent-transport";
@@ -17,6 +18,8 @@ import { RELAY_SOCKET_ENV } from "./resident-relay";
 export interface AgentOptions {
   cwd: string;
   model?: string;
+  /** Reasoning depth, mapped to each runtime's own control; unset keeps the runtime's default. */
+  effort?: AgentThinkingLevel;
   /** Only a native identity previously recorded by this managed supervisor. */
   resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
@@ -195,13 +198,7 @@ async function codex(options: AgentOptions): Promise<ManagedAgent> {
         // A supervised resident's relay: its sandbox refuses sockets, so the
         // CLI spools through the relay directory — granted as a writable root
         // (that directory only; network access stays off).
-        ...(relayDirectory(options.env)
-          ? {
-              config: {
-                "sandbox_workspace_write.writable_roots": [relayDirectory(options.env)],
-              },
-            }
-          : {}),
+        ...codexConfig(options),
       },
     });
     threadId = String(record(record(response.result).thread).id ?? "");
@@ -265,6 +262,7 @@ async function pi(options: AgentOptions): Promise<ManagedAgent> {
       "rpc",
       ...(options.resumeSessionId ? ["--session", options.resumeSessionId] : []),
       ...(options.model ? ["--model", options.model] : []),
+      ...(options.effort ? ["--thinking", options.effort] : []),
     ],
     cwd: options.cwd,
     env: options.env,
@@ -370,6 +368,29 @@ export function createClaudeAdapter(sdk: ClaudeSdk): AgentAdapter["start"] {
   return (options) => claude(sdk, options);
 }
 
+/**
+ * Claude Code's reasoning control: `off` turns thinking off; `minimal` has no
+ * Claude equivalent and reads as `low`; the rest are Claude's own levels.
+ */
+export function claudeEffort(
+  level: AgentThinkingLevel,
+): Pick<ClaudeQueryOptions, "effort" | "thinking"> {
+  if (level === "off") return { thinking: { type: "disabled" } };
+  return { effort: level === "minimal" ? "low" : level };
+}
+
+/** Codex thread config: reasoning effort (`off` is Codex's `none`) and the resident relay root. */
+export function codexConfig(options: Pick<AgentOptions, "effort" | "env">) {
+  const relay = relayDirectory(options.env);
+  const config: Record<string, unknown> = {
+    ...(options.effort
+      ? { model_reasoning_effort: options.effort === "off" ? "none" : options.effort }
+      : {}),
+    ...(relay ? { "sandbox_workspace_write.writable_roots": [relay] } : {}),
+  };
+  return Object.keys(config).length ? { config } : {};
+}
+
 async function claude(sdk: ClaudeSdk, options: AgentOptions): Promise<ManagedAgent> {
   const resumeId = options.resumeSessionId;
   if (resumeId && !(await sdk.getSessionInfo(resumeId, { dir: options.cwd })))
@@ -408,6 +429,7 @@ async function claude(sdk: ClaudeSdk, options: AgentOptions): Promise<ManagedAge
     options: {
       cwd: options.cwd,
       model: options.model,
+      ...(options.effort ? claudeEffort(options.effort) : {}),
       ...(resumeId
         ? {
             resume: resumeId,
