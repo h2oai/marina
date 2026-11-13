@@ -59,6 +59,7 @@ import {
   RETENTION_TICK_PHASE,
   runRetentionPass,
 } from "./retention";
+import { runStoragePass, STORAGE_PASS_BUDGET_MS, STORAGE_TICK_PHASE } from "./storage-budget";
 import type { TickScheduleClock, TickScheduler } from "./tick-scheduler";
 import { openWorkPulseTask } from "./work-pulse";
 
@@ -483,6 +484,25 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
       if (Object.keys(result.deleted).length > 0) {
         host.logger.info("retention", `Pruned ${formatRetentionSummary(result)}`);
       }
+    },
+  });
+
+  // Hourly (own phase): the storage budget — measure the world's disk use and,
+  // past 90 % of MARINA_STORAGE_MAX_BYTES (default 5 GiB) or below the disk's
+  // free-space floor, free space and pause agents if that is not enough
+  // (src/engine/storage-budget.ts). Bounded per pass; startup runs it in full.
+  s.register({
+    name: "storage-budget",
+    every: NOTE_IMPORTANCE_INTERVAL,
+    phase: STORAGE_TICK_PHASE,
+    failureMessage: "Storage budget pass failed",
+    run: async () => {
+      const db = host.db;
+      if (!db) return;
+      await runStoragePass(db, {
+        storage: host.engine.storage,
+        budgetMs: STORAGE_PASS_BUDGET_MS,
+      });
     },
   });
 

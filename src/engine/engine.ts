@@ -2280,6 +2280,10 @@ export class Engine {
   private cleanupOrphanedAgents(): void {
     const agents = this.entities.all().filter((e) => e.kind === "agent");
     for (const agent of agents) {
+      // A dropped connection inside its reconnect grace is not an orphan: the
+      // grace timer (AuthCoordinator.removeConnection) decides, so a resume with
+      // the session token gets the same entity back.
+      if (this.authCoordinator.hasPendingEviction(agent.id)) continue;
       if (!this._connections.isEntityConnected(agent.id)) {
         // Orphaned agent — clean up silently
         this._connections.unbindEntity(agent.id);

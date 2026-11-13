@@ -46,6 +46,14 @@ import {
   scopeSpendToday,
 } from "./spend-ledger";
 import {
+  formatBytes,
+  formatStorageReport,
+  getLastStorageReport,
+  STORAGE_MAX_ENV,
+  STORAGE_MIN_FREE_ENV,
+  storageRefusal,
+} from "./storage-budget";
+import {
   getTrustProfile,
   isLocalProfile,
   isLocalUngated,
@@ -496,6 +504,9 @@ export function computeReadiness(engine: Engine): ReadinessReport {
 
   // ── Periodic jobs — a failing tick job is otherwise visible only in logs ───
   checks.push(tickJobsCheck(engine));
+
+  // ── Storage — the world's disk use against MARINA_STORAGE_MAX_BYTES ───────
+  checks.push(storageCheck());
 
   // ── Budget scopes — command-line jobs sharing this world's spend ledger ────
   let scopes: { scope: string; spentUsd: number }[] = [];
@@ -1101,6 +1112,38 @@ export function schedulesCheck(engine: Engine): ReadinessCheck {
       .join(", ")}${failing.length > 5 ? ", …" : ""}`,
     remediation:
       "The owner runs `schedule show <name>` to see the errors, then fixes or pauses it.",
+  };
+}
+
+/** The last storage-budget pass (startup, then hourly). */
+export function storageCheck(report = getLastStorageReport()): ReadinessCheck {
+  const label = "Storage";
+  if (!report)
+    return {
+      id: "storage",
+      label,
+      status: "ok",
+      detail: "not measured yet (startup, then hourly)",
+    };
+  const detail = formatStorageReport(report);
+  if (report.overCap || report.diskLow)
+    return {
+      id: "storage",
+      label,
+      status: "degraded",
+      detail: `${storageRefusal() ?? "storage full"}: agents paused. ${detail}`,
+      remediation: report.overCap
+        ? `What is left is people's files and durable records: delete what you no longer need, or raise ${STORAGE_MAX_ENV} (e.g. 10GB, or off).`
+        : `Free space on this disk, or lower ${STORAGE_MIN_FREE_ENV}.`,
+    };
+  const reclaimable = report.after.databaseFree > 256 * 1024 ** 2 && report.after.databaseFree;
+  return {
+    id: "storage",
+    label,
+    status: "ok",
+    detail: reclaimable
+      ? `${detail} — restart to return ${formatBytes(reclaimable)} to the disk`
+      : detail,
   };
 }
 

@@ -79,6 +79,7 @@ import * as schedulesDb from "./db-schedules";
 import * as shellDb from "./db-shell";
 import * as simulationsDb from "./db-simulations";
 import * as standingDb from "./db-standing";
+import * as storageDb from "./db-storage";
 import * as taskWorkDb from "./db-task-work";
 import * as tasksDb from "./db-tasks";
 import * as telemetryDb from "./db-telemetry";
@@ -415,6 +416,10 @@ export class MarinaDB implements MarinaStores {
       // the same database at the same moment makes us wait, not fail.
       this.db.exec(`PRAGMA busy_timeout=${OPEN_BUSY_TIMEOUT_MS}`);
       configureMemoryStorage(this.db, options.memoryLimits ?? memoryLimitsFromEnv());
+      // A new file frees deleted pages back to the disk on demand (the storage
+      // budget's `incremental_vacuum`); it can only be chosen before any table.
+      if (!this.db.query("SELECT 1 FROM sqlite_schema LIMIT 1").get())
+        this.db.exec("PRAGMA auto_vacuum=INCREMENTAL");
       this.db.exec("PRAGMA journal_mode=WAL");
       this.db.exec(`PRAGMA wal_autocheckpoint=${WAL_AUTOCHECKPOINT_PAGES}`);
       this.db.exec(
@@ -1398,6 +1403,18 @@ export class MarinaDB implements MarinaStores {
    */
   deleteBatch(table: string, whereSql: string, params: (string | number)[], limit: number): number {
     return maintenanceDb.deleteBatch(this.db, table, whereSql, params, limit);
+  }
+
+  // ─── Storage budget (used by src/engine/storage-budget.ts) ──────────────
+
+  databasePages() {
+    return storageDb.databasePages(this.db);
+  }
+  pruneJournalSources(before: number, opts?: storageDb.JournalPruneOptions) {
+    return storageDb.pruneJournalSources(this.db, before, opts);
+  }
+  reclaimFreePages(opts: { allowVacuum: boolean }) {
+    return storageDb.reclaimFreePages(this.db, opts);
   }
 
   // ─── Competence Persistence (delegated to db-competence.ts) ─────────────

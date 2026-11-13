@@ -23,9 +23,10 @@ import {
 } from "./engine/constants";
 
 import { Engine } from "./engine/engine";
-import { logRejection, tryLog } from "./engine/errors";
+import { getErrorMessage, logRejection, tryLog } from "./engine/errors";
 import { gatewayIngressRefusal } from "./engine/gateway-runtime";
 import { Logger } from "./engine/logger";
+import { formatStorageReport, runStoragePass, storageRefusal } from "./engine/storage-budget";
 import { projectTraces } from "./engine/trace-projection";
 import {
   assertTrustProfileSafe,
@@ -392,6 +393,20 @@ const assetsDir = process.env.ASSETS_DIR || "data/assets";
 const storage = new LocalStorageProvider(assetsDir);
 await storage.init();
 logger.info("storage", `Asset storage initialized at ${assetsDir}`);
+
+// The storage budget, in full before anything else writes: under pressure it
+// frees space, and it may rewrite an older database once (VACUUM) so its free
+// pages go back to the disk (src/engine/storage-budget.ts). The hourly job
+// keeps it there.
+try {
+  const report = await runStoragePass(db, { storage, allowVacuum: true });
+  logger.info("storage", `Storage: ${formatStorageReport(report)}`);
+  if (report.overCap || report.diskLow)
+    logger.warn("storage", `${storageRefusal()}: agents stay paused until there is room`);
+} catch (error) {
+  // Never a reason not to start: the hourly pass tries again.
+  logger.warn("storage", `Storage budget pass failed at startup: ${getErrorMessage(error)}`);
+}
 
 // Prepare any operator-configured Code Mode workspace roots (MARINA_CODE_ROOTS
 // / MARINA_CODE_DEFAULT_ROOT): create the dirs (the data volume shadows an

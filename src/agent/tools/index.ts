@@ -18,6 +18,7 @@
  */
 
 export { createAnalysisTools } from "./analysis";
+export { isWorkspaceAuthoringCall } from "./code";
 export { COMMAND_ROSTER, createCommandTool, ECOLOGY_ROSTER } from "./command";
 export { createEvolutionTool } from "./evolution";
 export { createMemoryTool } from "./memory";

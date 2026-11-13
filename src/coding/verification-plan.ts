@@ -939,7 +939,7 @@ export function detectedSteps(input: {
       continue;
     }
     if (options.scope === "full") {
-      steps.push({ command, role: "tests" });
+      steps.push({ command, role: "tests", timeoutMs: options.fullBudgetMs });
       scopeNote = "full suite (scope:full)";
     } else if (scoped) {
       steps.push({ command: scoped, role: "tests" });
@@ -951,11 +951,8 @@ export function detectedSteps(input: {
     } else if (options.scope === "changed") {
       scopeNote = "no tests relevant to the change were found (scope:changed)";
     } else {
-      steps.push({
-        command,
-        role: "tests",
-        ...(options.scope === "changed+full" ? { timeoutMs: options.fullBudgetMs } : {}),
-      });
+      // The unscoped suite: the full-suite budget, whatever chose it.
+      steps.push({ command, role: "tests", timeoutMs: options.fullBudgetMs });
       scopeNote = count
         ? "full suite (this runner cannot be scoped to files)"
         : "full suite (no tests relevant to the change were found)";

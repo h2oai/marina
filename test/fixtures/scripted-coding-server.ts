@@ -12,10 +12,11 @@ import { join } from "node:path";
 import { Engine } from "../../src/engine/engine";
 import { Logger } from "../../src/engine/logger";
 import { closeWorldMemoryService } from "../../src/memory/world-service";
+import { DashboardBroadcaster } from "../../src/net/dashboard-ws";
 import { setEndpointConfig } from "../../src/net/model/model-endpoint";
 import { WebSocketServer } from "../../src/net/websocket-server";
 import { MarinaDB } from "../../src/persistence/database";
-import { roomId } from "../../src/types";
+import { type EntityId, roomId } from "../../src/types";
 import { scopeProcessState, scopeProperty } from "../process-state";
 
 /** The task the scripted coder knows how to do. */
@@ -23,6 +24,8 @@ export const SCRIPTED_TASK = "lastPage loses a partial last page; fix it";
 
 export interface ScriptedCodingServer {
   url: string;
+  /** Drop every live connection of an entity, as a network failure would. */
+  dropConnection(entityId: string): boolean;
   db: MarinaDB;
   engine: Engine;
   workspace: string;
@@ -167,12 +170,21 @@ export async function startScriptedCodingServer(admins: string[]): Promise<Scrip
   engine.registerRoom(roomId("sdk/start"), { short: "Start", long: "Start", exits: {} });
   const server = new WebSocketServer(engine, 0);
   server.setDb(db);
+  // Live dashboard events (`/dashboard-ws`): the panel event stream SDKs subscribe to.
+  const broadcaster = new DashboardBroadcaster();
+  server.setBroadcaster(broadcaster);
+  engine.addEventListener((event) => broadcaster.broadcastEvent(event));
   server.start();
   engine.agentRuntime.setWsPort(server.getPort());
   engine.start();
   const url = `ws://127.0.0.1:${server.getPort()}`;
   return {
     url,
+    dropConnection(entityId: string) {
+      const connection = engine._connections.getConnectionForEntity(entityId as EntityId);
+      connection?.close();
+      return Boolean(connection);
+    },
     db,
     engine,
     workspace,

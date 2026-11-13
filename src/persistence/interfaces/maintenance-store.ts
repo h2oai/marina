@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CompactionOpts, CompactionStats } from "../db-maintenance";
+import type { DatabasePages, JournalPruneOptions, JournalPruneResult } from "../db-storage";
 import type { ExactKeys } from "./exact-keys";
 
-/** Retention primitives and snapshots (`db-maintenance.ts`). */
+/** Retention primitives and snapshots (`db-maintenance.ts`), and the storage budget (`db-storage.ts`). */
 export interface MaintenanceStore {
   tableExists(table: string): boolean;
   walCheckpoint(): { busy: boolean; log: number; checkpointed: number };
@@ -18,6 +19,9 @@ export interface MaintenanceStore {
     bytes: number;
   };
   snapshotCompacted(targetPath: string, opts?: CompactionOpts): CompactionStats;
+  databasePages(): DatabasePages;
+  pruneJournalSources(before: number, opts?: JournalPruneOptions): JournalPruneResult;
+  reclaimFreePages(opts: { allowVacuum: boolean }): { reclaimed: number; vacuumed: boolean };
 }
 
 /** Runtime mirror of `MaintenanceStore`'s method names — the drift test compares it to the facade. */
@@ -28,6 +32,9 @@ export const MAINTENANCE_STORE_METHODS = [
   "deleteBatch",
   "snapshot",
   "snapshotCompacted",
+  "databasePages",
+  "pruneJournalSources",
+  "reclaimFreePages",
 ] as const satisfies readonly (keyof MaintenanceStore)[];
 
 export const MAINTENANCE_STORE_COMPLETE: ExactKeys<

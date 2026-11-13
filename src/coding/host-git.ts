@@ -42,6 +42,14 @@ export const HOST_GIT_CONFIG_ARGS: readonly string[] = [
   "gc.auto=0",
   "-c",
   "maintenance.auto=false",
+  // Never descend into submodules: a submodule's `.git` gitfile lives in the
+  // writable work tree, so code that can write there can point it at a gitdir
+  // whose config names filter drivers or an fsmonitor, which a recursing diff
+  // or status would run on the host.
+  "-c",
+  "diff.ignoreSubmodules=all",
+  "-c",
+  "submodule.recurse=false",
 ];
 
 /** Scratch HOME shared with host Code Mode commands (never the server's own HOME). */
