@@ -8,6 +8,16 @@ import {
   parseCatalogPanelSource,
 } from "./panel-resource-catalog";
 
+/** Properties a binding may write onto a component; never `operation`, `action` or structure. */
+export const PANEL_BINDABLE_PROPERTIES = [
+  "text",
+  "rows",
+  "items",
+  "value",
+  "checked",
+  "disabled",
+] as const;
+
 export type PanelSource =
   | CatalogPanelSource
   | { kind: "task" | "note" | "participant" | "run" | "coding"; id: string }
@@ -153,7 +163,12 @@ export function resolvePanelBindings(
       for (const [property, binding] of Object.entries(
         (component.bindings ?? {}) as Record<string, unknown>,
       )) {
-        if (!isPanelValueBinding(binding)) continue;
+        // A newer component's bindings are kept but never write outside the safe list.
+        if (
+          !isPanelValueBinding(binding) ||
+          !(PANEL_BINDABLE_PROPERTIES as readonly string[]).includes(property)
+        )
+          continue;
         const value = readPanelValue(
           binding.source === "dataModel" ? document.dataModel : sources[binding.source],
           binding.path,

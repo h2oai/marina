@@ -2,8 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** Declarative content only: this contract never imports or executes publisher code. */
-import { parsePanelOperation } from "./panel-actions";
-import { isPanelValueBinding, type PanelSource, parsePanelSource } from "./panel-resources";
+import { type PanelOperation, parsePanelOperation } from "./panel-actions";
+import {
+  isPanelValueBinding,
+  PANEL_BINDABLE_PROPERTIES,
+  type PanelSource,
+  parsePanelSource,
+} from "./panel-resources";
+
+export { PANEL_BINDABLE_PROPERTIES };
 
 export const PANEL_SCHEMA = "marina.panel.v1";
 export const PANEL_LIMITS = { bytes: 262_144, components: 128, depth: 20, rendered: 512 } as const;
@@ -22,13 +29,19 @@ export const PANEL_COMPONENTS = [
   "Resource",
 ] as const;
 export type A2UIComponentType = (typeof PANEL_COMPONENTS)[number];
+/** A future component's type name: inert here, kept verbatim so a newer reader still has it. */
+const UNKNOWN_COMPONENT_NAME = /^[A-Z][A-Za-z0-9]{0,63}$/;
+export function isKnownPanelComponent(component: { component?: unknown }): boolean {
+  return PANEL_COMPONENTS.includes(component.component as A2UIComponentType);
+}
 export interface A2UIAction {
   componentId?: string;
   event: { name: string; payload?: Record<string, unknown> };
 }
 export interface A2UIComponent {
   id: string;
-  component: A2UIComponentType;
+  /** A known type, or (read tolerantly) a newer Marina's type, drawn as a placeholder. */
+  component: A2UIComponentType | string;
   child?: string;
   children?: string[];
   [key: string]: unknown;
@@ -43,6 +56,14 @@ export interface A2UINodeData {
   lastAction?: { name: string; payload?: Record<string, unknown>; timestamp: number };
 }
 export type PanelValidation = { ok: true; document: A2UINodeData } | { ok: false; error: string };
+export interface PanelValidationOptions {
+  /**
+   * `placeholder` (default, readers): a component type this Marina does not know is kept
+   * verbatim and inert, so a panel written by a newer Marina still draws everything else.
+   * `refuse` (writers): the document is refused, naming the supported types.
+   */
+  unknownComponents?: "placeholder" | "refuse";
+}
 
 export function panelRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -81,7 +102,11 @@ export function validPanelAction(value: unknown): value is A2UIAction {
 }
 
 /** Normalize the two historically documented aliases; reject malformed documents as a unit. */
-export function validatePanelDocument(input: unknown): PanelValidation {
+export function validatePanelDocument(
+  input: unknown,
+  options: PanelValidationOptions = {},
+): PanelValidation {
+  const tolerant = options.unknownComponents !== "refuse";
   const fail = (error: string): PanelValidation => ({ ok: false, error });
   if (!panelRecord(input)) return fail("Panel document must be an object.");
   if (!safeJson(input, new Set())) return fail("Panel contains unsafe or excessively nested data.");
@@ -118,8 +143,40 @@ export function validatePanelDocument(input: unknown): PanelValidation {
       return fail("Each component needs a nonempty id of at most 128 characters.");
     if (ids.has(source.id)) return fail(`Duplicate component id: ${source.id}`);
     ids.add(source.id);
-    if (!PANEL_COMPONENTS.includes(source.component as A2UIComponentType))
-      return fail(`Unsupported component: ${String(source.component).slice(0, 128)}`);
+    if (!isKnownPanelComponent(source)) {
+      if (!tolerant || typeof source.component !== "string")
+        return fail(
+          `Unsupported component: ${String(source.component).slice(0, 128)}. Supported: ${PANEL_COMPONENTS.join(", ")}.`,
+        );
+      if (!UNKNOWN_COMPONENT_NAME.test(source.component))
+        return fail(`Invalid component type in ${source.id}.`);
+      // Inert: no renderer draws its fields, no binding writes outside the
+      // bindable list, and the interaction route refuses it. Only its place
+      // in the tree is checked, so its known children still draw.
+      const unknown = { ...source } as A2UIComponent;
+      if (unknown.child !== undefined && typeof unknown.child !== "string")
+        return fail(`Invalid child in ${unknown.id}.`);
+      if (
+        unknown.children !== undefined &&
+        (!Array.isArray(unknown.children) ||
+          unknown.children.length > PANEL_LIMITS.components ||
+          unknown.children.some((id) => typeof id !== "string") ||
+          new Set(unknown.children).size !== unknown.children.length)
+      )
+        return fail(`Invalid children in ${unknown.id}.`);
+      if (unknown.bindings !== undefined) {
+        if (!panelRecord(unknown.bindings) || Object.keys(unknown.bindings).length > 8)
+          return fail(`Invalid bindings in ${unknown.id}.`);
+        for (const binding of Object.values(unknown.bindings))
+          if (
+            !isPanelValueBinding(binding) ||
+            (binding.source !== "dataModel" && !Object.hasOwn(sources, binding.source))
+          )
+            return fail(`Invalid binding in ${unknown.id}.`);
+      }
+      components.push(unknown);
+      continue;
+    }
     const c = { ...source } as A2UIComponent;
     if (c.component === "Resource" && !parsePanelSource(c.reference))
       return fail(`Invalid resource in ${c.id}.`);
@@ -128,7 +185,7 @@ export function validatePanelDocument(input: unknown): PanelValidation {
         return fail(`Invalid bindings in ${c.id}.`);
       for (const [property, binding] of Object.entries(c.bindings)) {
         if (
-          !["text", "rows", "items", "value", "checked", "disabled"].includes(property) ||
+          !(PANEL_BINDABLE_PROPERTIES as readonly string[]).includes(property) ||
           !isPanelValueBinding(binding) ||
           (binding.source !== "dataModel" && !Object.hasOwn(sources, binding.source))
         )
@@ -219,7 +276,7 @@ export function validatePanelDocument(input: unknown): PanelValidation {
     if (c.component === "Resource") resources.add(JSON.stringify(parsePanelSource(c.reference)));
   if (resources.size > 8) return fail("Panel supports at most eight distinct live resources.");
   for (const c of components) {
-    const operation = parsePanelOperation(c.operation);
+    const operation = c.component === "Button" ? parsePanelOperation(c.operation) : null;
     if (!operation) continue;
     const values =
       operation.kind === "message" ? [operation.message] : Object.values(operation.values ?? {});
@@ -229,7 +286,10 @@ export function validatePanelDocument(input: unknown): PanelValidation {
         !components.some(
           (field) =>
             field.id === value.field &&
-            ["TextField", "DateTimeInput", "CheckBox"].includes(field.component),
+            (["TextField", "DateTimeInput", "CheckBox"].includes(field.component) ||
+              // A newer input type: the action stays visible and fails at the
+              // server with a named reason (`panelFieldUnavailable`).
+              (tolerant && !isKnownPanelComponent(field))),
         )
       )
         return fail(`Operation ${c.id} refers to an unknown input field.`);
@@ -275,4 +335,23 @@ export function validatePanelDocument(input: unknown): PanelValidation {
       ...(input.sources !== undefined ? { sources } : {}),
     },
   };
+}
+
+/**
+ * The type of an input an operation reads that this Marina cannot draw (a
+ * newer Marina's component), else null. The action is refused with that name
+ * rather than asking for a field the person cannot see.
+ */
+export function panelFieldUnavailable(
+  document: Pick<A2UINodeData, "components">,
+  operation: PanelOperation,
+): string | null {
+  const values =
+    operation.kind === "message" ? [operation.message] : Object.values(operation.values ?? {});
+  for (const value of values) {
+    if (typeof value !== "object") continue;
+    const field = document.components.find((c) => c.id === value.field);
+    if (field && !isKnownPanelComponent(field)) return String(field.component);
+  }
+  return null;
 }

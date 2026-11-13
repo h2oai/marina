@@ -106,20 +106,33 @@ export const A2UIRenderer = memo(function A2UIRenderer({
           return <A2UIDataTable key={id} component={c} />;
         case "Timeline":
           return <A2UITimeline key={id} component={c} />;
-        default:
-          return (
-            <div
-              key={id}
-              className="rounded border border-dashed border-amber-700/70 px-2 py-1.5 text-xs text-amber-300/80 bg-amber-900/10"
-              title={`A2UI component "${c.component}" is not registered. Supported: Text, Button, TextField, CheckBox, DateTimeInput, Row, Column, Card, Surface, DataTable, Timeline.`}
-            >
-              <span className="font-semibold">Unsupported component:</span>{" "}
-              <span className="font-mono">{c.component}</span>
-              <span className="block text-[10px] text-amber-500/70 mt-0.5">
-                hover for the full list of supported components
-              </span>
-            </div>
+        default: {
+          // A newer Marina's component: shown by name, inert, its children still drawn.
+          const name = [c.label, c.title, c.text].find(
+            (value): value is string => typeof value === "string" && !!value,
           );
+          const children = [...(c.child ? [c.child] : []), ...(c.children ?? [])];
+          return (
+            <fieldset
+              key={id}
+              aria-label={`${c.component}${name ? `: ${name}` : ""} (needs a newer Marina)`}
+              className="min-w-0 rounded border border-dashed border-amber-700/70 px-2 py-1.5 text-xs text-amber-300/80 bg-amber-900/10"
+            >
+              <span className="font-mono">{c.component}</span>
+              {name ? <span> · {name}</span> : null}
+              <span className="block text-[10px] text-amber-500/70 mt-0.5">
+                Needs a newer Marina to display.
+              </span>
+              {children.length ? (
+                <div className="mt-1.5 flex flex-col gap-2">
+                  {children.map((child) => (
+                    <div key={child}>{renderChild(child)}</div>
+                  ))}
+                </div>
+              ) : null}
+            </fieldset>
+          );
+        }
       }
     },
     [componentMap, onAction, renderResource, onFieldChange],

@@ -5,18 +5,31 @@ import { canvasDocumentData, panelRevision } from "../../engine/canvas-document"
 import { commandManifest } from "../../engine/command-manifest";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
+import {
+  AGENT_PANEL_OPERATIONS_INERT,
+  isAgentAccountName,
+  PANEL_PERSON_REQUIRED,
+  panelLastWriter,
+  panelRulesLifted,
+} from "../../engine/panel-authority";
 import type { MarinaDB } from "../../persistence/database";
 import { RoutingError } from "../../routing/errors";
 import { RoutingService } from "../../routing/service";
 import { composeCommand } from "../../sdk/command-forms";
 import { panelInput, parsePanelOperation } from "../../sdk/panel-actions";
-import { panelRecord, validatePanelDocument } from "../../sdk/panel-document";
+import {
+  isKnownPanelComponent,
+  panelFieldUnavailable,
+  panelRecord,
+  validatePanelDocument,
+} from "../../sdk/panel-document";
 import type { StorageProvider } from "../../storage/provider";
 import type { EntityId } from "../../types";
 import { authenticateRequest } from "../auth-middleware";
 import { authorizePrivileged } from "../dashboard-api/shared";
 import { readJsonBody } from "../http-utils";
 import type { CanvasBroadcaster } from "./canvas-ws";
+import { httpPanelActorKind } from "./panel-actor";
 
 interface InteractionContext {
   req: Request;
@@ -34,10 +47,24 @@ interface InteractionContext {
     data: Record<string, unknown>,
   ) => Record<string, unknown>;
 }
-/** Definitions carry no authority. Each click is authenticated again at execution. */
+/**
+ * Definitions carry no authority. Each click is authenticated again at
+ * execution, and only a person may click: every path (operations, notification
+ * buttons, field changes) refuses an agent here and again in the queued recheck.
+ */
 export async function handlePanelInteraction(ctx: InteractionContext): Promise<Response> {
   const { req, db, storage, broadcaster, engine, entityId, canvasId, nodeId, json } = ctx;
   if (!ctx.canAccess()) return json({ error: "Panel not found" }, 404);
+  const personRequired = () => {
+    if (engine && !panelRulesLifted() && httpPanelActorKind(engine, entityId) !== "person")
+      throw new RoutingError(403, "person_required", PANEL_PERSON_REQUIRED);
+  };
+  try {
+    personRequired();
+  } catch (error) {
+    const refusal = error as RoutingError;
+    return json({ error: refusal.message, code: refusal.code }, refusal.status);
+  }
   const read = await readJsonBody(req);
   if (!read.ok) return read.response;
   const body = read.body;
@@ -50,6 +77,7 @@ export async function handlePanelInteraction(ctx: InteractionContext): Promise<R
       if ("error" in auth || auth.entityId !== entityId)
         throw new RoutingError(401, "signed_out", "Sign in again before acting.");
     }
+    personRequired();
     const latest = db.getNode(nodeId);
     if (
       !ctx.canAccess() ||
@@ -67,9 +95,22 @@ export async function handlePanelInteraction(ctx: InteractionContext): Promise<R
     const parsed = validatePanelDocument(data);
     if (!parsed.ok) throw new Error(parsed.error);
     const component = parsed.document.components.find((c) => c.id === body.componentId);
-    if (!component || component.disabled) throw new Error("Action unavailable");
-    const operation = parsePanelOperation(component.operation);
+    // A newer Marina's component is drawn as a placeholder and is never actionable here.
+    if (!component || component.disabled || !isKnownPanelComponent(component))
+      throw new Error("Action unavailable");
+    const operation =
+      component.component === "Button" ? parsePanelOperation(component.operation) : null;
     if (operation) {
+      // Defense in depth for panels written before agents' operations were refused at publish.
+      if (!panelRulesLifted() && isAgentAccountName(db, panelLastWriter(node, data)))
+        throw new RoutingError(403, "agent_panel", AGENT_PANEL_OPERATIONS_INERT);
+      const newer = panelFieldUnavailable(parsed.document, operation);
+      if (newer)
+        throw new RoutingError(
+          409,
+          "component_unavailable",
+          `This action reads a ${newer} field, which needs a newer Marina.`,
+        );
       if (!engine || !entityId)
         return json({ error: "An authenticated world participant is required." }, 403);
       const rawFields = body.fields ?? {};
@@ -217,7 +258,10 @@ export async function handlePanelInteraction(ctx: InteractionContext): Promise<R
         } catch (error) {
           result.resolve(
             json(
-              { error: getErrorMessage(error) },
+              {
+                error: getErrorMessage(error),
+                ...(error instanceof RoutingError ? { code: error.code } : {}),
+              },
               error instanceof RoutingError ? error.status : 400,
             ),
           );
@@ -258,7 +302,10 @@ export async function handlePanelInteraction(ctx: InteractionContext): Promise<R
     return json({ status: "saved", node: enriched });
   } catch (error) {
     return json(
-      { error: getErrorMessage(error) },
+      {
+        error: getErrorMessage(error),
+        ...(error instanceof RoutingError ? { code: error.code } : {}),
+      },
       error instanceof RoutingError ? error.status : 400,
     );
   }

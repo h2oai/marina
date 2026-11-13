@@ -6921,7 +6921,15 @@
             "type": "string"
           },
           "component": {
-            "$ref": "#/components/schemas/A2UIComponentType"
+            "description": "A known type, or (read tolerantly) a newer Marina's type, drawn as a placeholder.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/components/schemas/A2UIComponentType"
+              }
+            ]
           },
           "child": {
             "type": "string"

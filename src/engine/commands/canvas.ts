@@ -21,12 +21,14 @@ import {
 } from "../canvas-access";
 import { canvasDocumentData } from "../canvas-document";
 import { canvasItemOwners, canvasOwners } from "../canvas-ownership";
+import { principalKind } from "../challenges";
 import { refuseCommand } from "../command-response";
 import { getErrorMessage } from "../errors";
 import { Logger } from "../logger";
 import { ingestAsset } from "../media/asset-library";
 import { type LookReply, sendLookReply } from "../media/vision";
 import { ownershipRefusal } from "../ownership";
+import { agentPanelOperationsRefusal } from "../panel-authority";
 import { rankFloorRefusal } from "../rank-floor";
 import { type AssetCommandDeps, runAssetCommand } from "./asset";
 import { handleCanvasIntent } from "./canvas-intent";
@@ -628,9 +630,16 @@ async function handlePublish(
   let panelData: Record<string, unknown> = {};
   if (type === "a2ui") {
     try {
-      panelData = await canvasDocumentData({}, asset.id, db, storage);
+      panelData = await canvasDocumentData({}, asset.id, db, storage, {
+        unknownComponents: "refuse",
+      });
     } catch (error) {
       refuseCommand(ctx, eid, `Cannot publish panel: ${getErrorMessage(error)}`);
+      return;
+    }
+    const refused = agentPanelOperationsRefusal(panelData, principalKind(entity));
+    if (refused) {
+      refuseCommand(ctx, eid, refused);
       return;
     }
   }

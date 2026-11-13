@@ -523,7 +523,12 @@ export async function qualifyCoding(
   engine.start();
   const url = `ws://127.0.0.1:${server.getPort()}`;
   const owner = new MarinaAgent(url, { autoReconnect: false, pingInterval: 0 });
-  const peer = new MarinaClient(url, { autoReconnect: false, pingInterval: 0 });
+  // The desk publisher is a person: a panel an agent writes carries no operations.
+  const peer = new MarinaClient(url, {
+    autoReconnect: false,
+    pingInterval: 0,
+    principal: "person",
+  });
   cleanup.defer(() => {
     owner.disconnect();
     peer.disconnect();

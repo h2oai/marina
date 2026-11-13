@@ -3447,7 +3447,10 @@ export declare class MarinaPanelClient {
 [Source](../../src/sdk/panel-document.ts)
 
 ```typescript
-import { type PanelSource } from "./panel-resources.js";
+/** Declarative content only: this contract never imports or executes publisher code. */
+import { type PanelOperation } from "./panel-actions.js";
+import { PANEL_BINDABLE_PROPERTIES, type PanelSource } from "./panel-resources.js";
+export { PANEL_BINDABLE_PROPERTIES };
 export declare const PANEL_SCHEMA = "marina.panel.v1";
 export declare const PANEL_LIMITS: {
     readonly bytes: 262144;
@@ -3457,6 +3460,9 @@ export declare const PANEL_LIMITS: {
 };
 export declare const PANEL_COMPONENTS: readonly ["Text", "Button", "TextField", "CheckBox", "DateTimeInput", "Row", "Column", "Card", "Surface", "DataTable", "Timeline", "Resource"];
 export type A2UIComponentType = (typeof PANEL_COMPONENTS)[number];
+export declare function isKnownPanelComponent(component: {
+    component?: unknown;
+}): boolean;
 export interface A2UIAction {
     componentId?: string;
     event: {
@@ -3466,7 +3472,8 @@ export interface A2UIAction {
 }
 export interface A2UIComponent {
     id: string;
-    component: A2UIComponentType;
+    /** A known type, or (read tolerantly) a newer Marina's type, drawn as a placeholder. */
+    component: A2UIComponentType | string;
     child?: string;
     children?: string[];
     [key: string]: unknown;
@@ -3491,10 +3498,24 @@ export type PanelValidation = {
     ok: false;
     error: string;
 };
+export interface PanelValidationOptions {
+    /**
+     * `placeholder` (default, readers): a component type this Marina does not know is kept
+     * verbatim and inert, so a panel written by a newer Marina still draws everything else.
+     * `refuse` (writers): the document is refused, naming the supported types.
+     */
+    unknownComponents?: "placeholder" | "refuse";
+}
 export declare function panelRecord(value: unknown): value is Record<string, unknown>;
 export declare function validPanelAction(value: unknown): value is A2UIAction;
 /** Normalize the two historically documented aliases; reject malformed documents as a unit. */
-export declare function validatePanelDocument(input: unknown): PanelValidation;
+export declare function validatePanelDocument(input: unknown, options?: PanelValidationOptions): PanelValidation;
+/**
+ * The type of an input an operation reads that this Marina cannot draw (a
+ * newer Marina's component), else null. The action is refused with that name
+ * rather than asking for a field the person cannot see.
+ */
+export declare function panelFieldUnavailable(document: Pick<A2UINodeData, "components">, operation: PanelOperation): string | null;
 ```
 
 ## panel-events
@@ -3553,6 +3574,8 @@ export declare function panelResourcePath(input: CatalogPanelSource): string;
 ```typescript
 import type { A2UINodeData } from "./panel-document.js";
 import { type CatalogPanelSource } from "./panel-resource-catalog.js";
+/** Properties a binding may write onto a component; never `operation`, `action` or structure. */
+export declare const PANEL_BINDABLE_PROPERTIES: readonly ["text", "rows", "items", "value", "checked", "disabled"];
 export type PanelSource = CatalogPanelSource | {
     kind: "task" | "note" | "participant" | "run" | "coding";
     id: string;

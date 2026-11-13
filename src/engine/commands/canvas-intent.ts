@@ -8,7 +8,9 @@ import { CANVAS_INTENT_CLAIM_TIMEOUT_MS, type CanvasNodeRow } from "../../persis
 import { validatePanelDocument } from "../../sdk/panel-document";
 import type { Entity, EntityId, RoomContext } from "../../types";
 import { type CanvasReader, mayReadCanvas } from "../canvas-access";
+import { principalKind } from "../challenges";
 import { refuseCommand } from "../command-response";
+import { agentPanelOperationsRefusal } from "../panel-authority";
 
 /** Command parsing/presentation only; lifecycle writes also serve the HTTP UI. */
 export async function handleCanvasIntent(options: {
@@ -118,9 +120,14 @@ export async function handleCanvasIntent(options: {
       refuse("Invalid JSON. Provide a valid A2UI component tree.");
       return;
     }
-    const document = validatePanelDocument(raw);
+    const document = validatePanelDocument(raw, { unknownComponents: "refuse" });
     if (!document.ok) {
       refuse(document.error);
+      return;
+    }
+    const refused = agentPanelOperationsRefusal(document.document, principalKind(entity));
+    if (refused) {
+      refuse(refused);
       return;
     }
     resultData = { ...document.document };
