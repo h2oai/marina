@@ -1540,6 +1540,12 @@
 
 # ── Retention ────────────────────────────────────────────────────────────────
 
+# The storage budget (src/engine/storage-budget.ts): the most this world keeps on disk — its database (with the WAL), ASSETS_DIR and MARINA_SCRATCH_DIR — as bytes or with a binary unit (5GB, 500MB); 0 or off means no cap. Checked at startup and hourly: past 90 % it frees space (the retention pass caught up, then the oldest resident continuity journal down to 30/14/7/3/1 days, then telemetry cut to a day) until under 75 %; facts, lessons, tasks, the chronicle, ledgers and people's files are never removed. Freed database pages go back to the disk (a database made before this rewrites itself once at the next startup when the disk has room). Still over the cap afterwards, agents pause and a critical storage alert opens until there is room; people keep working. `readiness` shows the numbers. Default 5GB.
+# MARINA_STORAGE_MAX_BYTES=5GB
+
+# Free space the storage budget leaves on the database's disk, whatever else fills it: below it the same cleanup runs and agents pause until there is room again. Bytes or a binary unit; 0 or off means no floor. Default 1GB.
+# MARINA_STORAGE_MIN_FREE_BYTES=1GB
+
 # Override row-retention windows: comma-separated table=<duration|rows|0>, durations in s/m/h/d/w, a bare integer is a row count, 0 never prunes. Per-class defaults and the table list live in src/engine/retention.ts (Admin → Ops shows them); append-only tables can never be pruned.
 # MARINA_RETENTION_OVERRIDES=primitive_usage=30d,feed_events=0
 

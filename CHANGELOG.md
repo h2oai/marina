@@ -828,6 +828,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`waitForTell` in the TypeScript SDK hears tells.** It waited for a `subkind` and a `from`
   field the server has never sent, so it always timed out. It now matches the documented tell
   frame (`tag: "tell"` with `senderName`) and returns the message.
+- **Marina no longer fills the disk.** A world kept everything its agents journaled, so a busy
+  install grew without limit until the drive was full. A storage budget now caps what a world
+  keeps on disk at 5 GiB by default (`MARINA_STORAGE_MAX_BYTES`, `off` for no cap) and leaves at
+  least 1 GiB free on the disk (`MARINA_STORAGE_MIN_FREE_BYTES`). At startup and every hour it
+  measures the database, uploaded files and scratch files; past 90 % it frees space, oldest and
+  least valuable first (overdue retention, then agents' archived conversation transcripts older
+  than 30, 14, 7, 3 or 1 days, then telemetry older than a day), and gives the freed space back to
+  the disk. Facts, lessons, tasks, the chronicle, ledgers and people's files are never removed. A
+  world still over its cap pauses its agents and raises one critical alert until there is room;
+  people keep working, and `readiness` shows what is using the space. An existing database is
+  rewritten once at the next startup to return its free space.
 - **New files a coder creates show in every "what changed" view.** The workspace diff left out
   files git does not track yet, so a coding run that added a test file reported "1 file changed"
   and the review snapshot and checkpoints missed the new file. Untracked files (`.gitignore`

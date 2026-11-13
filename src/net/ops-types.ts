@@ -24,7 +24,8 @@ export type OpsAgentPauseKind =
   | "spend-cap"
   | "upstream-errors"
   | "provider-auth"
-  | "route-limit";
+  | "route-limit"
+  | "storage";
 
 /** One running (or in-flight) agent as the operator sees it. */
 export type AgentOperatorRow = {
