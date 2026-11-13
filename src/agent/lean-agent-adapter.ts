@@ -4658,7 +4658,7 @@ export class LeanAgentAdapter implements AgentHandle {
       parts.push(
         `[Active Coding Task]\n${this.activeCodingTask}\n` +
           "The task comes first: work through marina_code actions (read/search/edit/write/patch/verify). " +
-          "Finish source and test edits, verify the final candidate, inspect its receipt, then submit a marina_code summary. Later edits require fresh checks. " +
+          "Finish source and test edits, run the checks the change warrants, then submit a marina_code summary of what changed and what you checked. " +
           "Using memory, pool or focus tools along the way is your call.",
         MANDATORY_SECTION_PRIORITY,
         "active_coding_task",
@@ -5077,7 +5077,7 @@ export class LeanAgentAdapter implements AgentHandle {
       actionDirective = `You are resting (${clampText(this.loopPrefs.rest, 120)}). Act only if something here is worth it; otherwise end the turn. \`memory delete rest\` resumes your loop.`;
     } else if (this.activeCodingTask) {
       actionDirective =
-        "Advance the active coding task with the next verifiable step. Inspect completed verification receipts before claiming success; report a concrete blocker when checks cannot run.";
+        "Advance the active coding task with the next step. Claim only checks you ran and saw pass; report a concrete blocker when you cannot proceed.";
     } else if (this.focus) {
       actionDirective = this.focusDirective(this.focus.description);
     } else if (this.config.goal) {

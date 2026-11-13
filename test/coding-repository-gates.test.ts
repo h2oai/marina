@@ -584,7 +584,7 @@ describe("repository gates", () => {
     });
   });
 
-  describe("native runtimes", () => {
+  describe("native runtimes under --verify", () => {
     const native = async (
       change?: () => void,
       options: { deadlineAt?: number; drain?: boolean; onFinished?: () => void } = {},
@@ -759,8 +759,8 @@ describe("repository gates", () => {
   });
 });
 
-describe("the one-shot default", () => {
-  it("is candidate for a Git repository with a detected runner, else delivery", () => {
+describe("the one-shot verification (--verify)", () => {
+  it("is none by default; under --verify candidate for a Git repository with a detected runner, else delivery", () => {
     const repo = mkdtempSync(join(tmpdir(), "marina-default-"));
     const plain = mkdtempSync(join(tmpdir(), "marina-default-plain-"));
     const noRunner = mkdtempSync(join(tmpdir(), "marina-default-norunner-"));
@@ -770,9 +770,12 @@ describe("the one-shot default", () => {
       writeFileSync(join(noRunner, "README.md"), "docs\n");
       writeFileSync(join(plain, "package.json"), JSON.stringify({ scripts: { test: "bun test" } }));
       expect(repositoryGates(repo)).toEqual({ ok: true, runner: "test" });
-      expect(printVerification(undefined, {}, repo)).toBe("candidate");
-      expect(printVerification(undefined, {}, plain)).toBe("delivery");
-      expect(printVerification(undefined, {}, noRunner)).toBe("delivery");
+      // No verification unless asked; under --verify, by folder.
+      expect(printVerification(undefined, {}, repo)).toBeUndefined();
+      expect(printTimeoutMs(printVerification(undefined, {}, repo), {})).toBe(600_000);
+      expect(printVerification(undefined, {}, repo, true)).toBe("candidate");
+      expect(printVerification(undefined, {}, plain, true)).toBe("delivery");
+      expect(printVerification(undefined, {}, noRunner, true)).toBe("delivery");
       expect(repositoryGates(noRunner)).toEqual({
         ok: false,
         reason: "Marina detects no test runner in the folder",

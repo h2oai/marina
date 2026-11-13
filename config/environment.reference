@@ -1660,7 +1660,7 @@
 # MARINA_CODE_FRESH=
 # MARINA_CODE_TASK_TIMEOUT_MS=600000
 
-# The one-shot `marina -p` verification requirement when --verification is not given: checks (the project's own checks), candidate (the repository's own type-check, lint and tests on a Git snapshot, relevant tests then the full suite) or delivery (each stated requirement mapped to a check that observes it, else the run is reported unverified). Unset: candidate for a Git repository root with a detected test runner, delivery for any other folder.
+# The one-shot `marina -p` verification requirement when --verification is not given: checks (the project's own checks), candidate (the repository's own type-check, lint and tests on a Git snapshot, relevant tests then the full suite) or delivery (each stated requirement mapped to a check that observes it, else the run is reported unverified). Setting it opts the one-shot into Marina's verification, as --verify does. Unset: no verification of Marina's own (the coder checks what it judges useful, like claude -p), and under --verify candidate for a Git repository root with a detected test runner, delivery for any other folder.
 # @internal
 # MARINA_CODE_VERIFICATION=
 

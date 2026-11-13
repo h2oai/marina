@@ -782,7 +782,8 @@ export class CodeConsole {
     wait = false,
     timeoutMs = 600_000,
     unattended = false,
-    verification: "checks" | "candidate" | "delivery" = "checks",
+    /** An unattended task's verification requirement; none (the default) leaves checking to the coder. */
+    verification?: "checks" | "candidate" | "delivery",
     /** An unattended task's wall-clock budget (ms), sent as `budget:<seconds>s`. */
     budgetMs?: number,
     /** Candidate only: verified means the repository's own gates passed (`gates:repository`). */
@@ -798,7 +799,7 @@ export class CodeConsole {
       this.marinaPhase = "working";
       this.updatePrompt();
       await this.command(
-        `code do ${unattended ? `verification:${verification} ${gates && verification === "candidate" ? "gates:repository " : ""}owner:unattended ` : ""}${unattended && budgetMs ? `budget:${Math.max(1, Math.floor(budgetMs / 1000))}s ` : ""}-- ${text}`,
+        `code do ${unattended && verification ? `verification:${verification} ${gates && verification === "candidate" ? "gates:repository " : ""}` : ""}${unattended ? "owner:unattended " : ""}${unattended && budgetMs ? `budget:${Math.max(1, Math.floor(budgetMs / 1000))}s ` : ""}-- ${text}`,
       );
     }
   }

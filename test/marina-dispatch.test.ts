@@ -224,13 +224,27 @@ describe("marina dispatcher routing", () => {
     expect(oneShotBudgetMs(60_000)).toBe(58_800);
   });
 
-  it("defaults a one-shot to delivery verification unless told otherwise", () => {
-    expect(printVerification(undefined, {})).toBe("delivery");
+  it("runs a one-shot without Marina's verification unless asked; --verify defaults to delivery", () => {
+    expect(printVerification(undefined, {})).toBeUndefined();
+    expect(printVerification(undefined, { MARINA_CODE_VERIFICATION: "junk" })).toBeUndefined();
+    expect(printVerification(undefined, {}, undefined, true)).toBe("delivery");
     expect(printVerification(undefined, { MARINA_CODE_VERIFICATION: "checks" })).toBe("checks");
     expect(printVerification("candidate", { MARINA_CODE_VERIFICATION: "checks" })).toBe(
       "candidate",
     );
-    expect(printVerification(undefined, { MARINA_CODE_VERIFICATION: "junk" })).toBe("delivery");
+    expect(
+      printVerification(undefined, { MARINA_CODE_VERIFICATION: "junk" }, undefined, true),
+    ).toBe("delivery");
+  });
+
+  it("parses --verify, and only with -p", () => {
+    expect(parseDispatch(["-p", "fix it", "--verify"])).toMatchObject({
+      kind: "code",
+      print: "fix it",
+      verify: true,
+    });
+    expect(parseDispatch(["-p", "fix it"])).not.toHaveProperty("verify");
+    expect(parseDispatch([".", "--verify"])).toEqual({ kind: "usage-error", arg: "--verify" });
   });
 
   it("parses the one-shot verification requirement, and only with -p", () => {
@@ -315,6 +329,7 @@ describe("marina dispatcher routing", () => {
       expect(USAGE).toContain(word);
     }
     expect(USAGE).toContain("Exit codes");
+    expect(USAGE).toContain("--verify");
     expect(USAGE).toContain("MARINA_CODE_TASK_TIMEOUT_MS");
     expect(USAGE).toContain("~/.marina/projects/<slug>/marina.db");
     expect(USAGE).toContain("allowlist-only");
@@ -548,7 +563,39 @@ describe("one-shot exits say whether the work was verified", () => {
     ...(verificationReason ? { verificationReason } : {}),
   });
 
-  it("is 0 only for verified work; 3 for every other completion; 1 failed; 2 timed out", () => {
+  it("by default completed work is done (0) and claims nothing about verification", () => {
+    for (const v of [undefined, "passed", "missing", "not_run", "not_applicable", "failed"]) {
+      expect(printOutcome(completed(v, "why"), false, false)).toEqual({
+        status: "done",
+        exitCode: PRINT_EXIT.done,
+      });
+    }
+    expect(printOutcome({ phase: "failed" }, false, false)).toEqual({
+      status: "failed",
+      exitCode: 1,
+    });
+    expect(printOutcome("timeout", false, false)).toEqual({ status: "timeout", exitCode: 2 });
+    const forced = printOutcome(
+      { phase: "completed", budgetForced: { reason: "deadline", used: 9, cap: 10 } },
+      false,
+      false,
+    );
+    expect(forced).toMatchObject({ status: "done", exitCode: 0 });
+    expect(forced.notice).toContain("deadline");
+    const json = printResultJson(
+      printOutcome(completed("missing", "why"), false, false),
+      { ...completed("missing", "why"), summary: "Added a comment." },
+      [{ path: "README.md", added: 1, removed: 0 }],
+      5,
+      false,
+    );
+    expect(json).toMatchObject({ status: "done", exitCode: 0, summary: "Added a comment." });
+    expect(json).not.toHaveProperty("verification");
+    expect(json).not.toHaveProperty("verificationReason");
+    expect(json).not.toHaveProperty("requirements");
+  });
+
+  it("under --verify is 0 only for verified work; 3 for every other completion; 1 failed; 2 timed out", () => {
     expect(printOutcome(completed("passed"))).toEqual({ status: "verified", exitCode: 0 });
     for (const v of ["missing", "not_run", "error", "failed", "stale", "unbound", "unavailable"]) {
       const o = printOutcome(completed(v, "why"));

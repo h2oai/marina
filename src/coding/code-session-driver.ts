@@ -270,7 +270,8 @@ export class CodeSessionDriver {
             : run && codingRunMetadata(run).verificationRequirement === "checks"
               ? "Completion requires current task checks. Use code verify or a saved validation recipe; inspect the receipt before summary. Validate the requested artifact or service state, including failure cases; whitespace alone is insufficient. These are live checks, not immutable source evidence. If blocked, use code blocked <reason>."
               : undefined;
-    const noChanges = run
+    // Only a task that must verify needs telling how a no-change answer is recorded.
+    const noChanges = requirement
       ? "For a question, investigation or confirmation that needs no file changes, submit the answer as the summary without verifying. Marina compares the workspace with its state at task start: if nothing changed, verification is recorded as not applicable (nothing to verify), never as a pass; changes already there before the task are named, not verified. Any file the task changed (even one later reverted) needs the normal verification."
       : undefined;
     const ownership =

@@ -1181,7 +1181,7 @@ it("preserves a multiline task around world input and emits no editing controls 
   }
 });
 
-it("dispatches an unattended task with the requested verification requirement", async () => {
+it("dispatches an unattended task with no verification requirement unless one is requested", async () => {
   const commands: string[] = [];
   const terminal = new CodeConsole({
     agent: {
@@ -1203,7 +1203,7 @@ it("dispatches an unattended task with the requested verification requirement", 
   await terminal.task("ship it", false, 1000, true, "delivery");
   await terminal.task("interactive", false, 1000, false, "delivery");
   expect(commands).toEqual([
-    "code do verification:checks owner:unattended -- ship it",
+    "code do owner:unattended -- ship it",
     "code do verification:delivery owner:unattended -- ship it",
     "code do -- interactive",
   ]);

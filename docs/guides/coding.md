@@ -337,9 +337,9 @@ select a runtime, model and dialect; they do not yet package teams, Scores, role
 credentials or approval policies. Changing a bound Marina worker's model takes effect
 between tasks; stop or finish active work first.
 
-Native runtimes also support `marina --agent codex -p "<task>"`. Marina does not verify a native
-turn, so a finished turn exits `3` ("Native turn finished; Marina did not verify it");
-`--allow-unverified` makes it `0`. Neither means Marina approved the work.
+Native runtimes also support `marina --agent codex -p "<task>"`. A finished turn exits `0` with the
+files it changed, as the runtime's own one-shot would; Marina does not verify it unless asked
+(`--verify`, see **One-shot mode** below). Neither means Marina approved the work.
 Missing terminal input denies native permission requests. Marina-native tasks retain
 the canonical task/submission/review workflow described below.
 
@@ -780,20 +780,33 @@ yours to keep or remove.
 
 **One-shot mode** (`marina -p "<task>" [dir]`, alias `--print`) dispatches a single task
 non-interactively: it boots (persistent DB by default, so `-p` runs accrete history), streams the
-agent's work as usual, then waits for the structured completion signal. On completion it prints
-the session diff and the agent's summary. The exit code says what you can rely on:
+agent's work as usual, then waits for the structured completion signal. It works like `claude -p`
+or `codex exec`: the coder does the task, runs whatever tests and checks it judges useful while
+working, and ends with its answer. On completion Marina prints the session diff and the agent's
+summary. By default Marina adds no verification of its own: no snapshot, no repository gates, no
+requirement checklist, and it never reports the result as verified. The exit code:
 
 | Code | Meaning |
 |---|---|
+| `0` | completed (status `done`): the changed files and the coder's summary are printed |
+| `1` | failed: the agent died mid-task, the run was stopped, or it ended blocked (the reason is printed; edits it made stay in the folder and are listed) |
+| `2` | timed out after `MARINA_CODE_TASK_TIMEOUT_MS` (default 600000 ms); `code stop` was sent |
+
+**Verified one-shots (`--verify`).** `--verify` asks Marina to verify the result before it counts.
+The task is dispatched with a verification requirement it must pass to submit, and the exit code
+then says what you can rely on:
+
+| Code | Meaning under `--verify` |
+|---|---|
 | `0` | completed and **verified**: the required verification passed (under `candidate`, the repository's own gates and every listed requirement's check; under `delivery`, every stated requirement observed by a passing check or declared not machine-checkable) |
 | `3` | completed but **not verified**: no checks ran, they failed, the source changed after them, a stated requirement was left unobserved, or nothing changed (`no_changes`: nothing to verify). The reason is printed on stderr. `--allow-unverified` makes this `0` (the notice still prints). |
-| `1` | failed: the agent died mid-task, the run was stopped, or it ended blocked (the reason is printed; edits it made stay in the folder and are listed) |
+| `1` | failed, as above |
 | `2` | timed out after `MARINA_CODE_TASK_TIMEOUT_MS` (default 600000 ms, 1200000 ms under `candidate`); `code stop` was sent |
 
-**What `verified` means.** `--verification <mode>` sets what a one-shot task must verify before it
-can submit. With no flag and no `MARINA_CODE_VERIFICATION`, a folder that is a Git repository's
-root with a test runner Marina detects (a `test` script, pytest, cargo, go, Maven or Gradle) gets
-`candidate`; any other folder gets `delivery`.
+**What `verified` means.** `--verification <mode>` (or `MARINA_CODE_VERIFICATION`) sets what a
+one-shot task must verify before it can submit, and implies `--verify`. With `--verify` alone, a
+folder that is a Git repository's root with a test runner Marina detects (a `test` script, pytest,
+cargo, go, Maven or Gradle) gets `candidate`; any other folder gets `delivery`.
 
 - `candidate` (the repository's gates): the task is dispatched with `code do verification:candidate
   gates:repository`. Verification runs on a snapshot of the whole repository and runs every
@@ -854,7 +867,8 @@ implementation and the checks. The coder's deadline leaves room for the full sui
 well before its deadline.
 
 **Native runtimes.** `marina -p --agent claude|codex|pi` runs the native agent's turn in the
-folder; when the turn finishes, Marina verifies its result the same way: if the folder changed,
+folder and, by default, exits `0` (status `done`) with the files it changed. Under `--verify`, when
+the turn finishes, Marina verifies its result the same way: if the folder changed,
 it runs `code verify candidate gates:repository` on a snapshot of the folder and reports
 `verified` only if every gate passed and the folder still matches the snapshot, re-checked
 when the result arrives. The turn and its verification share one deadline
@@ -869,9 +883,10 @@ submit its answer with `code summary` and no checks. Marina compares the workspa
 observed just before the attempt was dispatched; if nothing changed, verification is
 `not_applicable` with a reason that starts `nothing to verify: no files changed during this
 task`. Status, review, the terminal result, task review and `--json` all show it as such: it is
-never `passed` and earns no verified-code credit. `marina -p` reports status `no_changes` and
-exits `3` (completed but not verified, reason "nothing to verify"), like any other unverified
-completion; `--allow-unverified` makes it `0`.
+never `passed` and earns no verified-code credit. `marina -p --verify` reports status
+`no_changes` and exits `3` (completed but not verified, reason "nothing to verify"), like any
+other unverified completion; `--allow-unverified` makes it `0`. Without `--verify` a no-change
+answer is an ordinary `done` (exit `0`).
 
 The baseline belongs to the attempt: steering keeps it, and a new attempt observes a new one.
 For a local workspace Marina records, without reading file contents or following links, each
@@ -931,7 +946,11 @@ or a dissolved crew is refused, and a member's plain `code summary` stays progre
 contract, `code do` on a crew session still stores and dispatches a crew plan.
 
 `--json` prints one JSON object as the last line of stdout and sends everything else to stderr:
-`{"status":"verified|unverified|no_changes|failed|timeout","exitCode":…,"verification":…,"verificationReason":…,"requirements":…,"reason":…,"assumptions":[{"text":…,"source":"worker|block"}],"budgetForced":…,"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
+`{"status":"done|failed|timeout","exitCode":…,"summary":…,"reason":…,"assumptions":[{"text":…,"source":"worker|block"}],"budgetForced":…,"taskId":…,"runId":…,"files":[{"path":…,"added":…,"removed":…}],"durationMs":…}`.
+Under `--verify` the status is `verified|unverified|no_changes|failed|timeout` and the object also
+carries `"verification"`, `"verificationReason"` and `"requirements"`; without it those fields are
+absent, because Marina verified nothing. `summary` is the coder's summary (`null` when there is
+none, as for a native turn).
 `files` is what the run changed in the session, also when it failed or ended blocked; `reason` is
 the full reason a run failed (`null` otherwise); `assumptions` lists the interpretations made
 where no person could answer (below). The human-readable output prints the same assumptions
@@ -951,8 +970,9 @@ marina -p "fix the off-by-one in the tokenizer and add a regression test" ~/proj
 echo $?
 ```
 
-The exit code is `0` verified · `3` completed, not verified (including nothing changed) · `1` failed · `2` timed out. To read
-the status from the JSON object instead:
+The exit code is `0` done · `1` failed · `2` timed out; with `--verify`, `0` verified · `3`
+completed, not verified (including nothing changed). To read the status from the JSON object
+instead:
 
 ```bash
 marina -p "…" ~/projects/acme --json | tail -1 | jq .status
@@ -1121,12 +1141,12 @@ progress, and the reply lists exactly which requirements lack an observing check
 add and map checks, or mark a requirement `notCheckable` with a reason; that marking is recorded
 and shown, never counted as verified. The next submission proceeds (bounded, never a loop). Any
 requirement still unverified is written into the submitted evidence and the terminal lifecycle
-`requirements` field. `marina -p` reports such a run as `unverified` (exit `3`). That still
+`requirements` field. `marina -p --verify` reports such a run as `unverified` (exit `3`). That still
 permits submission for owner review; `--allow-unverified` permits exit 0 while retaining the
 unverified status. A requirement explicitly marked not machine-checkable (a prohibition such as
 "do not read /tests", which no check over delivered files can observe) is accepted by the same
 gate and does not by itself make a run unverified: when the checks passed and every other
-requirement was observed, `marina -p` exits `0` and names the not-machine-checkable ones on
+requirement was observed, `marina -p --verify` exits `0` and names the not-machine-checkable ones on
 stderr. A checklist with no observed requirement at all stays `unverified`. Other verification
 modes are unchanged.
 
@@ -1192,9 +1212,10 @@ at once, for what cannot be worked around (missing data or credentials, a broken
 Either way the edits already made stay in the workspace. Only the attempt's worker gets automatic
 answers; attended tasks keep the behavior above.
 
-Marina's one-shot `-p` path selects the verification mode (above) and `owner:unattended`, and
+Marina's one-shot `-p` path selects `owner:unattended` and a time budget, and exits `0` once a
+matching attempt submits. Under `--verify` it also selects the verification mode (above) and
 exits `0` only after a matching attempt submits with current verification; an observed no-change
-answer (`no_changes`, verification `not_applicable`) exits `3`. Submission remains separate from
+answer (`no_changes`, verification `not_applicable`) then exits `3`. Submission remains separate from
 owner approval. Old completions from another attempt cannot finish the current task. The
 `owner:unattended` contract also lets the designated active worker run `code writer <its-name>`
 to reclaim a lock handed back to the owner. It cannot reclaim a collaborator's lock, transfer the
