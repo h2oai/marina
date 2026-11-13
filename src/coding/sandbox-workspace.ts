@@ -1427,7 +1427,52 @@ export function parseIndexEntries(data: Buffer): { mode: string; oid: string; pa
       throw new Error("Git in the sandbox staged an unsafe path; nothing was captured.");
     entries.push({ mode: match[1]!, oid: match[2]!, path });
   }
+  // One entry per path, and no path both a file and a directory (`a` and `a/b`):
+  // update-index would silently drop one of them.
+  const files = new Set<string>();
+  const dirs = new Set<string>();
+  for (const { path } of entries) {
+    if (files.has(path))
+      throw new Error("Git in the sandbox staged a path twice; nothing was captured.");
+    files.add(path);
+    const parts = path.split("/");
+    for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join("/"));
+  }
+  for (const path of files)
+    if (dirs.has(path))
+      throw new Error(
+        "Git in the sandbox staged a path as both a file and a directory; nothing was captured.",
+      );
   return entries;
+}
+
+/**
+ * The tree host git wrote must hold exactly the accepted entries (`ls-tree -r`):
+ * nothing dropped, replaced or added on the way through `update-index`.
+ */
+export async function verifyStagedTree(
+  repository: string,
+  tree: string,
+  entries: readonly { mode: string; oid: string; path: string }[],
+): Promise<void> {
+  const listed = (
+    await hostGit(repository, ["ls-tree", "-r", "-z", "--full-tree", tree])
+  ).stdout.toString("utf8");
+  const written = listed
+    .split("\0")
+    .filter(Boolean)
+    .map((record) => {
+      const match = /^(\d{6}) (?:blob|commit) ([a-f0-9]{40,64})\t(.+)$/s.exec(record);
+      if (!match)
+        throw new Error("The staged tree holds an unexpected entry; nothing was captured.");
+      return `${match[1]} ${match[2]}\t${match[3]}`;
+    })
+    .sort();
+  const expected = entries.map((e) => `${e.mode} ${e.oid}\t${e.path}`).sort();
+  if (written.length !== expected.length || written.some((line, i) => line !== expected[i]))
+    throw new Error(
+      "The staged tree does not match the entries git staged in the sandbox; nothing was captured.",
+    );
 }
 
 /** `git cat-file --batch` output: `<oid> <type> <size>\n<bytes>\n` per object. */
@@ -1512,8 +1557,18 @@ export function gitExposureReport(
   root: string,
   exposures: readonly GitExposure[],
   sinceMs: number,
-  opts: { listed?: number; maxEntries?: number } = {},
+  opts: {
+    listed?: number;
+    maxEntries?: number;
+    /**
+     * Git metadata to leave out, relative to the root: the root's `.git` and each known
+     * submodule's `<path>/.git` (`collectGitlinks`). Any other `.git` the session wrote
+     * (`tools/.git/payload.sh`) is a file like any other and is listed.
+     */
+    metadata?: ReadonlySet<string>;
+  } = {},
 ): GitExposureReport {
+  const metadata = opts.metadata ?? new Set([".git"]);
   const listed = opts.listed ?? EXPOSURE_LISTED;
   const maxEntries = opts.maxEntries ?? EXPOSURE_MAX_ENTRIES;
   const files: string[] = [];
@@ -1536,8 +1591,8 @@ export function gitExposureReport(
         incomplete = true;
         break;
       }
-      if (name === ".git") continue;
       const path = join(dir, name);
+      if (metadata.has(relative(root, path))) continue;
       const stat = lstatSync(path, { throwIfNoEntry: false });
       if (!stat) continue;
       if (stat.isDirectory()) stack.push(path);
@@ -1567,15 +1622,46 @@ export function gitExposureNotice(report: GitExposureReport, root: string): stri
   return `${settings} ${marina} Your own git would see the files this session created or changed${partial}: ${listed}${more}. Review them before running git in ${root} yourself.`;
 }
 
+/**
+ * Every setting a sandbox root supports but cannot pin, its submodules' module
+ * configs included (as `inSandbox` scans them before each command), and the
+ * git metadata paths the report leaves out (the root's `.git`, each gitlink's).
+ */
+export async function sandboxExposureScope(
+  root: string,
+  opts: SandboxLayoutOptions = sandboxTestDefaults,
+): Promise<{ exposures: GitExposure[]; metadata: Set<string> }> {
+  const real = realpathSync(root);
+  const layout = resolveSandboxLayout(real, [], opts);
+  const exposures = [...(layout.exposures ?? [])];
+  const git = sandboxGitPaths(real);
+  const subs = await collectGitlinks(real, git.gitDir, git.common);
+  for (const entry of subs.moduleConfigs) {
+    const files = assertNoWorkTreeIncludes([entry.file], [real], layout.home);
+    programConfigPins(
+      files.map((file) => ({ file, base: entry.base })),
+      real,
+      layout.home,
+      exposures,
+    );
+  }
+  const metadata = new Set([".git", ...subs.records.map((record) => join(record.path, ".git"))]);
+  return { exposures, metadata };
+}
+
 /** The exposure notice for a sandbox root since `sinceMs`, or null (no exposure, or the layout is refused). */
-export function sandboxExposureNoticeFor(root: string, sinceMs: number): string | null {
+export async function sandboxExposureNoticeFor(
+  root: string,
+  sinceMs: number,
+  opts: SandboxLayoutOptions = sandboxTestDefaults,
+): Promise<string | null> {
   try {
     const real = realpathSync(root);
-    const layout = resolveSandboxLayout(real, [], sandboxTestDefaults);
-    if (!layout.exposures?.length) return null;
-    return gitExposureNotice(gitExposureReport(real, layout.exposures, sinceMs), real);
+    const { exposures, metadata } = await sandboxExposureScope(real, opts);
+    if (exposures.length === 0) return null;
+    return gitExposureNotice(gitExposureReport(real, exposures, sinceMs, { metadata }), real);
   } catch {
-    return null; // the start line reports a refused layout itself
+    return null; // a refused layout runs nothing: the start line reports the refusal itself
   }
 }
 
@@ -1881,6 +1967,7 @@ export class SandboxWorkspace extends LocalWorkspace {
         rmSync(own, { recursive: true, force: true });
       }
       if (!/^[a-f0-9]{40,64}$/.test(tree)) throw new Error("git write-tree returned no tree.");
+      await verifyStagedTree(repo, tree, entries);
       const blobs = new Map<string, string>();
       for (const entry of entries) if (entry.mode !== "160000") blobs.set(entry.path, entry.oid);
       return { tree, blobs };
@@ -1904,10 +1991,11 @@ export class SandboxWorkspace extends LocalWorkspace {
     options: CandidateCaptureOptions = {},
   ): ReturnType<LocalWorkspace["captureCandidate"]> {
     if (this.hostExecForbidden) throw new HostExecForbiddenError();
-    if (options.staged || this.contentFilters().length === 0)
+    if (options.stage || this.contentFilters().length === 0)
       return super.captureCandidate(repository, beforeCapture, options);
-    const { blobs } = await this.stagedEntries("index", repository ?? this.root);
-    return super.captureCandidate(repository, beforeCapture, { staged: blobs });
+    // Staged under the capture's root lock, before the scans and again after them.
+    const stage = async () => (await this.stagedEntries("index", repository ?? this.root)).blobs;
+    return super.captureCandidate(repository, beforeCapture, { stage });
   }
 
   /** With content filters, the diff git inside the sandbox sees (new files staged intent-to-add). */

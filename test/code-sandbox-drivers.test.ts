@@ -15,11 +15,13 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { observeCandidate } from "../src/coding/candidate";
+import { runCodingQualificationProcess } from "../scripts/qualify-coding";
+import { captureGitCandidate, observeCandidate } from "../src/coding/candidate";
 import { publishEnv, shipChange } from "../src/coding/code-ship";
 import { type GitRunner, snapshotCommit, trialHostGit } from "../src/coding/code-trial";
 import { HOST_GIT_CONFIG_ARGS, hostGitDriverOverrides, hostGitEnv } from "../src/coding/host-git";
@@ -35,6 +37,8 @@ import {
   SANDBOX_SYSTEM_PATHS,
   type SandboxLayoutOptions,
   SandboxWorkspace,
+  sandboxExposureNoticeFor,
+  verifyStagedTree,
 } from "../src/coding/sandbox-workspace";
 import { spawnGit } from "../src/engine/run-version";
 import { git, gitInit } from "./git-helpers";
@@ -213,16 +217,63 @@ describe("the exposure report (no bubblewrap needed)", () => {
     writeFileSync(join(root, ".gitignore"), "*.pyc\n");
     writeFileSync(join(root, "nbstripout.pyc"), "planted\n");
     writeFileSync(join(root, ".git", "description"), "touched\n");
+    // A `.git` the session made is not metadata: only the root's (and known gitlinks') are.
+    mkdirSync(join(root, "tools", ".git"), { recursive: true });
+    writeFileSync(join(root, "tools", ".git", "payload.sh"), "planted\n");
     const report = gitExposureReport(root, exposures, since);
-    expect(report.files).toEqual([".gitignore", "nbstripout.pyc", "pkg/nbstripout.py"]);
+    expect(report.files).toEqual([
+      ".gitignore",
+      "nbstripout.pyc",
+      "pkg/nbstripout.py",
+      "tools/.git/payload.sh",
+    ]);
     expect(report.more).toBe(0);
     const notice = gitExposureNotice(report, root) ?? "";
     expect(notice).toContain("filter.nb.clean");
     expect(notice).toContain("nbstripout.pyc");
     expect(notice).not.toContain("old.txt");
-    expect(gitExposureReport(root, exposures, since, { listed: 1 }).more).toBe(2);
+    expect(gitExposureReport(root, exposures, since, { listed: 1 }).more).toBe(3);
     expect(gitExposureReport(root, exposures, since, { maxEntries: 2 }).incomplete).toBe(true);
     expect(gitExposureNotice({ ...report, exposures: [] }, root)).toBeNull();
+  });
+});
+
+describe("the exposure report covers submodules (no bubblewrap needed)", () => {
+  let base: string;
+  let fake: ReturnType<typeof fakeLaunchers>;
+  beforeEach(() => {
+    base = tmp("marina-sbx-subexp-");
+    fake = fakeLaunchers();
+  });
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(fake.dir, { recursive: true, force: true });
+  });
+
+  it("a filter only a submodule's config defines is reported, with what the session wrote there", async () => {
+    const source = join(base, "src");
+    mkdirSync(source);
+    gitInit(source);
+    git(source, "commit", "--allow-empty", "-q", "-m", "s");
+    const root = join(base, "root");
+    mkdirSync(root);
+    gitInit(root);
+    git(root, "-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "sub");
+    git(root, "commit", "-q", "-m", "sub");
+    git(join(root, "sub"), "config", "filter.subf.clean", "strip-it");
+    const home = join(base, "home");
+    mkdirSync(home);
+    const opts = { ...fake.opts, home, serverState: [] };
+    const since = Date.now() + 1500;
+    await Bun.sleep(1600);
+    writeFileSync(join(root, "sub", "planted.py"), "planted\n");
+    // Touch the gitfile (new ctime), so only the metadata rule keeps it out.
+    utimesSync(join(root, "sub", ".git"), new Date(), new Date());
+    const notice = (await sandboxExposureNoticeFor(root, since, opts)) ?? "";
+    expect(notice).toContain("filter.subf.clean");
+    expect(notice).toContain("sub/planted.py");
+    // The submodule's own gitfile is metadata, not a session file.
+    expect(notice).not.toContain("sub/.git");
   });
 });
 
@@ -238,8 +289,35 @@ describe("parsers for what the sandbox returns (no bubblewrap needed)", () => {
       `100644 ${oid} 0\t.git/config\0`,
       `100644 ${oid} 0\t../x\0`,
       `100644 ${oid} 0\t/etc/passwd\0`,
+      // Duplicates and a path that is both a file and a directory.
+      `100644 ${oid} 0\ta\x00100644 ${oid} 0\ta\0`,
+      `100644 ${oid} 0\ta\x00100644 ${oid} 0\ta/b\0`,
+      `100644 ${oid} 0\tx/a\x00100644 ${oid} 0\tx/a/b/c\0`,
     ])
       expect(() => parseIndexEntries(Buffer.from(bad))).toThrow();
+  });
+
+  it("the written tree must hold exactly the accepted entries", async () => {
+    const repo = tmp("marina-sbx-tree-");
+    try {
+      gitInit(repo);
+      writeFileSync(join(repo, "a"), "a\n");
+      writeFileSync(join(repo, "b"), "b\n");
+      git(repo, "add", "-A");
+      git(repo, "commit", "-q", "-m", "init");
+      const tree = git(repo, "rev-parse", "HEAD^{tree}").trim();
+      const entries = parseIndexEntries(
+        Buffer.from(git(repo, "ls-files", "-s", "-z").replace(/\n$/, "")),
+      );
+      await verifyStagedTree(repo, tree, entries);
+      await expect(verifyStagedTree(repo, tree, entries.slice(1))).rejects.toThrow(
+        /does not match/,
+      );
+      const swapped = entries.map((e, i) => (i === 0 ? { ...e, oid: entries[1]!.oid } : e));
+      await expect(verifyStagedTree(repo, tree, swapped)).rejects.toThrow(/does not match/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it("cat-file --batch frames, binary-safe; a short or garbled stream is refused", () => {
@@ -337,6 +415,51 @@ describe("Marina's other host git never runs a content filter (no bubblewrap nee
     spawnGit(["diff", "--stat"], root);
     spawnGit(["status", "--porcelain"], root);
     expect(existsSync(mark)).toBe(false);
+  });
+
+  it("coding qualification's git in a session's root never runs the repository's filter", async () => {
+    git(root, "config", "filter.f.clean", join(dir, "filter.sh"));
+    await runCodingQualificationProcess(["git", "diff", "HEAD", "--name-only"], root);
+    await runCodingQualificationProcess(["git", "status", "--porcelain"], root);
+    expect(existsSync(mark)).toBe(false);
+  });
+});
+
+describe("candidate capture with staged blobs (no bubblewrap needed)", () => {
+  let root: string;
+  beforeEach(() => {
+    root = tmp("marina-sbx-stage-");
+    gitInit(root);
+    writeFileSync(join(root, "a.nb"), "one\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "init");
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  /** Stages like the sandbox would (here: raw bytes), with an optional write right after. */
+  const stager = (afterFirst?: () => void) => {
+    let calls = 0;
+    return async () => {
+      const blobs = new Map<string, string>();
+      for (const name of ["a.nb"])
+        blobs.set(name, git(root, "hash-object", "-w", "--no-filters", name).trim());
+      if (calls++ === 0) afterFirst?.();
+      return blobs;
+    };
+  };
+
+  it("a stable tree captures with the staged blobs", async () => {
+    const captured = await captureGitCandidate(root, root, { stage: stager() });
+    try {
+      expect(git(root, "cat-file", "-p", `${captured.candidate.tree}:a.nb`).trim()).toBe("one");
+    } finally {
+      await captured.dispose();
+    }
+  });
+
+  it("a change after staging fails the capture instead of pairing old blobs with new bytes", async () => {
+    const stage = stager(() => writeFileSync(join(root, "a.nb"), "two, longer\n"));
+    await expect(captureGitCandidate(root, root, { stage })).rejects.toThrow(/Source changed/);
   });
 });
 

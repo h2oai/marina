@@ -1229,7 +1229,7 @@ export async function runCodeSession(
         console.error("Server did not stop in time; killed it.");
       // What the person's own git could hand to a content driver or a shell-expanded
       // setting from this session's writes (src/coding/sandbox-workspace.ts).
-      const exposed = opts.sandbox ? sandboxExposureNoticeFor(dir, startedAt) : null;
+      const exposed = opts.sandbox ? await sandboxExposureNoticeFor(dir, startedAt) : null;
       if (exposed) console.error(`marina: ${exposed}`);
       if (!fresh) rmSync(serverInfoPath(projectDirectory), { force: true });
       // Only ephemeral (--fresh) DBs are deleted — the per-folder persistent

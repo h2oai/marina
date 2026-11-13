@@ -36,12 +36,14 @@ import type { WorkspaceRuntime } from "../../../coding/local-workspace";
 import { LocalWorkspace } from "../../../coding/local-workspace";
 import {
   codeSandboxMode,
+  type GitExposure,
   gitExposureStartNotice,
   gitHooksNotice,
   SANDBOX_RUN_NOTE,
   type SandboxTamperError,
   SandboxWorkspace,
   sandboxExposureNoticeFor,
+  sandboxExposureScope,
   sandboxExposuresFor,
   sandboxHooksFor,
   UnavailableSandboxWorkspace,
@@ -944,11 +946,11 @@ export function runnerSummary(
  * shell-expanded setting (`gitExposureReport`), or null when none applies.
  * Shown when the session ends and by `code ship`.
  */
-export function sandboxExposureNotice(
+export async function sandboxExposureNotice(
   db: Pick<MarinaDB, "listCodingArtifacts">,
   session: CodingSessionRow,
   env: NodeJS.ProcessEnv = process.env,
-): string | null {
+): Promise<string | null> {
   if (session.execution_target !== "local") return null;
   if (effectiveRunner(sessionRunnerSetting(db, session.id), env).kind !== "sandbox") return null;
   return sandboxExposureNoticeFor(sessionRoot(session), session.created_at);
@@ -980,16 +982,22 @@ export async function sandboxStagedTree(
  * remote pack programs, signing): Marina cannot show what they reach, so it
  * does not run them for a sandboxed session; the person pushes.
  */
-export function publishExposureRefusal(
+export async function publishExposureRefusal(
   db: Pick<MarinaDB, "listCodingArtifacts">,
   session: CodingSessionRow,
   env: NodeJS.ProcessEnv = process.env,
-): string | null {
+): Promise<string | null> {
   if (session.execution_target !== "local") return null;
   if (effectiveRunner(sessionRunnerSetting(db, session.id), env).kind !== "sandbox") return null;
+  let exposures: GitExposure[];
+  try {
+    exposures = (await sandboxExposureScope(sessionRoot(session))).exposures;
+  } catch {
+    exposures = sandboxExposuresFor(sessionRoot(session));
+  }
   const keys = [
     ...new Set(
-      sandboxExposuresFor(sessionRoot(session))
+      exposures
         .filter(
           (exposure) =>
             exposure.kind === "shell-expansion" &&

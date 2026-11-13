@@ -116,8 +116,20 @@ function credentialPath(path: string) {
 export type StagedBlobs = ReadonlyMap<string, string>;
 
 export interface CandidateCaptureOptions {
-  /** With these, filter / ident / encoding attributes are supported: the tree takes the staged blobs. */
-  staged?: StagedBlobs;
+  /**
+   * Stages the work tree with the repository's filters (inside the sandbox) and returns its
+   * blobs. With it, filter / ident / encoding attributes are supported: the tree takes the
+   * staged blobs. It is called under the capture's root lock before the source is scanned and
+   * again after the confirming scan; the two must agree, so a change between staging and
+   * scanning fails the capture instead of pairing older staged blobs with newer bytes.
+   */
+  stage?: () => Promise<StagedBlobs>;
+}
+
+function sameBlobs(a: StagedBlobs, b: StagedBlobs): boolean {
+  if (a.size !== b.size) return false;
+  for (const [path, oid] of a) if (b.get(path) !== oid) return false;
+  return true;
 }
 
 /** Enumerate the operator index without refreshing or modifying it, then read actual bytes.
@@ -321,7 +333,8 @@ export async function captureGitCandidate(
   let retained: { repository: string; ref: string; commit: string } | undefined;
   try {
     await mkdir(materialized);
-    const attributes = options.staged ? "ignore" : "refuse";
+    const staged = options.stage ? await options.stage() : undefined;
+    const attributes = staged ? "ignore" : "refuse";
     const source = await scan(root, materialized, attributes);
     repository = await realpath(repository);
     if (
@@ -343,6 +356,9 @@ export async function captureGitCandidate(
     const confirmed = await scan(root, undefined, attributes);
     if (confirmed.fingerprint !== source.fingerprint || confirmed.baseCommit !== source.baseCommit)
       throw new Error("Source changed during candidate capture. Retry after the writer settles.");
+    // Staged again after both scans: a change after the first staging shows up here.
+    if (staged && options.stage && !sameBlobs(staged, await options.stage()))
+      throw new Error("Source changed during candidate capture. Retry after the writer settles.");
     await git(repository, ["read-tree", "--empty"], undefined, index);
     const regular = source.entries.filter((entry) => entry.mode !== "120000");
     const paths = regular.map((entry) => JSON.stringify(join(materialized, entry.path))).join("\n");
@@ -360,8 +376,8 @@ export async function captureGitCandidate(
     let cursor = 0;
     const indexEntries: string[] = [];
     for (const entry of source.entries) {
-      const staged = options.staged?.get(entry.path);
-      if (options.staged && !staged)
+      const stagedOid = staged?.get(entry.path);
+      if (staged && !stagedOid)
         throw new Error("Source changed during candidate capture. Retry after the writer settles.");
       const raw =
         entry.mode === "120000"
@@ -374,7 +390,7 @@ export async function captureGitCandidate(
             ).text.trim()
           : hashes[cursor++]!;
       // The repository's filters decide a regular file's committed blob (staged in the sandbox).
-      const oid = staged && entry.mode !== "120000" ? staged : raw;
+      const oid = stagedOid && entry.mode !== "120000" ? stagedOid : raw;
       if (!/^[a-f0-9]{40,64}$/.test(oid)) throw new Error("Git returned an invalid blob identity.");
       indexEntries.push(`${entry.mode} ${oid}\t${entry.path}\0`);
     }

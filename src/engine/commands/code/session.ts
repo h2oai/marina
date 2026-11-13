@@ -905,7 +905,7 @@ export async function completeSession(
   });
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
   // Before the worktree is cleaned up: what the person's own git could run (sandbox sessions).
-  const exposureNote = sandboxExposureNotice(deps.db, session);
+  const exposureNote = await sandboxExposureNotice(deps.db, session);
   const worktreeNote = await cleanupSessionWorktree(deps, entity, session);
   sendCode(
     ctx,

@@ -166,9 +166,9 @@ export async function shipCode(
   const trial = JSON.parse(latest.metadata_json) as CodeTrialResult;
   const scratch = resolve(SHIP_SCRATCH(scratchRoot(), session.id));
   const git = asGitRunner(host.git);
-  const publishRefusal = publishExposureRefusal(deps.db, session);
+  const publishRefusal = await publishExposureRefusal(deps.db, session);
   if (publishRefusal) {
-    const exposed = sandboxExposureNotice(deps.db, session);
+    const exposed = await sandboxExposureNotice(deps.db, session);
     refuseCommand(ctx, eid, exposed ? `${publishRefusal}\n${exposed}` : publishRefusal);
     return;
   }
@@ -264,7 +264,7 @@ export async function shipCode(
     tell(`ship failed: ${getErrorMessage(error)}`);
   });
   deps.trackBackground?.(work);
-  const exposed = sandboxExposureNotice(deps.db, session);
+  const exposed = await sandboxExposureNotice(deps.db, session);
   sendCode(
     ctx,
     eid,
