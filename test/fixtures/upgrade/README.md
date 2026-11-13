@@ -11,6 +11,7 @@ code and compares it with a fresh install.
 | v0.6.0 | 70 | generated |
 | v0.7.0 | 94 | generated |
 | v0.8.0 | 167 | generated |
+| v0.9.0 | 190 | generated |
 
 Add a fixture after tagging a release (needs network access for `bun install`):
 
