@@ -91,6 +91,9 @@ main() {
     fi
   fi
   cd "$dir"
+  # Bun keeps a copy of every package it installs in its cache (hard links into node_modules):
+  # keep that in the home too, so removing ~/.marina removes all of it.
+  export BUN_INSTALL_CACHE_DIR="$home/cache/bun"
 
   step "3/5" "Installing packages (a minute or two)"
   "$bun" install --no-env-file --no-progress >/dev/null 2>&1 || "$bun" install --no-env-file

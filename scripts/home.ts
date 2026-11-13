@@ -114,8 +114,11 @@ export function isSetupInstall(dir: string): boolean {
     spawnSync("git", ["-C", dir, ...args], { encoding: "utf8", timeout: 10_000 });
   const status = git("status", "--porcelain", "--untracked-files=no");
   if (status.status !== 0 || status.stdout.trim()) return false;
+  // No commits of its own: HEAD is on the upstream branch, or is what setup.sh
+  // last downloaded (FETCH_HEAD; an install from another ref is ahead of main).
   const ahead = git("rev-list", "--count", "@{upstream}..HEAD");
-  return ahead.status === 0 && ahead.stdout.trim() === "0";
+  if (ahead.status === 0 && ahead.stdout.trim() === "0") return true;
+  return git("merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD").status === 0;
 }
 
 /** Whether a world's database is open in a running server (its lease is held). */
@@ -484,7 +487,7 @@ export function renderPlan(plan: UninstallPlan): string[] {
 export function afterwordFor(plan: UninstallPlan, env: Env = process.env): string[] {
   const lines: string[] = [];
   const bun = join(env.BUN_INSTALL?.trim() || join(userHome(env), ".bun"));
-  if (existsSync(bun))
+  if (existsSync(join(bun, "bin", "bun")))
     lines.push(
       `Bun (${bun}) is still installed: other programs may use it. If you installed it only for Marina: rm -rf ${bun}`,
     );
@@ -564,7 +567,10 @@ export function applyUninstall(plan: UninstallPlan, opts: { keepData?: boolean }
     try {
       const lines = readFileSync(edit.file, "utf8").split("\n");
       const drop = new Set(edit.lines);
-      writeFileSync(edit.file, lines.filter((_, i) => !drop.has(i)).join("\n"));
+      const kept = lines.filter((_, i) => !drop.has(i)).join("\n");
+      // A startup file that held nothing but setup's line (setup created it) goes too.
+      if (kept.trim() === "") rmSync(edit.file);
+      else writeFileSync(edit.file, kept);
     } catch {
       failed.push(edit.file);
     }

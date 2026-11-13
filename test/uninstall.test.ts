@@ -85,6 +85,27 @@ describe("moving an older install into the home", () => {
     expect(existsSync(old)).toBe(false);
   });
 
+  it("moves an install updated from another ref (ahead of its upstream, but what setup fetched)", () => {
+    const upstream = join(user, "upstream");
+    mkdirSync(join(upstream, "scripts"), { recursive: true });
+    writeFileSync(join(upstream, ".bun-version"), "1.4.4\n");
+    writeFileSync(join(upstream, "scripts", "marina.ts"), "");
+    git(upstream, "init", "-q", "-b", "main");
+    git(upstream, "add", ".");
+    git(upstream, "commit", "-qm", "main");
+    git(upstream, "checkout", "-qb", "next");
+    writeFileSync(join(upstream, "next.txt"), "n");
+    git(upstream, "add", ".");
+    git(upstream, "commit", "-qm", "next");
+    const old = join(user, "marina");
+    spawnSync("git", ["clone", "-q", "--branch", "main", upstream, old]);
+    git(old, "pull", "-q", "--ff-only", "origin", "next");
+    writeFileSync(join(old, "marina.db"), "world");
+    const result = migrateLegacyInstall(old, env);
+    expect(result.app).toBe(join(home, "app"));
+    expect(readFileSync(join(home, "world", "marina.db"), "utf8")).toBe("world");
+  });
+
   it("never moves someone's own clone (edited tracked files)", () => {
     const clone = join(user, "marina");
     oldInstall(clone);

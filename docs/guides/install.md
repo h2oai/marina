@@ -98,7 +98,7 @@ Everything is in one folder, `~/.marina` (set `MARINA_HOME` to use another):
 | `worktrees/` | Code Mode's private checkouts of your repositories |
 | `mcp/` | the Claude Code plugin's world |
 | `desktop/` | the desktop app's data |
-| `sessions/`, `history/`, `cache/`, … | sign-ins, command history, rebuildable caches |
+| `sessions/`, `history/`, `cache/`, … | sign-ins, command history, caches (Bun's package cache included) |
 
 Outside it: one PATH line in your shell's startup file, and, while a Code Mode session is open,
 a worktree entry and a `marina/session-…` branch in the repository it works on. `marina start`
