@@ -98,7 +98,8 @@ function literal(value: unknown): string {
  * A plain-SQL dump that loads under SQLite's defensive mode (Bun enables it,
  * so `sqlite3 .dump`'s `writable_schema` trick is refused): ordinary tables
  * and rows, then each FTS5 table is created and rebuilt from its external
- * content table (every Marina FTS table is external-content), then indexes,
+ * content table, or, for one that holds its own text (`assets_fts`), given its
+ * rows back with their rowids, then indexes,
  * views and triggers — triggers last so loading rows never fires them.
  * Rows are ordered by rowid (WITHOUT ROWID tables by their key).
  */
@@ -136,10 +137,21 @@ export function dumpDatabase(path: string): string {
         );
     }
     for (const table of objects.filter((o) => o.type === "table" && isVirtual(o.sql))) {
-      if (!/\bcontent\s*=\s*'?\w+/i.test(table.sql))
-        throw new Error(`${table.name} is not an external-content FTS table; extend dumpDatabase`);
       out.push(`${table.sql};`);
-      out.push(`INSERT INTO ${quote(table.name)}(${quote(table.name)}) VALUES('rebuild');`);
+      if (/\bcontent\s*=\s*'?\w+/i.test(table.sql)) {
+        // External content: rebuilt from the table it indexes.
+        out.push(`INSERT INTO ${quote(table.name)}(${quote(table.name)}) VALUES('rebuild');`);
+        continue;
+      }
+      if (!/USING\s+fts5\s*\(/i.test(table.sql))
+        throw new Error(`${table.name} is a virtual table dumpDatabase cannot copy; extend it`);
+      // A self-contained FTS5 table (assets_fts) holds its own text: copy its rows.
+      const query = db.query(`SELECT rowid, * FROM ${quote(table.name)} ORDER BY rowid`);
+      const columns = query.columnNames.map(quote).join(",");
+      for (const row of query.values() as unknown[][])
+        out.push(
+          `INSERT INTO ${quote(table.name)}(${columns}) VALUES(${row.map(literal).join(",")});`,
+        );
     }
     for (const type of ["index", "view", "trigger"])
       for (const object of objects.filter((o) => o.type === type)) out.push(`${object.sql};`);
