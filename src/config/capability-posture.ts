@@ -218,6 +218,11 @@ export const KNOB_POSTURE: Readonly<Record<string, Posture>> = {
   ),
   MARINA_MEMORY_INGEST_NOTES: measure(bench("longmemeval-v2-small"), MEMORY_BOARD, DEC_1),
   MARINA_OBLIGATIONS_CONSENT: measure(bench("tau2-airline"), PAIRED, DEC_1),
+  MARINA_SELF_IMPROVE: measure(
+    outcomes(undefined, "task"),
+    "filed improve tasks get fixed (shipped and merged) more often than they are dismissed, and the signatures they name stop recurring",
+    JAN_15,
+  ),
 };
 
 /**

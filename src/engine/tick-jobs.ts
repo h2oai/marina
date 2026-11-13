@@ -8,6 +8,7 @@ import type { SandboxProviders } from "../coding/sandbox-provider";
 import type { BoardManager } from "../coordination/board-manager";
 import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
+import { SYSTEM_TASK_CREATOR } from "../coordination/task-manager";
 import { proposeUpstreamModelSeeds } from "../learned/upstream-model-seeds";
 import { flushWorkLessons } from "../learning/work";
 import {
@@ -59,6 +60,7 @@ import {
   RETENTION_TICK_PHASE,
   runRetentionPass,
 } from "./retention";
+import { runSelfImproveFinder } from "./self-improve";
 import { runStoragePass, STORAGE_PASS_BUDGET_MS, STORAGE_TICK_PHASE } from "./storage-budget";
 import type { TickScheduleClock, TickScheduler } from "./tick-scheduler";
 import { openWorkPulseTask } from "./work-pulse";
@@ -544,6 +546,26 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     },
   });
 
+  // Hourly: recurring warnings and errors in this server's own log become
+  // tasks to fix Marina's source (MARINA_SELF_IMPROVE; observe by default).
+  s.register({
+    name: "self-improve-finder",
+    every: NOTE_IMPORTANCE_INTERVAL,
+    phase: SELF_IMPROVE_PHASE,
+    failureMessage: "Self-improvement work finder failed",
+    run: () => {
+      if (!host.db) return;
+      const report = runSelfImproveFinder(host.db, {
+        id: SYSTEM_TASK_CREATOR,
+        name: SYSTEM_TASK_CREATOR,
+      });
+      if (report.filed.length)
+        host.logger.info("main", "self-improvement tasks filed", {
+          tasks: report.filed.join(","),
+        });
+    },
+  });
+
   // Every five minutes: deliver recorded outcomes still pending (src/outcomes/).
   // Producers schedule delivery as they record; this pass catches what waited
   // for the lesson budget or a verdict, and what a restart interrupted.
@@ -789,6 +811,8 @@ export const LIVE_PROMOTION_PHASE = 4200;
 
 /** The hourly phase of the lessons-from-work flush (distinct from every other hourly job). */
 export const LESSONS_FROM_WORK_PHASE = 3300;
+/** The hourly phase of the self-improvement work finder (src/engine/self-improve.ts). */
+export const SELF_IMPROVE_PHASE = 3350;
 /** The work pulse: every 6 h, durable on wall clock (`DURABLE_MIN_EVERY`), on its own phase. */
 export const WORK_PULSE_INTERVAL = 6 * NOTE_IMPORTANCE_INTERVAL;
 export const WORK_PULSE_PHASE = 5400;

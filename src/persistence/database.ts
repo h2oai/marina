@@ -710,6 +710,10 @@ export class MarinaDB implements MarinaStores {
     return entitiesDb.pruneEvents(this.db, keepLast);
   }
 
+  recentProblemLogs(sinceMs: number, limit?: number): logsDb.ProblemLogRow[] {
+    return logsDb.recentProblemLogs(this.reader, sinceMs, limit);
+  }
+
   // ─── Journeys (delegated to db-journeys.ts) ──────────────────────────
 
   createJourney(input: Parameters<typeof journeysDb.createJourney>[1]): journeysDb.JourneyRow {
