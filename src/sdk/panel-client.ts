@@ -115,7 +115,7 @@ export class MarinaPanelClient {
     return this.request<PublishedPanelNode>(this.path(canvasId, nodeId), "GET", undefined, signal);
   }
   publish(canvasId: string, document: A2UINodeData) {
-    const parsed = validatePanelDocument(document);
+    const parsed = validatePanelDocument(document, { unknownComponents: "refuse" });
     if (!parsed.ok) throw new Error(parsed.error);
     return this.request<PublishedPanelNode>(
       `/api/canvases/${encodeURIComponent(canvasId)}/nodes`,
@@ -124,7 +124,7 @@ export class MarinaPanelClient {
     );
   }
   revise(canvasId: string, nodeId: string, revision: string, document: A2UINodeData) {
-    const parsed = validatePanelDocument(document);
+    const parsed = validatePanelDocument(document, { unknownComponents: "refuse" });
     if (!parsed.ok) throw new Error(parsed.error);
     return this.request<PublishedPanelNode>(this.path(canvasId, nodeId), "PATCH", {
       revision,

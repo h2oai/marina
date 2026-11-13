@@ -7,6 +7,7 @@ import { canvasDocumentData, panelRevision } from "../../engine/canvas-document"
 import { canvasItemOwners, canvasOwners } from "../../engine/canvas-ownership";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
+import { agentPanelOperationsRefusal } from "../../engine/panel-authority";
 import type { MarinaDB } from "../../persistence/database";
 import { validatePanelDocument } from "../../sdk/panel-document";
 import type { StorageProvider } from "../../storage/provider";
@@ -22,6 +23,7 @@ import {
   resolveCanvasHttpPrincipal,
 } from "./canvas-principal";
 import { authorizeCanvasSubscription, type CanvasBroadcaster } from "./canvas-ws";
+import { httpPanelActorKind } from "./panel-actor";
 
 const CANVAS_NODE_TYPES = new Set([
   "image",
@@ -204,6 +206,15 @@ export async function handleCanvasApi(
   };
   const canAccessCanvas = (canvasId: string): boolean =>
     authorizeCanvasSubscription(db, canvasId, canvasPrincipal);
+  // A panel an agent writes carries no operations (src/engine/panel-authority.ts).
+  const panelWriteRefusal = (document: unknown) => {
+    if (!engine) return null;
+    const refused = agentPanelOperationsRefusal(
+      document,
+      httpPanelActorKind(engine, authenticatedEntityId),
+    );
+    return refused ? json({ error: refused, code: "agent_panel" }, 403) : null;
+  };
 
   const interactionMatch = url.pathname.match(
     /^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)\/interaction$/,
@@ -373,8 +384,10 @@ export async function handleCanvasApi(
           ? (body.data as Record<string, unknown>)
           : undefined;
       if (resultType === "a2ui") {
-        const parsed = validatePanelDocument(resultData);
+        const parsed = validatePanelDocument(resultData, { unknownComponents: "refuse" });
         if (!parsed.ok) return json({ error: parsed.error }, 400);
+        const refused = panelWriteRefusal(parsed.document);
+        if (refused) return refused;
         resultData = { ...resultData, ...parsed.document };
       }
       const result = completeIntent(context, node.id, {
@@ -474,7 +487,11 @@ export async function handleCanvasApi(
             if (body.revision !== panelRevision(before))
               return json({ error: "Panel changed. Reload before revising." }, 409);
           }
-          const document = await canvasDocumentData(body.data, existingNode.asset_id, db, storage);
+          const document = await canvasDocumentData(body.data, existingNode.asset_id, db, storage, {
+            unknownComponents: "refuse",
+          });
+          const refused = panelWriteRefusal(document);
+          if (refused) return refused;
           if (!canAccessCanvas(canvasId) || db.getNode(nodeId)?.data !== existingNode.data)
             return json({ error: "Panel changed. Reload before revising." }, 409);
           nodeData = JSON.stringify({
@@ -585,10 +602,13 @@ export async function handleCanvasApi(
           typeof body.asset_id === "string" ? body.asset_id : undefined,
           db,
           storage,
+          { unknownComponents: "refuse" },
         );
       } catch (error) {
         return json({ error: getErrorMessage(error) }, 400);
       }
+      const refused = panelWriteRefusal(nodeData);
+      if (refused) return refused;
     }
     const id = crypto.randomUUID();
     db.createNode({

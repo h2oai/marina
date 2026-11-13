@@ -28,9 +28,11 @@ it("terminal desk rereads live changes, pauses while hidden, recovers on return 
   f.engine.addEventListener((e) => broadcaster.broadcastEvent(e));
   server.start();
   cleanup.defer(() => server.stop());
+  // A person's terminal: only a person may publish a panel whose buttons act.
   const resident = new MarinaClient(`ws://127.0.0.1:${server.getPort()}`, {
     autoReconnect: false,
     pingInterval: 0,
+    principal: "person",
   });
   cleanup.defer(() => resident.disconnect());
   await resident.connect("DeskOwner");

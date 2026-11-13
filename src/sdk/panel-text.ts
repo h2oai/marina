@@ -97,6 +97,18 @@ export function panelText(input: unknown, sources: Record<string, unknown> = {})
           `${indent}${JSON.stringify(get(c.component === "DataTable" ? "rows" : "items") ?? [])}`,
         );
         break;
+      case "Row":
+      case "Column":
+      case "Card":
+      case "Surface":
+        break;
+      default: {
+        // A newer Marina's component: named, inert; its children still print.
+        const name = [c.label, c.text].find((v) => typeof v === "string" && v);
+        lines.push(
+          `${indent}[${String(c.component)}${name ? ` · ${String(name)}` : ""} · needs a newer Marina]`,
+        );
+      }
     }
     for (const child of [...(c.child ? [c.child] : []), ...(c.children ?? [])])
       visit(child, depth + 1);

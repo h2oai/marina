@@ -3,15 +3,25 @@
 
 import { createHash } from "node:crypto";
 import type { MarinaDB } from "../persistence/database";
-import { PANEL_LIMITS, panelRecord, validatePanelDocument } from "../sdk/panel-document";
+import {
+  PANEL_LIMITS,
+  type PanelValidationOptions,
+  panelRecord,
+  validatePanelDocument,
+} from "../sdk/panel-document";
 import type { StorageProvider } from "../storage/provider";
 
-/** Resolves stored assets only. No publisher-supplied URL is fetched. */
+/**
+ * Resolves stored assets only. No publisher-supplied URL is fetched. Reads are
+ * tolerant of component types a newer Marina wrote; a write passes
+ * `{ unknownComponents: "refuse" }` so its author learns at once.
+ */
 export async function canvasDocumentData(
   input: unknown,
   assetId: string | null | undefined,
   db: Pick<MarinaDB, "getAsset">,
   storage?: StorageProvider,
+  options?: PanelValidationOptions,
 ): Promise<Record<string, unknown>> {
   const data = typeof input === "string" ? JSON.parse(input) : input;
   let document: unknown = data;
@@ -25,7 +35,7 @@ export async function canvasDocumentData(
       throw new Error("Panel asset exceeds 256 KiB.");
     document = JSON.parse(new TextDecoder().decode(stored.data));
   }
-  const parsed = validatePanelDocument(document);
+  const parsed = validatePanelDocument(document, options);
   if (!parsed.ok) throw new Error(parsed.error);
   return { ...(panelRecord(data) ? data : {}), ...parsed.document };
 }

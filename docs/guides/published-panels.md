@@ -110,13 +110,19 @@ Components: `Text`, `Button`, `TextField`, `CheckBox`, `DateTimeInput`, `Row`, `
 
 Named `sources` may supply component `bindings` using `{source, path}`. `source: "dataModel"` reads the document's static data model. Paths traverse own JSON properties; they are not expressions. Bindable properties are `text`, `rows`, `items`, `value`, `checked` and `disabled`. Bound values must still match the component's type.
 
-Documents are limited to 256 KiB, 128 components, eight distinct live resources, depth 20 and 512 rendered component occurrences. Missing children, cycles, unsupported versions and malformed values are rejected at publication. Resource errors remain visible; they do not silently become authoritative empty results.
+Documents are limited to 256 KiB, 128 components, eight distinct live resources, depth 20 and 512 rendered component occurrences. Missing children, cycles, unsupported versions, unknown component types and malformed values are rejected at publication; the refusal lists the supported types.
+
+Readers are more tolerant than writers, so a panel written by a newer Marina still opens on an older one. A component type the reader does not know is drawn as a placeholder naming the type, and its children are drawn as usual. The component is kept unchanged in the stored panel, never runs an action, and bindings write only the bindable properties listed above onto it. A button whose operation reads a field of an unknown type reports that the action needs a newer Marina. Resource errors remain visible; they do not silently become authoritative empty results.
 
 Canvas updates use a shared subscription per canvas and credential. Other sources use content-free world change notices to trigger fresh, authorized reads. Repeated views share the dashboard query cache and event subscription; bursts are coalesced without indefinitely postponing refresh. Reconnect triggers a fresh read, with a five-second active-view polling fallback for missed or externally written changes. Hidden workspace views suspend their reads. Each resource keeps its existing authorization policy; a private read failure hides cached content. Participant history reports retention gaps, and task evidence retains its verification/review semantics.
 
 ## Actions
 
 Buttons can declare one `operation`. Opening or refreshing a panel never executes it. The web client displays a review with the destination and captured values; **Confirm action** submits as the clicking resident. Input values remain local for operational forms.
+
+Only a person acts through a panel. The server refuses an agent's interaction with `person_required` (HTTP 403) on every path: operations, notification buttons and field changes, and again when a queued command reaches its turn. An agent is a session on an internal or MCP connection, an SDK client that declared `principal: "agent"` (the `MarinaClient` default), or an account with an agent configuration or agent principal. The desktop app's own token counts as a person. A request with no session token, including under `MARINA_OPEN_API`, counts as an agent. Agents read panels and act with world commands.
+
+An agent may build and publish panels, but a panel an agent writes carries no operations. Publishing or revising one that declares an `operation` is refused with `agent_panel`, whether it arrives over HTTP, as a rich intent result or through `canvas publish`. A panel whose last writer was an agent account runs none of its buttons; a person who revises it makes its operations their own.
 
 ```json
 {
