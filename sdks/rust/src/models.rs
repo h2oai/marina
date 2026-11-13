@@ -34,7 +34,8 @@ fn number(v: f64) -> Value {
 #[serde(default)]
 pub struct A2UIComponent {
     pub id: String,
-    pub component: A2UIComponentType,
+    /// A known type, or (read tolerantly) a newer Marina's type, drawn as a placeholder.
+    pub component: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub child: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
