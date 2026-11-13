@@ -89,7 +89,7 @@ export interface MemoryHygieneDeps {
   /** Direct notification to the owner (a `tell`). */
   tell: (entityId: EntityId, text: string) => void;
   /** A running resident helper with the given role, if any. */
-  findRunningHelper: (role: string) => RunningHelper | undefined;
+  findRunningHelper: (role: string, exceptPrincipalId?: string) => RunningHelper | undefined;
   /** Optional warning sink for per-entity soft failures. */
   warn?: (message: string, detail?: Record<string, unknown>) => void;
 }
@@ -196,7 +196,8 @@ async function hygieneForEntity(
   if (stale + competing + pending >= HYGIENE_DISPATCH_THRESHOLD) {
     jobId = await findOpenMarkedJob(op, principalId, "evaluator", HYGIENE_TASK_MARKER);
     if (!jobId) {
-      const helper = deps.findRunningHelper(HYGIENE_HELPER_ROLE);
+      // Never the entity under review: an evaluator's own memory goes to another evaluator.
+      const helper = deps.findRunningHelper(HYGIENE_HELPER_ROLE, principalId);
       const parked = pending ? ` (${pending} pending confirmation)` : "";
       const summary = `${stale} stale and ${competing} competing durable assertions need review${parked}`;
       if (!helper) {
@@ -278,7 +279,7 @@ export async function runEngineMemoryHygiene(engine: Engine): Promise<MemoryHygi
           message: text,
           memory_hygiene: true,
         }),
-      findRunningHelper: (role) => findRunningEngineHelper(engine, db, role),
+      findRunningHelper: (role, except) => findRunningEngineHelper(engine, db, role, except),
       warn: (message, detail) => engine.logger.warn("hygiene", message, detail),
     });
   } finally {

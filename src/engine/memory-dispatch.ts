@@ -142,12 +142,14 @@ export function findRunningEngineHelper(
   engine: Engine,
   db: MarinaDB,
   roleName: string,
+  exceptPrincipalId?: string,
 ): RunningHelper | undefined {
   for (const agent of engine.agentRuntime.list()) {
     if (agent.role !== roleName || !agent.entityId) continue;
     if (!["connected", "autonomous", "idle"].includes(agent.state)) continue;
     const user = db.getUserByName(agent.name);
-    if (user) return { name: agent.name, principalId: user.id };
+    // A helper never assists itself: the assistance store refuses that job.
+    if (user && user.id !== exceptPrincipalId) return { name: agent.name, principalId: user.id };
   }
   return undefined;
 }
@@ -163,8 +165,8 @@ export interface MemoryDispatchDeps {
   ) => Promise<{ ok: true; result: unknown; space_id?: string }>;
   /** Direct notification to an owner (a `tell`). */
   tell: (entityId: EntityId, text: string) => void;
-  /** A running resident helper with the given seeded role name, if any. */
-  findRunningHelper: (roleName: string) => RunningHelper | undefined;
+  /** A running resident helper with the given seeded role name, other than `exceptPrincipalId`. */
+  findRunningHelper: (roleName: string, exceptPrincipalId?: string) => RunningHelper | undefined;
   /** Civic standing of an entity (durable key). Defaults to `getStanding`. */
   standing: (entityId: EntityId, now: number) => number;
   warn?: (message: string, detail?: Record<string, unknown>) => void;
@@ -506,7 +508,7 @@ async function accumulationForEntity(
   const open = await findOpenMarkedJob(op, principalId, "reflector", ACCUMULATION_TASK_MARKER);
   if (open) return { ...report, jobId: open, skipped: "open-job" };
 
-  const helper = deps.findRunningHelper(helperRoleName("reflector"));
+  const helper = deps.findRunningHelper(helperRoleName("reflector"), principalId);
   if (!helper) {
     const notified = notifyOnce(
       db,
@@ -603,7 +605,7 @@ export async function dispatchSharedWriteReview(
   const user = db.getUserByName(write.name);
   if (!user) return { ...base, skipped: "no-account" };
   // Silent by design: a missing evaluator is not announced to the writer.
-  const helper = deps.findRunningHelper(helperRoleName("evaluator"));
+  const helper = deps.findRunningHelper(helperRoleName("evaluator"), user.id);
   if (!helper) return { ...base, skipped: "no-helper" };
 
   const op: ResidentOp = (request) => deps.residentMemoryOperation(write.name, request);
@@ -649,7 +651,7 @@ export function engineDispatchDeps(engine: Engine, db: MarinaDB): MemoryDispatch
         message: text,
         memory_dispatch: true,
       }),
-    findRunningHelper: (roleName) => findRunningEngineHelper(engine, db, roleName),
+    findRunningHelper: (roleName, except) => findRunningEngineHelper(engine, db, roleName, except),
     standing: (entityId, now) => getStanding(db, entityId, now),
     warn: (message, detail) => engine.logger.warn("memory-dispatch", message, detail),
   };
