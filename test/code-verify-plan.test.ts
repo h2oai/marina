@@ -539,6 +539,11 @@ describe("tests relevant to a change", () => {
       ["python -m pytest", "full-tests"],
     ]);
     expect(both[1]!.timeoutMs).toBe(600_000);
+    // Every unscoped full suite gets the full-suite budget, not the 120 s run default:
+    // scope:full, and auto when nothing relevant was found (a change that touches no test).
+    expect(steps("full").steps[0]!.timeoutMs).toBe(600_000);
+    expect(steps("auto", none).steps[0]!.timeoutMs).toBe(600_000);
+    expect(steps("auto").steps[0]!.timeoutMs).toBeUndefined();
     expect(resolveVerificationOptions({ scope: "changed,full", budget: "90s" }, {})).toMatchObject({
       scope: "changed+full",
       fullBudgetMs: 90_000,
