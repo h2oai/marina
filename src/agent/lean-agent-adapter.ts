@@ -53,7 +53,6 @@ import { type GateIntent, gateToolCall, redactToolCall } from "../decisions/gate
 import { explainGateHold } from "../decisions/policy";
 import { raiseForTool } from "../engine/challenges";
 import {
-  ACTIVE_CODING_TASK_MAX_CHARS,
   CONTEXT_PRUNE_TARGET,
   CONTEXT_PRUNE_THRESHOLD,
   CONTINUATION_PROMPT_BUDGET_BYTES,
@@ -163,6 +162,7 @@ import {
   RUN_CAP_CLOSING_GRACE,
   SPEND_STOP_EVENT_CONTEXT,
 } from "./budget-terminal";
+import { CODING_COMPACTION_INSTRUCTIONS } from "./coding-context";
 import {
   compactionMaxTokens,
   disableReasoningPayload,
@@ -1977,8 +1977,18 @@ export class LeanAgentAdapter implements AgentHandle {
         const keyNow = routedCall.apiKey;
         signal?.throwIfAborted();
         const llmContext = {
-          systemPrompt: COMPACTION_SYSTEM_PROMPT,
+          systemPrompt:
+            COMPACTION_SYSTEM_PROMPT +
+            (this.activeCodingTask ? CODING_COMPACTION_INSTRUCTIONS : ""),
           messages: [
+            ...(this.activeCodingTask
+              ? [
+                  {
+                    role: "user" as const,
+                    content: `[Active Coding Task]\n${this.activeCodingTask}`,
+                  },
+                ]
+              : []),
             {
               role: "user" as const,
               content: formatUntrustedContext(
@@ -2152,6 +2162,7 @@ export class LeanAgentAdapter implements AgentHandle {
       pruneThreshold: CONTEXT_PRUNE_THRESHOLD,
       pruneTarget: CONTEXT_PRUNE_TARGET,
       getTokenCap: (messages) => this.tokenCapFor(messages),
+      getActiveCodingTask: () => this.activeCodingTask,
       summarizeWithLLM,
       onBeforeCompact,
     });
@@ -4645,7 +4656,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // and the task itself is restated each cycle as the mandate.
     if (this.activeCodingTask) {
       parts.push(
-        `[Active Coding Task]\n${clampText(this.activeCodingTask, ACTIVE_CODING_TASK_MAX_CHARS)}\n` +
+        `[Active Coding Task]\n${this.activeCodingTask}\n` +
           "The task comes first: work through marina_code actions (read/search/edit/write/patch/verify). " +
           "Finish source and test edits, verify the final candidate, inspect its receipt, then submit a marina_code summary. Later edits require fresh checks. " +
           "Using memory, pool or focus tools along the way is your call.",
@@ -5290,11 +5301,9 @@ export class LeanAgentAdapter implements AgentHandle {
   }
 
   /**
-   * Coding tasks use the same conversation cap as other residents. They may
-   * execute many tool turns inside their first prompt: apply the cap after the
-   * first assistant turn, without waiting for a second user prompt. Originals
-   * are archived by the context transform; the durable task pointer remains
-   * available. Never compact a fresh request before any work has occurred.
+   * Bound coders default to the model's usable window (context manager reserves
+   * output and framing). An explicit operator cap still bounds cost, including
+   * tool turns within the first prompt. Ordinary residents keep the 48k cap.
    */
   private tokenCapFor(
     messages: readonly AgentMessage[],
@@ -5304,6 +5313,7 @@ export class LeanAgentAdapter implements AgentHandle {
     if (this.coldTurnCap) return this.coldTurnCap;
     const cap = conversationTokenCap();
     if (!cap) return undefined;
+    if (this.activeCodingTask && !cap.explicit) return undefined;
     if (
       !opts.betweenPrompts &&
       !hasCompletedRun(messages) &&
@@ -6509,7 +6519,7 @@ export class LeanAgentAdapter implements AgentHandle {
     task: string | null,
     budget?: { startedAt: number; deadlineAt: number },
   ): void {
-    const next = task?.trim() ? task.trim() : null;
+    const next = task?.trim() ? task : null;
     if (next && next !== this.activeCodingTask) this.obligations.noteRequest(next);
     this.activeCodingTask = next;
     if (next) this.ensureCodeTool();
