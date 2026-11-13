@@ -1497,14 +1497,19 @@ export class MarinaAgent extends MarinaClient {
    * Returns the text of the message.
    */
   async waitForTell(from?: string, timeoutMs = 30_000): Promise<string> {
-    const p = await this.waitForMessage(
-      (p) =>
-        p.kind === "message" &&
-        (p.data as Record<string, unknown>)?.subkind === "tell" &&
-        (from === undefined || (p.data as Record<string, unknown>)?.from === from),
-      timeoutMs,
-    );
-    return ((p.data as Record<string, unknown>)?.text as string) ?? "";
+    // A tell to you is a `tell` frame naming its sender (protocol/README.md, "Tell");
+    // the echo of one you sent has no `senderName`.
+    const key = from?.toLowerCase();
+    const p = await this.waitForMessage((p) => {
+      const sender = p.data?.senderName;
+      return (
+        p.tag === "tell" &&
+        typeof sender === "string" &&
+        (key === undefined || sender.toLowerCase() === key)
+      );
+    }, timeoutMs);
+    const data = p.data as Record<string, unknown>;
+    return String(data.message ?? data.text ?? "");
   }
 
   /** Gracefully quit and disconnect. */

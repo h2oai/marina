@@ -15,6 +15,7 @@ import {
   memoryNeedsIdempotencyKey,
 } from "../src/protocol/http-api";
 import { WIRE_SCHEMA_PATH } from "../src/protocol/wire";
+import { SDK_MODEL_OUTPUTS } from "./sdk-models";
 import { type JsonSchema, TypeSchemas } from "./ts-json-schema";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -469,6 +470,9 @@ export function generateOpenApi(check: boolean): void {
   );
   writeOrCheck(JAVA_OPERATIONS_FILE, renderJavaOperations(), check, "Java SDK operation table");
   writeOrCheck(RUST_OPERATIONS_FILE, renderRustOperations(), check, "Rust SDK operation table");
+  const openapi = openApiDocument();
+  for (const output of SDK_MODEL_OUTPUTS)
+    writeOrCheck(resolve(ROOT, output.file), output.render(openapi), check, output.file);
 }
 
 if (import.meta.main) generateOpenApi(process.argv.includes("--check"));
