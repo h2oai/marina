@@ -5,11 +5,17 @@
 // becomes a pull request; the commit lands on the session's branch, is pushed,
 // and the pull request carries the trial's evidence.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ShipRunner, shipBody, shipChange, shipRefusal } from "../src/coding/code-ship";
 import { type CodeTrialResult, type GitRunner, snapshotCommit } from "../src/coding/code-trial";
+import {
+  isProtectedPath,
+  PROTECTED_PATHS,
+  protectedChanges,
+  protectedHold,
+} from "../src/coding/protected-paths";
 
 function sh(cwd: string, ...argv: string[]): string {
   const r = Bun.spawnSync(argv, { cwd, stdout: "pipe", stderr: "pipe" });
@@ -152,6 +158,64 @@ describe("code ship", () => {
     expect(gh[0]!.join(" ")).toContain("--base main --head marina/session-s1");
     expect(gh[0]!.at(-1)).toContain("trial_abc");
     expect(gh[1]).toEqual(["gh", "pr", "merge", "https://github.com/o/r/pull/7", "--squash"]);
+  });
+
+  it("finds protected files in the change and holds an agent's protected change for a person", () => {
+    mkdirSync(join(tree, "src/engine"), { recursive: true });
+    writeFileSync(join(tree, "src/engine/safety-gates.ts"), "export const loosened = true;\n");
+    const base = sh(tree, "git", "rev-parse", "HEAD");
+    const trial = trialFor(snapshotCommit(git, tree, dir));
+    trial.base.sha = base;
+    const touched = protectedChanges(git, tree, base, trial.candidate.sha);
+    expect(touched).toEqual(["src/engine/safety-gates.ts"]);
+    const gh: string[][] = [];
+    const result = shipChange(
+      {
+        git: runner,
+        push: runner,
+        gh: (_cwd, argv) => {
+          gh.push(argv);
+          return { exitCode: 0, stdout: "https://github.com/o/r/pull/8\n", stderr: "" };
+        },
+        identity: { name: "Operator", email: "op@example.invalid" },
+      },
+      {
+        tree,
+        branch: "marina/session-s1",
+        base: "main",
+        title: "Loosen",
+        trial,
+        author: "Coder",
+        merge: true,
+        scratch: dir,
+        protectedFiles: touched,
+        holdForPerson: true,
+      },
+    );
+    // Opened, never queued; the body says why and names the files.
+    expect(result.queued).toBe(false);
+    expect(gh).toHaveLength(1);
+    expect(gh[0]!.at(-1)).toContain("## Protected paths");
+    expect(gh[0]!.at(-1)).toContain("`src/engine/safety-gates.ts`");
+    expect(gh[0]!.at(-1)).toContain("a person reads it and queues it");
+  });
+
+  it("protects the gates, the judging rules, these steps and what checks a change", () => {
+    for (const path of [
+      "src/engine/safety-gates.ts",
+      "src/engine/benchmark-promotion.ts",
+      "src/stats/paired.ts",
+      "src/coding/code-trial.ts",
+      ".github/workflows/ci.yml",
+      "package.json",
+    ])
+      expect(isProtectedPath(path)).toBe(true);
+    expect(isProtectedPath("src/engine/commands/look.ts")).toBe(false);
+    expect(isProtectedPath("src/stats-other.ts")).toBe(false);
+    // Every listed path exists, so the list cannot silently drift.
+    for (const path of PROTECTED_PATHS) expect(existsSync(path), path).toBe(true);
+    expect(protectedHold({})).toBe(true);
+    expect(protectedHold({ MARINA_SELF_IMPROVE_PROTECTED: "off" })).toBe(false);
   });
 
   it("states the measurement in the pull request body", () => {
