@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from "node:f
 import { join, resolve } from "node:path";
 import { summarizeArm } from "../engine/benchmark-compare-run";
 import { comparePooledGroups, loadReplicateGroup } from "../engine/benchmark-replicates";
+import { mintRunKey, revokeRunKey } from "../engine/benchmark-run-keys";
 import type { BenchmarkRunner } from "../engine/benchmark-runner";
 import { promotionMargin } from "../engine/fishing-margin";
 import type { MarinaDB } from "../persistence/database";
@@ -49,8 +50,10 @@ export interface CodeTrialSpec {
   replicates: number;
   /** What each build serves the harness; default `marina` (its default model). */
   model: string;
-  /** Total upstream spend allowed, split evenly between the two builds. */
+  /** Total upstream spend allowed, for both builds together. */
   capUsd: number;
+  /** The model this Marina serves the builds' default model with; default `marina/default`. */
+  upstreamModel?: string;
 }
 
 export interface TrialArmResult {
@@ -86,6 +89,12 @@ export type GitRunner = (
 
 export interface CodeTrialDeps {
   db: MarinaDB;
+  /**
+   * This Marina's own HTTP base: the builds reach models only through its
+   * /v1, with a run key minted for the trial (capped at the trial's cap,
+   * revoked when it ends). No provider key enters either build.
+   */
+  modelEndpoint: string;
   runner: Pick<BenchmarkRunner, "start" | "done">;
   /** Where trial trees and child data live; removed per trial when it ends. */
   trialsRoot: string;
@@ -248,6 +257,7 @@ export async function runCodeTrial(
   mkdirSync(root, { recursive: true });
   const trees: Partial<Record<TrialArm, string>> = {};
   const children: ChildMarina[] = [];
+  let modelKey: string | undefined;
   try {
     const candidateSha = snapshotCommit(git, spec.candidateTree, root);
     const base = must(git, repo, ["rev-parse", "HEAD"]);
@@ -273,6 +283,14 @@ export async function runCodeTrial(
     }
 
     const key = `mtk_${crypto.randomUUID().replaceAll("-", "")}`;
+    // The builds' only model access: this Marina's /v1, through a run key that
+    // adds no instruments of its own (only the builds differ) and stops at the cap.
+    modelKey = mintRunKey({
+      runId: `trial:${spec.id}`,
+      stack: "none",
+      evalTag: `code-trial=${spec.id}; benchmark=${spec.benchmark}`,
+      capUsd: spec.capUsd,
+    });
     const builds: Partial<Record<TrialArm, ChildMarina>> = {};
     for (const arm of ["base", "candidate"] as const) {
       const child = await startChild({
@@ -280,10 +298,15 @@ export async function runCodeTrial(
         sourceRoot: trees[arm]!,
         dir: join(root, `${arm}-data`),
         port: await freeLoopbackPort(),
+        trust: "untrusted",
         env: {
           MARINA_WORLD: "empty",
           MODEL_API_KEYS: key,
           MARINA_DAILY_SPEND_CAP_USD: String(spec.capUsd / 2),
+          LLAMA_BASE_URL: `${deps.modelEndpoint.replace(/\/$/, "")}/v1`,
+          LLAMA_API_KEY: modelKey,
+          MARINA_DEFAULT_LLAMA_MODEL: spec.upstreamModel ?? "marina/default",
+          LLAMA_CONTEXT_WINDOW: "200000",
           MARINA_ROOM_AGENTS: "false",
           MCP_PORT: "0",
           LOG_PORT: "0",
@@ -312,6 +335,7 @@ export async function runCodeTrial(
     return codeTrialResult(deps.db, spec, shas);
   } finally {
     await Promise.all(children.map((child) => child.stop()));
+    if (modelKey) revokeRunKey(modelKey);
     for (const tree of Object.values(trees))
       if (tree) git(repo, ["worktree", "remove", "--force", tree]);
     rmSync(root, { recursive: true, force: true });

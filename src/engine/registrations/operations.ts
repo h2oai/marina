@@ -8,7 +8,11 @@ import { scratchRoot } from "../../config/data-dir";
 import { readEnvironmentReference } from "../../config/environment";
 import { probeConfiguredProviders } from "../../net/model/model-api";
 import { describeRouteHealth } from "../../net/model/route-health";
-import { describeEngineModels, hasProviderKey } from "../../net/model-api/upstream";
+import {
+  describeDefaultUpstream,
+  describeEngineModels,
+  hasProviderKey,
+} from "../../net/model-api/upstream";
 import { MARINA_ROOT } from "../../runtime-paths";
 import type { EntityId } from "../../types";
 import { engineAssistanceExpiryDeps } from "../assistance-expiry";
@@ -200,6 +204,7 @@ export function registerOperationCommands(engine: Engine): void {
       // Sessions on this server's own checkout edit in a worktree, never the live tree.
       marinaRoot: MARINA_ROOT,
       benchmarkRunner: engine.benchmarkRunner,
+      defaultUpstream: () => describeDefaultUpstream(engine),
       describeVisual: (source, question, entity) =>
         describeVisual(engine, source, {
           question,

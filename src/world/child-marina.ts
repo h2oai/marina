@@ -55,6 +55,34 @@ export function inheritedChildEnv(
   return copy;
 }
 
+/** A setting name that may hold a credential; never handed to an untrusted build. */
+const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|COOKIE|AUTH)/;
+
+/**
+ * The environment for a build whose code is not this server's (a code
+ * trial's candidate and base): `PATH`, the locale, and the `MARINA_*`
+ * feature settings, with no credential of any kind and no path into this
+ * server's data. Model access is given explicitly by the caller.
+ */
+export function untrustedChildEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string,
+): Record<string, string> {
+  const out: Record<string, string> = { HOME: home };
+  for (const name of ["PATH", "LANG", "LC_ALL", "TZ", "TMPDIR"]) {
+    const value = env[name];
+    if (value !== undefined) out[name] = value;
+  }
+  const dataPaths = new Set(["MARINA_DATA_DIR", ...Object.keys(DATA_DIR_PATHS)]);
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined || !name.startsWith("MARINA_")) continue;
+    if (SECRET_NAME.test(name) || dataPaths.has(name)) continue;
+    if (/(_PATH|_DIR|_FILE|_LEDGER)$/.test(name)) continue;
+    out[name] = value;
+  }
+  return out;
+}
+
 export interface ChildMarinaSpec {
   /** Instance name; also the child's spend scope (`childSpendEnv`). */
   name: string;
@@ -68,6 +96,12 @@ export interface ChildMarinaSpec {
   port: number;
   /** Extra settings, applied last. */
   env?: Record<string, string>;
+  /**
+   * `trusted` (default): this server's environment (`inheritedChildEnv`) — for
+   * code this server already runs. `untrusted`: `untrustedChildEnv` — no
+   * credentials, for a build someone else wrote.
+   */
+  trust?: "trusted" | "untrusted";
 }
 
 export interface ChildMarina {
@@ -90,7 +124,10 @@ export function spawnChildMarina(spec: ChildMarinaSpec): ChildMarina {
   const child = Bun.spawn([process.execPath, "run", "src/main.ts"], {
     cwd: resolve(spec.sourceRoot),
     env: {
-      ...inheritedChildEnv(process.env, dir),
+      ...(spec.trust === "untrusted"
+        ? untrustedChildEnv(process.env, dir)
+        : inheritedChildEnv(process.env, dir)),
+      MARINA_PARENT_PID: String(process.pid),
       MARINA_NAME: spec.name,
       // A child spends against its own daily budget ($50 unless the parent
       // sets MARINA_CHILD_DAILY_SPEND_CAP_USD), never more than the parent's

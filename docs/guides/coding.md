@@ -387,7 +387,7 @@ worktree cannot be created, the command is refused and nothing changes.
 ### Measure a change to Marina
 
 ```text
-code trial benchmark:<name> cap:<usd> [limit:<n>] [replicates:<n>] [model:<id>] [seed:<n>]
+code trial benchmark:<name> cap:<usd> [limit:<n>] [replicates:<n>] [model:<id>] [upstream:<provider/model>] [seed:<n>]
 ```
 
 `code trial` measures the session's change against the build it branched from:
@@ -402,7 +402,11 @@ code trial benchmark:<name> cap:<usd> [limit:<n>] [replicates:<n>] [model:<id>] 
    `candidate-regresses`, `no-measurable-difference` or `incomplete`.
 
 The trial runs in the background and reports here; `code show <artifact>` has the numbers.
-`cap:` is required and split between the two builds, which enforce it as their daily spend cap.
+The builds run someone's unreviewed code, so they get no provider key and no path into this
+Marina's data. Their only model access is this Marina's `/v1`, through a key minted for the trial
+that adds no instruments of its own, stops at `cap:` and is revoked when the trial ends. Their
+default model is the provider model this Marina's default resolves to; `upstream:<provider/model>`
+names another.
 Both builds are stopped and their trees removed when the trial ends. The benchmark's dataset must
 be downloaded first (`benchmark fetch <name>`). A trial runs the session's code, so it takes the
 `code.exec` capability.

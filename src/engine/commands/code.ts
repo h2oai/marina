@@ -733,7 +733,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       { syntax: "code worktree on", effect: "write" },
       {
         syntax:
-          "code trial benchmark:<name> cap:<usd> [limit:<n>] [replicates:<n>] [model:<id>] [seed:<n>]",
+          "code trial benchmark:<name> cap:<usd> [limit:<n>] [replicates:<n>] [model:<id>] [upstream:<provider/model>] [seed:<n>]",
         effect: "execute",
       },
       { syntax: "code worktree status", effect: "read" },

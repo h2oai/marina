@@ -10,6 +10,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCodeTrial, snapshotCommit, trialGroup } from "../src/coding/code-trial";
+import { lookupRunKey } from "../src/engine/benchmark-run-keys";
 import {
   BenchmarkRunner,
   type BenchmarkRunOptions,
@@ -17,7 +18,7 @@ import {
   type HarnessResult,
 } from "../src/engine/benchmark-runner";
 import { MarinaDB } from "../src/persistence/database";
-import type { ChildMarina } from "../src/world/child-marina";
+import { type ChildMarina, untrustedChildEnv } from "../src/world/child-marina";
 
 const ITEMS = 40;
 
@@ -118,15 +119,23 @@ describe("code trial", () => {
       async done() {},
     };
     const stopped: string[] = [];
+    const keys: string[] = [];
     const children: string[] = [];
     const res = await runCodeTrial(
       {
         db,
         runner,
+        modelEndpoint: "http://127.0.0.1:1",
         trialsRoot: join(dir, "trials"),
         install: () => {},
         startChild: async (spec) => {
           children.push(spec.sourceRoot);
+          // An untrusted build: models only through this Marina, with a trial run key.
+          expect(spec.trust).toBe("untrusted");
+          expect(spec.env?.LLAMA_BASE_URL).toBe("http://127.0.0.1:1/v1");
+          expect(spec.env?.LLAMA_API_KEY).toStartWith("mrk_");
+          expect(lookupRunKey(spec.env!.LLAMA_API_KEY!)?.capUsd).toBe(2);
+          keys.push(spec.env!.LLAMA_API_KEY!);
           // Each build runs its own tree.
           expect(existsSync(join(spec.sourceRoot, "a.txt"))).toBe(true);
           return {
@@ -154,6 +163,8 @@ describe("code trial", () => {
         capUsd: 2,
       },
     );
+    // The trial's run key is revoked when it ends.
+    expect(keys.every((k) => lookupRunKey(k) === undefined)).toBe(true);
     return { res, started, stopped, children };
   }
 
@@ -201,6 +212,7 @@ describe("code trial", () => {
         {
           db,
           runner: { start: () => ({ id: "x", configHash: "x" }), done: async () => {} },
+          modelEndpoint: "http://127.0.0.1:1",
           trialsRoot: join(dir, "trials"),
         },
         {
@@ -218,4 +230,23 @@ describe("code trial", () => {
     ).rejects.toThrow(/no changes/);
     expect(existsSync(join(dir, "trials", "t2"))).toBe(false);
   });
+});
+
+it("an untrusted build gets no credential and no path into this server's data", () => {
+  const env = untrustedChildEnv(
+    {
+      PATH: "/bin",
+      OPENROUTER_API_KEY: "sk-or",
+      ANTHROPIC_API_KEY: "sk-ant",
+      MARINA_KEY_SECRET: "s",
+      MARINA_DESKTOP_API_TOKEN: "t",
+      MARINA_DATA_DIR: "/data",
+      DB_PATH: "/data/marina.db",
+      MARINA_SPEND_LEDGER: "/data/spend.db",
+      MARINA_DREAMING: "on",
+      GITHUB_TOKEN: "ghp",
+    },
+    "/child",
+  );
+  expect(env).toEqual({ HOME: "/child", PATH: "/bin", MARINA_DREAMING: "on" });
 });

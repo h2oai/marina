@@ -400,6 +400,8 @@ export interface CodeDeps {
   marinaRoot?: string;
   /** The world's benchmark runner, for `code trial` (absent ⇒ trials are unavailable). */
   benchmarkRunner?: Pick<BenchmarkRunner, "start" | "done" | "list" | "datasetReady">;
+  /** The concrete `provider/model` this server's default resolves to (a trial's builds use it). */
+  defaultUpstream?: () => string | undefined;
   describeVisual?: (
     source: VisualSource,
     question: string,

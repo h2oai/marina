@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 import { type CodeTrialResult, runCodeTrial } from "../../../coding/code-trial";
 import { isLiveMarinaCheckout } from "../../../coding/self-checkout";
 import { scratchRoot } from "../../../config/data-dir";
+import { localHttpBase } from "../../../net/listen-ports";
 import type { MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
 import { refuseCommand } from "../../command-response";
@@ -21,7 +22,7 @@ import { type CodeDeps, resolveSession, sendCode } from "./shared";
 
 export const CODE_TRIAL_ARTIFACT_KIND = "code_trial";
 export const CODE_TRIAL_USAGE =
-  "Usage: code trial benchmark:<name> cap:<usd> [limit:<n>] [replicates:<n>] [model:<id>] [seed:<n>]";
+  "Usage: code trial benchmark:<name> cap:<usd> [limit:<n>] [replicates:<n>] [model:<id>] [upstream:<provider/model>] [seed:<n>]";
 const MAX_REPLICATES = 5;
 const MAX_LIMIT = 500;
 
@@ -50,6 +51,7 @@ export async function trialCode(
     limit: { type: "int" },
     replicates: { type: "int" },
     model: { type: "string" },
+    upstream: { type: "string" },
     seed: { type: "int" },
   });
   const v = parsed.values as {
@@ -58,6 +60,7 @@ export async function trialCode(
     limit?: number;
     replicates?: number;
     model?: string;
+    upstream?: string;
     seed?: number;
   };
   if (parsed.errors.length || parsed.rest.length || !v.benchmark || v.cap === undefined) {
@@ -107,6 +110,17 @@ export async function trialCode(
     );
     return;
   }
+  // The builds hold no provider key: this server answers their model calls,
+  // with a concrete model that passes straight through whatever its endpoint mode.
+  const upstream = v.upstream ?? deps.defaultUpstream?.();
+  if (!upstream?.includes("/")) {
+    refuseCommand(
+      ctx,
+      eid,
+      "No model provider to serve the builds. Configure one, or name upstream:<provider/model>.",
+    );
+    return;
+  }
   const spendRefusal = dailyCapRefusal();
   if (spendRefusal) {
     refuseCommand(ctx, eid, spendRefusal);
@@ -123,6 +137,7 @@ export async function trialCode(
     seed: v.seed ?? 42,
     replicates,
     model: v.model ?? "marina",
+    upstreamModel: upstream,
     capUsd: v.cap,
   };
   const tell = (line: string) => {
@@ -132,6 +147,7 @@ export async function trialCode(
     {
       db: deps.db,
       runner,
+      modelEndpoint: localHttpBase(),
       trialsRoot: resolve(scratchRoot(), "trials"),
       progress: tell,
     },
