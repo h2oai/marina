@@ -216,7 +216,8 @@ describe("concept 1: a coder's ledger, argument check and decision backend", () 
       await i.agent.beforeToolCall(call("r1", { action: "read", path: "src/index.ts" }));
       expect(checked).toEqual([]);
       // A write carrying a value nobody stated is checked, and the judge is
-      // asked on Marina's own /v1 (an outage fails open: not blocked).
+      // asked on Marina's own /v1 (an outage fails open: not blocked). A
+      // coder's own workspace write is checked and recorded, never held.
       const write = await i.agent.beforeToolCall(
         call("w1", { action: "write", path: "src/report_9921.ts", content: "x" }),
       );

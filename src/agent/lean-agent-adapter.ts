@@ -2352,28 +2352,34 @@ export class LeanAgentAdapter implements AgentHandle {
         }
         // Argument check (opt-in, MARINA_ARGCHECK): a call that changes state
         // must use values the conversation established; refused once if not.
-        // A dispatcher call whose inner tool is a lookup changes nothing, and a
-        // coder's work in its own workspace is checked by verification and
-        // review, not by conversation support (`isWorkspaceAuthoringCall`).
+        // A dispatcher call whose inner tool is a lookup changes nothing.
+        // A coder's work in its own workspace (`isWorkspaceAuthoringCall`) is
+        // still checked and recorded, but never held: its new paths and text
+        // are its own work, which verification and review check; the recorded
+        // verdicts measure whether holding it would catch real mistakes.
         const dispatched = dispatchedCall(context.toolCall.name, args);
         if (
           (policy.risk === "mutate" || policy.risk === "consequential") &&
-          !(dispatched && readOnlyByName(dispatched.name)) &&
-          !isWorkspaceAuthoringCall(context.toolCall.name, args)
+          !(dispatched && readOnlyByName(dispatched.name))
         ) {
+          const authoring = isWorkspaceAuthoringCall(context.toolCall.name, args);
           const refusal = await this.argumentCheck(
             context.toolCall.name,
             args,
             context.context.messages,
+            authoring,
           );
-          if (refusal) return { block: true, reason: refusal };
+          if (refusal && !authoring) return { block: true, reason: refusal };
           // Pre-write review (opt-in, MARINA_OBLIGATIONS_REVIEW, with the ledger):
           // order and precondition evidence; refused once at most, the model decides.
-          const reviewed = await this.obligations.reviewWrite(
-            context.toolCall.name,
-            args,
-            context.context.messages,
-          );
+          // Not for a coder's own workspace work (see above).
+          const reviewed = authoring
+            ? undefined
+            : await this.obligations.reviewWrite(
+                context.toolCall.name,
+                args,
+                context.context.messages,
+              );
           if (reviewed) {
             this.log.info(LEAN_AGENT_LOG_CATEGORY, `pre-write review ${reviewed.label}`, {
               agent: this.name,
@@ -2482,6 +2488,7 @@ export class LeanAgentAdapter implements AgentHandle {
     toolName: string,
     args: Record<string, unknown>,
     transcript: readonly unknown[],
+    recordOnly = false,
   ): Promise<string | undefined> {
     if (this.argcheck.mode() === "off") return undefined;
     const started = Date.now();
@@ -2492,7 +2499,7 @@ export class LeanAgentAdapter implements AgentHandle {
     this.emitEvent({
       type: "decision",
       stage: "argcheck",
-      verdict: refusal ? "nudge" : outcome.label,
+      verdict: refusal ? (recordOnly ? "would-nudge" : "nudge") : outcome.label,
       subject: toolName,
       reason: `${outcome.flaggedValues} of ${outcome.checked} argument values not found first-hand${j.doubt ? `; doubts ${j.doubt}` : ""}`,
       signals: {
