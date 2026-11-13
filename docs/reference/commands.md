@@ -3494,6 +3494,15 @@ Effect: execute.
 - Group `option-3`: `upstream:provider/model`.
 - Group `option-4`: `seed:n`.
 
+### `code ship [merge] [-- <title>]`
+
+Effect: execute.
+
+- `field-0` (`merge`): text, optional group `option-0`.
+- `field-1` (`title`): text, optional group `option-1`.
+- Group `option-0`: `merge`.
+- Group `option-1`: `-- title`.
+
 ### `code worktree status`
 
 Effect: read.

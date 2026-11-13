@@ -101,6 +101,7 @@ import {
   restAfterSubcommand,
   TELNET_HOST_EXEC_DENY,
 } from "./code/shared";
+import { shipCode } from "./code/ship";
 import { spawnRequest } from "./code/spawn";
 import {
   assumeCodingRun,
@@ -518,6 +519,9 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   trial: async (c) => {
     await trialCode(c.ctx, c.eid, c.entity, c.deps, c.args);
   },
+  ship: async (c) => {
+    await shipCode(c.ctx, c.eid, c.entity, c.deps, c.rawAfterSub);
+  },
 };
 
 export function codeCommand(deps: CodeDeps): CommandDef {
@@ -736,6 +740,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
           "code trial benchmark:<name> cap:<usd> [limit:<n>] [replicates:<n>] [model:<id>] [upstream:<provider/model>] [seed:<n>]",
         effect: "execute",
       },
+      { syntax: "code ship [merge] [-- <title>]", effect: "execute" },
       { syntax: "code worktree status", effect: "read" },
       { syntax: "code write <path> <content>", effect: "write" },
       { syntax: "code writer [<agent>]", effect: "write" },
@@ -877,8 +882,9 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         if (
           HOST_ROOT_EXEC_SUBCOMMANDS.has(canonicalSub) &&
           canonicalSub !== "runner" &&
-          // A trial reads the session's worktree; it never edits one into being.
+          // A trial or a ship reads the session's worktree; neither edits one into being.
           canonicalSub !== "trial" &&
+          canonicalSub !== "ship" &&
           !inspectOnly
         ) {
           const sessionId =
